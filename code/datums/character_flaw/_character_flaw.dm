@@ -25,7 +25,8 @@ GLOBAL_LIST_INIT(character_flaws, list(
 	"Silver Weakness"=/datum/charflaw/silverweakness,
 	"Hunted"=/datum/charflaw/hunted,
 	"Random or No Flaw"=/datum/charflaw/randflaw,
-	"No Flaw (3 TRIUMPHS)"=/datum/charflaw/noflaw,
+	"No Flaw (-3 TRIUMPHS)"=/datum/charflaw/noflaw,
+	"Leper (+1 TRIUMPHS)"=/datum/charflaw/leprosy,
 	))
 
 /datum/charflaw
@@ -64,30 +65,24 @@ GLOBAL_LIST_INIT(character_flaws, list(
 /datum/charflaw/randflaw
 	name = "Random or None"
 	desc = "A 50% chance to be given a random flaw, or a 50% chance to have NO flaw."
-	var/nochekk = TRUE
 
-/datum/charflaw/randflaw/flaw_on_life(mob/user)
-	if(!nochekk)
-		return
-	if(ishuman(user))
-		var/mob/living/carbon/human/H = user
-		if(H.ckey)
-			nochekk = FALSE
-			if(prob(50))
-				var/flawz = GLOB.character_flaws.Copy()
-				var/charflaw = pick_n_take(flawz)
-				charflaw = GLOB.character_flaws[charflaw]
-				if((charflaw == type) || (charflaw == /datum/charflaw/noflaw))
-					charflaw = pick_n_take(flawz)
-					charflaw = GLOB.character_flaws[charflaw]
-				if((charflaw == type) || (charflaw == /datum/charflaw/noflaw))
-					charflaw = pick_n_take(flawz)
-					charflaw = GLOB.character_flaws[charflaw]
-				H.charflaw = new charflaw()
-				H.charflaw.on_mob_creation(H)
-			else
-				H.charflaw = new /datum/charflaw/eznoflaw()
-				H.charflaw.on_mob_creation(H)
+/datum/charflaw/randflaw/apply_post_equipment(mob/user)
+	var/mob/living/carbon/human/H = user
+	if(prob(50))
+		var/flawz = GLOB.character_flaws.Copy()
+		var/charflaw = pick_n_take(flawz)
+		charflaw = GLOB.character_flaws[charflaw]
+		if((charflaw == type) || (charflaw == /datum/charflaw/noflaw))
+			charflaw = pick_n_take(flawz)
+			charflaw = GLOB.character_flaws[charflaw]
+		if((charflaw == type) || (charflaw == /datum/charflaw/noflaw))
+			charflaw = pick_n_take(flawz)
+			charflaw = GLOB.character_flaws[charflaw]
+		H.charflaw = new charflaw()
+		H.charflaw.on_mob_creation(H)
+	else
+		H.charflaw = new /datum/charflaw/eznoflaw()
+		H.charflaw.on_mob_creation(H)
 
 
 /datum/charflaw/eznoflaw
@@ -95,32 +90,25 @@ GLOBAL_LIST_INIT(character_flaws, list(
 	desc = "I'm a normal person, how rare!"
 
 /datum/charflaw/noflaw
-	name = "No Flaw (3 TRI)"
+	name = "No Flaw (-3 TRI)"
 	desc = "I'm a normal person, how rare! (Consumes 3 triumphs or gives a random flaw.)"
-	var/nochekk = TRUE
 
-/datum/charflaw/noflaw/flaw_on_life(mob/user)
-	if(!nochekk)
-		return
-	if(ishuman(user))
-		var/mob/living/carbon/human/H = user
-		if(H.ckey)
-			if(H.get_triumphs() < 3)
-				nochekk = FALSE
-				var/flawz = GLOB.character_flaws.Copy()
-				var/charflaw = pick_n_take(flawz)
-				charflaw = GLOB.character_flaws[charflaw]
-				if((charflaw == type) || (charflaw == /datum/charflaw/randflaw))
-					charflaw = pick_n_take(flawz)
-					charflaw = GLOB.character_flaws[charflaw]
-				if((charflaw == type) || (charflaw == /datum/charflaw/randflaw))
-					charflaw = pick_n_take(flawz)
-					charflaw = GLOB.character_flaws[charflaw]
-				H.charflaw = new charflaw()
-				H.charflaw.on_mob_creation(H)
-			else
-				nochekk = FALSE
-				H.adjust_triumphs(-3)
+/datum/charflaw/noflaw/apply_post_equipment(mob/user)
+	var/mob/living/carbon/human/H = user
+	if(H.get_triumphs() < 3)
+		var/flawz = GLOB.character_flaws.Copy()
+		var/charflaw = pick_n_take(flawz)
+		charflaw = GLOB.character_flaws[charflaw]
+		if((charflaw == type) || (charflaw == /datum/charflaw/randflaw))
+			charflaw = pick_n_take(flawz)
+			charflaw = GLOB.character_flaws[charflaw]
+		if((charflaw == type) || (charflaw == /datum/charflaw/randflaw))
+			charflaw = pick_n_take(flawz)
+			charflaw = GLOB.character_flaws[charflaw]
+		H.charflaw = new charflaw()
+		H.charflaw.on_mob_creation(H)
+	else
+		H.adjust_triumphs(-3)
 
 /datum/charflaw/badsight
 	name = "Bad Eyesight"
@@ -482,5 +470,23 @@ GLOBAL_LIST_INIT(character_flaws, list(
 /datum/charflaw/silverweakness
 	name = "Silver Weakness"
 	desc = "I'm sensitive to silver — it burns and injures me more than it should."
+
 /datum/charflaw/silverweakness/on_mob_creation(mob/user)
 	ADD_TRAIT(user, TRAIT_SILVER_WEAK, TRAIT_GENERIC)
+
+/datum/charflaw/leprosy
+	name = "Leper (+1 TRI)"
+	desc = "I am cursed with leprosy! Too poor to afford treatment, my skin now lays violated by lesions, my extremities are numb, and my presence disturbs even the most stalwart men."
+
+/datum/charflaw/leprosy/apply_post_equipment(mob/user)
+	var/mob/living/carbon/human/H = user
+	to_chat(user, "I am afflicted. I am outcast and weak. I am a pox on this world.")
+	ADD_TRAIT(user, TRAIT_LEPROSY, TRAIT_GENERIC)
+	H.change_stat(STATKEY_STR, -1)
+	H.change_stat(STATKEY_INT, -1)
+	H.change_stat(STATKEY_PER, -1)
+	H.change_stat(STATKEY_CON, -1)
+	H.change_stat(STATKEY_WIL, -1)
+	H.change_stat(STATKEY_SPD, -1)
+	H.change_stat(STATKEY_LCK, -1)
+	H.adjust_triumphs(1)
