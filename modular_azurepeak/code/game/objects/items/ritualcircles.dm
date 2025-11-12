@@ -1859,7 +1859,7 @@ var/forgerites = list("Ritual of Blessed Reforgance")
 	name = "Rune of Hedonism"
 	desc = "A Holy Rune of Baotha. Relief for the broken hearted."
 	icon_state = "baotha_chalky"
-	var/baotharites = list("Conversion", "Embodiment of male fertility")
+	var/baotharites = list("Conversion", "Embodiment of Male Fertility")
 
 /obj/structure/ritualcircle/psydon // done as a joke, but it is good for Psydonites to decorate with.
 	name = "Rune of Enduring"
@@ -1904,7 +1904,7 @@ var/forgerites = list("Ritual of Blessed Reforgance")
 							baothaconversion(target) // removed CD bc it's gonna be coal to sit there and wait for it to go off rite cooldown, this one is purely social in its nature
 							spawn(120)
 								icon_state = "baotha_chalky"
-		if("Embodiment of male fertility")
+		if("Embodiment of Male Fertility")
 			var/list/valids_on_rune = list()
 			for(var/mob/living/carbon/human/peep in range(0, loc))
 				if(HAS_TRAIT(peep, TRAIT_DEPRAVED))
@@ -2001,7 +2001,7 @@ var/forgerites = list("Ritual of Blessed Reforgance")
 		target.sexcon.set_arousal(100)
 		loc.visible_message(span_cult("[target] moans and shivers ontop on the rune. Body of purple flames dances on their lower abdomen as a new marking appears there."))
 		spawn(20)
-			var/mutable_appearance/marking_overlay = mutable_appearance('icons/roguetown/misc/baotha_marking.dmi', "marking", BODY_LAYER)
+			var/mutable_appearance/marking_overlay = mutable_appearance('icons/roguetown/misc/baotha_marking.dmi', "marking_[target.gender == "male" ? "m" : "f"]", BODY_LAYER)
 			target.overlays_standing[BODY_LAYER] = marking_overlay
 			target.apply_overlay(BODY_LAYER)
 			playsound(target, 'sound/health/fastbeat.ogg', 60)
