@@ -101,7 +101,7 @@
 		var/prob_for_impreg = wife.mpreg_chance
 		if(wife.sexcon.knotted_status)
 			prob_for_impreg =  min(prob_for_impreg * 2, IMPREG_PROB_MAX)
-		if(prob(prob_for_impreg))
+		if(prob(prob_for_impreg) && is_virile())
 			if(wife.mpreg)
 				to_chat(wife, span_love("I feel a surge of warmth inside me again..."))
 				return
