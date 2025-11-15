@@ -138,6 +138,11 @@
 	cost = 20
 	contains = list(/obj/item/rogueweapon/huntingknife/idagger/steel/parrying)
 
+/datum/supply_pack/rogue/Knave/saildagger
+	name = "Etruscan Sail Dagger"
+	cost = 30
+	contains = list(/obj/item/rogueweapon/huntingknife/idagger/steel/parrying/vaquero)
+
 /datum/supply_pack/rogue/Knave/Navaja
 	name = "Navaja"
 	cost = 20

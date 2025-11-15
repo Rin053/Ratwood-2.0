@@ -243,6 +243,16 @@
 	cost = 35
 	contains = list(/obj/item/rogueweapon/huntingknife/idagger/steel/kazengun)
 
+/datum/supply_pack/rogue/Brigand/parrydag
+	name = "Parry Dagger"
+	cost = 30
+	contains = list(/obj/item/rogueweapon/huntingknife/idagger/steel/parrying)
+
+/datum/supply_pack/rogue/Brigand/saildagger
+	name = "Etruscan Sail Dagger"
+	cost = 50
+	contains = list(/obj/item/rogueweapon/huntingknife/idagger/steel/parrying/vaquero)
+
 /datum/supply_pack/rogue/Brigand/steelspear
 	name = "Steel Spear"
 	cost = 65

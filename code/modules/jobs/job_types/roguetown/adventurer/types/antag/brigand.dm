@@ -72,7 +72,7 @@
 				beltl = /obj/item/rogueweapon/scabbard/sword
 				H.adjust_skillrank_up_to(/datum/skill/combat/swords, SKILL_LEVEL_EXPERT, TRUE)
 				H.adjust_skillrank_up_to(/datum/skill/combat/polearms, SKILL_LEVEL_EXPERT, TRUE)
-				H.adjust_skillrank_up_to(/datum/skill/combat/shields, SKILL_LEVEL_EXPERT, TRUE)	//Big maybe? Up for discussion honestly.
+				H.adjust_skillrank_up_to(/datum/skill/combat/shields, SKILL_LEVEL_JOURNEYMAN, TRUE)
 				H.adjust_skillrank_up_to(/datum/skill/combat/maces, SKILL_LEVEL_JOURNEYMAN, TRUE)
 			if("The Nefarious Dusthead (Knives, Whips & Athletics)") //Dagger, athletics, and petty lockpicking. You will never be a Knave. This is mostly a for-fun class, where else have you seen a knife strength build?
 				beltr = /obj/item/rogueweapon/huntingknife/idagger/steel
