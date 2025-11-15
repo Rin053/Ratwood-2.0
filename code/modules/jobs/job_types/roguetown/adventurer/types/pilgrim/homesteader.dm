@@ -226,9 +226,11 @@
 		var/combo_name = input(H, "Choose a daily tools combination [1/1].", "Daily Tools") as anything in daily_tools_combos
 		if(combo_name)
 			var/combo_list = daily_tools_combos[combo_name]
+			var/counter = 1
 			for(var/item_path in combo_list)
-				var/new_item = new item_path()
-				H.mind.special_items += new_item
+				var/unique_key = "[combo_name] [counter]"
+				H.mind.special_items[unique_key] = item_path
+				counter++
 
 		// Select three individual bronze/copper items
 		for(var/i in 1 to 3)
