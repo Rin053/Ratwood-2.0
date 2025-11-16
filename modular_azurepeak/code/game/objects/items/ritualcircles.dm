@@ -2119,26 +2119,26 @@ var/forgerites = list("Ritual of Blessed Reforgance")
 		loc.visible_message(span_warning("With their heart stilled, the ritual will have no purchase upon [target]. It would be a waste."))
 		return
 
-	var/datum/antagonist/werewolf/Were = target.mind.has_antag_datum(/datum/antagonist/werewolf)
-	var/datum/antagonist/werewolf/lesser/Wereless = target.mind.has_antag_datum(/datum/antagonist/werewolf/lesser)
-	var/datum/antagonist/vampirelord/Vamp = target.mind.has_antag_datum(/datum/antagonist/vampirelord)
-	var/datum/antagonist/vampirelord/lesser/Vampless = target.mind.has_antag_datum(/datum/antagonist/vampirelord/lesser)
+	var/datum/antagonist/werewolf/Were = target.mind.has_antag_datum(/datum/antagonist/werewolf/)
+	var/datum/antagonist/werewolf/lesser/Wereless = target.mind.has_antag_datum(/datum/antagonist/werewolf/lesser/)
+	var/datum/antagonist/vampire/Vamp = target.mind.has_antag_datum(/datum/antagonist/vampire)
 
 	//Werewolf deconversion
 	if(Were && !Wereless) //The roundstart elder/alpha werewolf, it cannot be saved
-		to_chat(target, span_userdanger("This wretched rite weighs heavy on my soul. Dendor's blessing shall not be quit of me so easily."))
-		target.visible_message(span_danger("[target] viscerally rejects the One's admonishment. They cannot be saved."))
+		to_chat(target, span_userdanger("This wretched rite weighs heavy on my soul. Dendor's blessing shall not be quit of me so easily"))
+		loc.visible_message(span_danger("[target] viscerally rejects the One's admonishment. They cannot be saved."))
 		target.Stun(30)
 		target.Knockdown(30)
 		return
 
 	else if(Wereless) //A lesser werewolf can be deconverted
-		if(Were.transformed == TRUE)
+		if(Wereless.transformed == TRUE)
 			var/mob/living/carbon/human/I = target.stored_mob
 			to_chat(target, span_userdanger("THIS FOUL RITE! MY BODY RENDS ITSELF ASUNDER!"))
 			target.werewolf_untransform()
-			Were.on_removal()
-			ADD_TRAIT(I, TRAIT_SILVER_BLESSED, TRAIT_GENERIC)
+			Wereless.on_removal()
+			ADD_TRAIT(I, TRAIT_SILVER_BLESSED, POULTICE_TRAIT)
+			ADD_TRAIT(I, TRAIT_PACIFISM, POULTICE_TRAIT)
 			I.emote("agony", forced = TRUE)
 			I.Stun(30)
 			I.Knockdown(30)
@@ -2149,56 +2149,39 @@ var/forgerites = list("Ritual of Blessed Reforgance")
 			target.emote("agony", forced = TRUE)
 			to_chat(target, span_userdanger("THIS FOUL RITE! IT BURNS ME TO MY CORE!"))
 			Were.on_removal()
-			ADD_TRAIT(target, TRAIT_SILVER_BLESSED, TRAIT_GENERIC)
+			ADD_TRAIT(target, TRAIT_SILVER_BLESSED, POULTICE_TRAIT)
+			target.poultice_pacify()
 			target.Stun(30)
 			target.Knockdown(30)
 			target.Jitter(30)
 			return
 
-	else if(Vamp && !Vampless) //We're the vampire lord, we can't be saved.
-		to_chat(target, span_userdanger("This wretched rite weighs heavy on my soul. An insult I shall never forget, for as long as I die."))
-		target.visible_message(span_danger("[target] viscerally rejects the One's admonishment. They cannot be saved."))
-		target.Stun(30)
-		target.Knockdown(30)
-		return
+	else if(Vamp)
+		if(Vamp.generation >= GENERATION_METHUSELAH || HAS_TRAIT(target, TRAIT_BLOODPOOL_BORN)) //Vampire Lords + their bloodpool summons cannot be deconverted.
+			to_chat(target, span_userdanger("This wretched rite weighs heavy on my soul. An insult I shall never forget, for as long as I die."))
+			loc.visible_message(span_danger("[target] viscerally rejects the One's admonishment. They cannot be saved."))
+			target.Stun(30)
+			target.Knockdown(30)
+			return
 
-	else if(Vampless) //Lesser vampires being saved
-		target.mob_biotypes = MOB_ORGANIC|MOB_HUMANOID
-		var/obj/item/organ/eyes/eyes = target.getorganslot(ORGAN_SLOT_EYES)
-		if(eyes)
-			eyes.Remove(target,1)
-			QDEL_NULL(eyes)
-			eyes = new /obj/item/organ/eyes
-			eyes.Insert(target)
-		target.skin_tone = Vampless.cache_skin
-		target.hair_color = Vampless.cache_hair
-		target.facial_hair_color = Vampless.cache_hair
-		target.eye_color = Vampless.cache_eyes
-		target.update_body()
-		target.update_hair()
-		target.update_body_parts(redraw = TRUE)
-		Vampless.on_removal()
-		target.mind.special_role = null
-		target.emote("agony", forced = TRUE)
-		to_chat(target, span_userdanger("THIS FOUL RITE! IT QUICKENS MY HEART!"))
-		REMOVE_TRAIT(target, TRAIT_INFINITE_STAMINA, "/datum/antagonist/vampirelord/lesser")
-		REMOVE_TRAIT(target, TRAIT_NOSLEEP, "/datum/antagonist/vampirelord/lesser")
-		REMOVE_TRAIT(target, TRAIT_NOBREATH, "/datum/antagonist/vampirelord/lesser")
-		REMOVE_TRAIT(target, TRAIT_NOPAIN, "/datum/antagonist/vampirelord/lesser")
-		REMOVE_TRAIT(target, TRAIT_NOHUNGER, "/datum/antagonist/vampirelord/lesser")
-		REMOVE_TRAIT(target, TRAIT_TOXIMMUNE, "/datum/antagonist/vampirelord/lesser")
-		REMOVE_TRAIT(target, TRAIT_VAMP_DREAMS, "/datum/antagonist/vampirelord/lesser")
-		REMOVE_TRAIT(target, TRAIT_HEAVYARMOR, "/datum/antagonist/vampirelord/lesser")
-		REMOVE_TRAIT(target, TRAIT_STEELHEARTED, "/datum/antagonist/vampirelord/lesser")
-		target.verbs -= /mob/living/carbon/human/proc/disguise_button
-		target.verbs -= /mob/living/carbon/human/proc/vampire_telepathy
-		target.verbs -= /mob/living/carbon/human/proc/vamp_regenerate
-		target.RemoveSpell(/obj/effect/proc_holder/spell/targeted/transfix)
-		ADD_TRAIT(target, TRAIT_SILVER_BLESSED, TRAIT_GENERIC)
-		target.Stun(30)
-		target.Knockdown(30)
-		target.Jitter(30)
-		return
+		if(alert(target, "The rite is burning my nature from my veins! Do I resist the anointment?", "Rite of Admonishment", "YIELD", "RESIST") == "RESIST") //Opt in convert, opt in deconvert
+			to_chat(target, span_userdanger("This wretched rite weighs heavy on my soul. But I am consigned to my reverie, and my heart remains still."))
+			loc.visible_message(span_danger("[target] viscerally rejects the One's admonishment. They refuse to be saved."))
+			target.Stun(30)
+			target.Knockdown(30)
+			return
+		else
+			target.flash_fullscreen("redflash3")
+			target.emote("agony", forced = TRUE)
+			to_chat(target, span_userdanger("THIS FOUL RITE! MY STILL HEART QUICKENS ONCE MORE!"))
+			Vamp.on_removal()
+			ADD_TRAIT(target, TRAIT_SILVER_BLESSED, POULTICE_TRAIT)
+			target.poultice_pacify()
+			target.Stun(30)
+			target.Knockdown(30)
+			target.Jitter(30)
+			return
+
 
 /obj/structure/ritualcircle/psydon/proc/psydonstrip(mob/living/carbon/human/target)
 	if(!HAS_TRAIT(target, TRAIT_OVERTHERETIC))//A fallback. You should never see this.
