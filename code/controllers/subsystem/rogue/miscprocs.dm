@@ -16,6 +16,7 @@
 #define CLERIC_REGEN_WEAK 0.1 //Would be better to just do away with devotion entirely, but oh well.
 #define CLERIC_REGEN_MINOR 0.5
 #define CLERIC_REGEN_MAJOR 0.8
+#define CLERIC_REGEN_WITCH 1.5
 #define CLERIC_REGEN_ABSOLVER 5
 
 // Cleric Holder Datums
@@ -195,6 +196,10 @@
 	if(!devotion)
 		return FALSE
 
+	if (HAS_TRAIT(src, TRAIT_WITCH))
+		to_chat(src, span_warning("What need have I to pray? I draw my power from the old ways, whether my patron likes it or not."))
+		return FALSE
+
 	var/prayersesh = 0
 	visible_message("[src] kneels their head in prayer to the Gods.", "I kneel my head in prayer to [devotion.patron.name].")
 	for(var/i in 1 to 50)
@@ -255,7 +260,7 @@
 	set category = "Virtue"
 
 	if(HAS_TRAIT(src, TRAIT_COMBAT_AWARE))
-		REMOVE_TRAIT(src, TRAIT_COMBAT_AWARE, TRAIT_VIRTUE) 
+		REMOVE_TRAIT(src, TRAIT_COMBAT_AWARE, TRAIT_VIRTUE)
 	else
 		ADD_TRAIT(src, TRAIT_COMBAT_AWARE, TRAIT_VIRTUE)
 	to_chat(src, "I will see [HAS_TRAIT(src, TRAIT_COMBAT_AWARE) ? "more" : "less"] combat information now.")

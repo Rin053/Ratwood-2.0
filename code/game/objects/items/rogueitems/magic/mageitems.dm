@@ -73,6 +73,25 @@
 		/obj/item/seeds/pipeweed = 1,
 	)
 
+/obj/item/storage/magebag/witch
+	name = "witch pouch"
+	desc = "A pouch for carrying handfuls of alchemical ingredients."
+	color = "#210f0c"
+	populate_contents = list(
+		/obj/item/alch/viscera,
+		/obj/item/alch/viscera,
+		/obj/item/alch/viscera,
+		/obj/item/alch/urtica,
+		/obj/item/alch/taraxacum,
+		/obj/item/alch/puresalt,
+		/obj/item/alch/paris,
+		/obj/item/alch/mentha,
+		/obj/item/alch/hypericum,
+		/obj/item/alch/salvia,
+		/obj/item/alch/calendula,
+		/obj/item/seeds/swampweed = 1,
+		/obj/item/seeds/pipeweed = 1,
+		)
 
 /obj/item/chalk
 	name = "stick of chalk"

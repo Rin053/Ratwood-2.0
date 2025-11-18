@@ -7,6 +7,7 @@
 	chargedrain = 1
 	chargetime = 15
 	recharge_time = 100 SECONDS
+	human_req = TRUE
 	warnie = "spellwarning"
 	school = "transmutation"
 	overlay_state = "zizocloud"

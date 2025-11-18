@@ -5,6 +5,7 @@
 	releasedrain = 50
 	chargetime = 5
 	recharge_time = 20 SECONDS
+	human_req = TRUE
 	warnie = "spellwarning"
 	movement_interrupt = FALSE
 	no_early_release = FALSE
