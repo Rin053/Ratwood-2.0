@@ -67,13 +67,13 @@
 			signals += COMSIG_MOVABLE_MOVED
 		if("on dawn")
 			RegisterSignal(M, COMSIG_MOB_DAWNED, PROC_REF(on_signal_trigger))
-			signals += COMSIG_MOB_DAYED
+			signals += COMSIG_MOB_DAWNED
 		if("on day")
 			RegisterSignal(M, COMSIG_MOB_DAYED, PROC_REF(on_signal_trigger))
 			signals += COMSIG_MOB_DAYED
 		if("on dusk")
 			RegisterSignal(M, COMSIG_MOB_DUSKED, PROC_REF(on_signal_trigger))
-			signals += COMSIG_MOB_DAYED
+			signals += COMSIG_MOB_DUSKED
 		if("on night")
 			RegisterSignal(M, COMSIG_MOB_NIGHTED, PROC_REF(on_signal_trigger))
 			signals += COMSIG_MOB_NIGHTED
@@ -116,8 +116,9 @@
 				arg = FALSE
 			else
 				ADD_TRAIT(L, trait_id, TRAIT_GENERIC)
-		if("add 2u reagent")
+		if("add reagent")
 			var/reagent_type = effect_args["reagent_type"]
+			var/amount = effect_args["amount"]
 
 			if(istext(reagent_type))
 				reagent_type = text2path(reagent_type)
@@ -127,10 +128,11 @@
 
 			var/mob/living/carbon/M = L
 			var/datum/reagents/reagents = new()
-			reagents.add_reagent(reagent_type, 2)
-			reagents.trans_to(M, 2, transfered_by = M, method = INGEST)
+			reagents.add_reagent(reagent_type, amount)
+			reagents.trans_to(M, amount, transfered_by = M, method = INGEST)
 		if("add arousal")
-			L.sexcon.arousal += 5
+			var/amount = effect_args["amount"]
+			L.sexcon.arousal += amount
 		if("shrink sex organs")
 			spawn(0)
 				var/obj/item/organ/penis/penis = L.getorganslot(ORGAN_SLOT_PENIS)
@@ -187,12 +189,12 @@
 				if(!pmax && !tmax && !bmax) //nothing was able to change
 					arg = FALSE
 				L.update_body()
-		if("nauseate")
+		if("add nausea")
 			var/mob/living/carbon/M = L
-			M.add_nausea(4)
+			var/amount = effect_args["amount"]
+			M.add_nausea(amount)
 		if("clothesplosion")
 			L.drop_all_held_items()
-			// Remove all clothing except collar
 			for(var/obj/item/I in L.get_equipped_items())
 				L.dropItemToGround(I, TRUE)
 		if("slip")
@@ -272,6 +274,7 @@
 		return
 	if(arg == FALSE)
 		return
+
 	var/flavor_text_self = ""
 	var/flavor_text_other = ""
 	var/trigger_text_self = ""
@@ -280,190 +283,167 @@
 	var/effect_text_other = ""
 	var/list/choices_self = list()
 	var/list/choices_other = list()
+
+	//flavoring of notification
 	switch(flavor)
 		if("divine")
 			choices_self = list(
-				"A divine glow surrounds you briefly",
-				"A warm light envelops you momentarily",
-				"You feel touched by a higher power",
-				"A serene calm washes over you",
-				"You sense a benevolent presence nearby"
+				"A burning light sears through your chest",
+				"A crushing judgment presses against your soul",
+				"You feel holy wrath claw through your veins",
+				"A lance of radiant pain pierces you",
+				"You feel condemned by a merciless power"
 			)
 			choices_other = list(
-				"A divine glow surrounds [owner] briefly",
-				"A warm light envelops [owner] momentarily",
-				"[owner] looks touched by a higher power",
-				"A serene calm washes over [owner]",
-				"[owner] seems to sense a benevolent presence nearby"
+				"A harsh blaze of light strikes [owner] from above",
+				"[owner] flinches as scorch-bright radiance slams into them",
+				"A crack of punishing light lashes across [owner]",
+				"[owner] recoils beneath a smiting flash",
+				"A blast of searing brilliance crashes down on [owner]"
 			)
+
 		if("demonic")
 			choices_self = list(
-				"A dark shadow looms over you briefly",
-				"A chilling presence envelops you momentarily",
-				"You feel tainted by a malevolent force",
-				"A sinister chill runs down your spine",
-				"You sense an ominous presence nearby"
+				"A chill coils through your gut",
+				"A shadow presses against your mind",
+				"You feel stained by something foul",
+				"A harsh cold grips your spirit",
+				"You feel watched by darkness"
 			)
 			choices_other = list(
-				"A dark shadow looms over [owner] briefly",
-				"A chilling presence envelops [owner] momentarily",
-				"[owner] looks tainted by a malevolent force",
-				"A sinister chill runs down [owner]'s spine",
-				"[owner] seems to sense an ominous presence nearby"
+				"Shadows deepen around [owner]",
+				"[owner]'s features harden sharply",
+				"A dimness hangs around [owner]",
+				"[owner]'s eyes catch a cruel glint",
+				"The air near [owner] seems colder"
 			)
+
 		if("witchcraft")
 			choices_self = list(
-				"You feel the stirrings of ancient magic within you",
-				"A mystical energy courses through your veins",
-				"You sense the presence of old spells around you",
-				"A faint magical aura surrounds you briefly",
-				"You feel connected to the arcane forces"
+				"Old magic stirs beneath your skin",
+				"A tingle runs through your veins",
+				"You feel spells coil around you",
+				"A shimmer brushes your senses",
+				"You feel bound to unseen forces"
 			)
 			choices_other = list(
-				"[owner] seems to be surrounded by a mystical energy",
-				"A faint magical aura surrounds [owner] briefly",
-				"[owner] looks touched by ancient magic",
-				"You sense the presence of old spells around [owner]",
-				"[owner] appears connected to arcane forces"
+				"Faint motes flicker around [owner]",
+				"[owner]'s hair stirs without wind",
+				"A brief glow outlines [owner]'s shape",
+				"[owner]'s gaze grows distant and strange",
+				"[owner] moves as if tugged by threads"
 			)
+
 		if("fey")
 			choices_self = list(
-				"You feel the playful touch of the fey",
-				"A whimsical energy surrounds you briefly",
-				"You sense the mischievous presence of fae beings",
-				"A light, airy feeling washes over you",
-				"You feel connected to the enchanting forces of nature"
+				"A mocking giggle echoes in your skull",
+				"You feel unseen hands tug and tease at you",
+				"A prankster's malice dances across your nerves",
+				"You hear taunting whispers just behind your ear",
+				"A sharp jolt of mischief jolts through your body"
 			)
 			choices_other = list(
-				"[owner] seems to be surrounded by a whimsical energy",
-				"A light, airy feeling washes over [owner]",
-				"[owner] looks touched by the playful fey",
-				"You sense the mischievous presence of fae beings around [owner]",
-				"[owner] appears connected to the enchanting forces of nature"
+				"A faint chorus of cruel laughter surrounds [owner]",
+				"[owner] flinches at unseen teasing hands",
+				"Whispering mockery drifts around [owner]",
+				"[owner]'s posture jolts as if pranked by the unseen",
+				"Soft snickering and rustling circle [owner] without source"
 			)
-			
+
 		if("mutation")
 			choices_self = list(
-				"You feel a strange transformation overtaking you",
-				"A bizarre energy courses through your body",
-				"You sense an unusual change happening within you",
-				"A peculiar sensation spreads through your limbs",
-				"You feel connected to chaotic forces of mutation"
+				"A strange tension ripples through you",
+				"You feel something shift inside",
+				"A wrongness tingles through your limbs",
+				"Your body feels briefly unfamiliar",
+				"You feel bent by twisting forces"
 			)
 			choices_other = list(
-				"[owner] seems to be undergoing a strange transformation",
-				"A bizarre energy courses through [owner]'s body",
-				"[owner] looks like they're changing in an unusual way",
-				"A peculiar sensation spreads through [owner]'s limbs",
-				"[owner] appears connected to chaotic forces of mutation"
+				"[owner]'s outline ripples slightly",
+				"[owner]'s posture shudders oddly",
+				"[owner]'s features shift, then settle",
+				"Movement warps strangely around [owner]",
+				"[owner] looks subtly out of alignment"
 			)
+
 	flavor_text_self = pick(choices_self)
 	flavor_text_other = pick(choices_other)
 
+	// ----- Trigger phrasing -----
 	switch(trigger)
 		if("on death")
-			trigger_text_self = "dying"
-			trigger_text_other = "they die"
+			trigger_text_self = "as you die";trigger_text_other = "as life leaves them"
 		if("on beheaded")
-			trigger_text_self = "being decapitated"
-			trigger_text_other = "they are decapitated"
+			trigger_text_self = "as you are beheaded";trigger_text_other = "as their head is severed"
 		if("on dismembered")
-			trigger_text_self = "losing a body part"
-			trigger_text_other = "they lose a body part"
+			trigger_text_self = "as you lose a limb";trigger_text_other = "as a limb is torn from them"
 		if("on sleep")
-			trigger_text_self = "falling asleep"
-			trigger_text_other = "they fall asleep"
+			trigger_text_self = "as you fall asleep";trigger_text_other = "as their body slackens"
 		if("on attack")
-			trigger_text_self = "attacking"
-			trigger_text_other = "they attack"
+			trigger_text_self = "as you strike";trigger_text_other = "as their blow lands"
 		if("on receive damage")
-			trigger_text_self = "taking damage"
-			trigger_text_other = "they take damage"
+			trigger_text_self = "as you are harmed";trigger_text_other = "as blood is drawn"
 		if("on cast spell")
-			trigger_text_self = "casting a spell"
-			trigger_text_other = "they cast a spell"
+			trigger_text_self = "as you invoke power";trigger_text_other = "as words of power leave their lips"
 		if("on spell or miracle target")
-			trigger_text_self = "being targeted by magic"
-			trigger_text_other = "they are targeted by magic"
+			trigger_text_self = "as magic touches you";trigger_text_other = "as magic strikes their form"
 		if("on cut tree")
-			trigger_text_self = "felling a tree"
-			trigger_text_other = "they fell a tree"
+			trigger_text_self = "as you swing your axe";trigger_text_other = "as wood splinters beneath their strike"
 		if("on kiss")
-			trigger_text_self = "kissing"
-			trigger_text_other = "they kiss"
+			trigger_text_self = "as you kiss";trigger_text_other = "as their lips meet another"
 		if("on kissed")
-			trigger_text_self = "being kissed"
-			trigger_text_other = "they are kissed"
+			trigger_text_self = "as you are kissed";trigger_text_other = "as a kiss touches them"
 		if("on orgasm")
-			trigger_text_self = "orgasming"
-			trigger_text_other = "they have an orgasm"
+			trigger_text_self = "as pleasure peaks";trigger_text_other = "as their body tenses and releases"
 		if("on move")
-			trigger_text_self = "moving"
-			trigger_text_other = "they move around"
+			trigger_text_self = "as you move";trigger_text_other = "with each step they take"
 		if("on dawn")
-			trigger_text_self = "dawn breaking"
-			trigger_text_other = "the dawn breaks"
+			trigger_text_self = "as dawn breaks";trigger_text_other = "as first light touches them"
 		if("on day")
-			trigger_text_self = "daytime arriving"
-			trigger_text_other = "the daytime arrives"
+			trigger_text_self = "as day rises";trigger_text_other = "as daylight gathers"
 		if("on dusk")
-			trigger_text_self = "dusk falling"
-			trigger_text_other = "the dusk falls"
+			trigger_text_self = "as dusk descends";trigger_text_other = "as shadows deepen around them"
 		if("on night")
-			trigger_text_self = "night falling"
-			trigger_text_other = "the night falls"
+			trigger_text_self = "as night falls";trigger_text_other = "as darkness settles"
 
+	// ----- Effect phrasing -----
 	switch(effect)
 		if("buff or debuff")
-			effect_text_self = "a change within yourself"
-			effect_text_other = "they seem different somehow"
+			effect_text_self = "your body shifts and twists inside you";effect_text_other = "their stance subtly changes"
 		if("remove trait")
-			effect_text_self = "a part of you fade away"
-			effect_text_other = "they seem different somehow"
+			effect_text_self = "something familiar fades from you";effect_text_other = "a familiar quality disappears from them"
 		if("add trait")
-			effect_text_self = "a new aspect of yourself emerge"
-			effect_text_other = "they seem different somehow"
-		if("add 2u reagent")
-			effect_text_self = "your blood to feel different"
-			effect_text_other = "they seem different somehow"
+			effect_text_self = "a new aspect awakens within you";effect_text_other = "something new takes shape in them"
+		if("add reagent")
+			effect_text_self = "your blood feels altered";effect_text_other = "a strange tint touches their veins"
 		if("add arousal")
-			effect_text_self = "you to become aroused"
-			effect_text_other = "they seem aroused"
+			effect_text_self = "heat eminates from your loins";effect_text_other = "their breath quickens and their cheeks flush"
 		if("shrink sex organs")
-			effect_text_self = "your sex organs to shrink"
-			effect_text_other = "they seem to have smaller sex organs"
-		if("enlarge sex organs")	
-			effect_text_self = "your sex organs to enlarge"
-			effect_text_other = "they seem to have larger sex organs"
-		if("nauseate")
-			effect_text_self = "you to become nauseated"
-			effect_text_other = "they look nauseated"
+			effect_text_self = "your sex organs seem to retract";effect_text_other = "they look less confident"
+		if("enlarge sex organs")
+			effect_text_self = "your sex organs seem to swell";effect_text_other = "they look more confident"
+		if("add nausea")
+			effect_text_self = "your stomach twists";effect_text_other = "their face pales and their balance falters"
 		if("clothesplosion")
-			effect_text_self = "your clothes to suddenly fly off"
-			effect_text_other = "suddenly, their clothes fly off"
+			effect_text_self = "your clothes fly apart";effect_text_other = "fabric bursts away from them"
 		if("slip")
-			effect_text_self = "you to slip and fall"
-			effect_text_other = "they slip"
+			effect_text_self = "your footing vanishes";effect_text_other = "they stumble and fall"
 		if("shock")
-			effect_text_self = "you to be shocked"
-			effect_text_other = "they are shocked"
+			effect_text_self = "a jolt tears through you";effect_text_other = "their body convulses sharply"
 		if("add fire stack")
-			effect_text_self = "you to be set ablaze"
-			effect_text_other = "they are set ablaze"
+			effect_text_self = "flames lick your skin";effect_text_other = "fire catches against them"
 		if("explode")
-			effect_text_self = "you to explode"
-			effect_text_other = "they are caught in a sudden explosion"
-			
+			effect_text_self = "you detonate violently";effect_text_other = "they erupt in a sudden blast"
 		if("shapeshift")
-			effect_text_self = "you to change forms"
-			effect_text_other = "they change forms"
+			effect_text_self = "your form twists and reshapes";effect_text_other = "their shape changes before your eyes"
 		if("gib")
-			effect_text_self = "you to violently break apart"
-			effect_text_other = "they violently break apart"
+			effect_text_self = "you burst apart";effect_text_other = "they are torn into pieces"
 
-	var/self_message = "[flavor_text_self] as [trigger_text_self] causes [effect_text_self]"
-	var/others_message = "[flavor_text_other]. As [trigger_text_other] [effect_text_other]!"
-	owner.visible_message(span_warning(others_message),span_warning(self_message))
+	// final messages
+	var/self_message   = "[flavor_text_self] [trigger_text_self]. [effect_text_self]."
+	var/others_message = "[flavor_text_other] [trigger_text_other]. [effect_text_other]!"
+
+	owner.visible_message(span_warning(others_message), span_warning(self_message))
 
 /datum/modular_curse/proc/on_signal_trigger()
 	if(!owner)
@@ -804,11 +784,11 @@
 		"buff or debuff",
 		"remove trait",
 		"add trait",
-		"add 2u reagent",
+		"add reagent",
 		"add arousal",
 		"shrink sex organs",
 		"enlarge sex organs",
-		"nauseate",
+		"add nausea",
 		"clothesplosion",
 		"slip",
 		//"jail in arcyne walls",
@@ -870,7 +850,7 @@
 		)
 
 	// ---- Reagent selection ----
-	if(effect_proc == "add 2u reagent")
+	if(effect_proc == "add reagent")
 		var/reagent_type = input(
 			src,
 			"Select the reagent to add (typepath):",
@@ -971,6 +951,23 @@
 		effect_args = list(
 			"mob_type" = mob_list[mob_type]
 		)
+
+	//amount
+	if(effect_proc in list("add reagent", "add arousal", "add nausea"))
+		var/amount = input(
+			src,
+			"Amount:",
+			"Amount",
+			10
+		) as null|num
+
+		if(!amount || amount <= 0)
+			return
+
+		if(!effect_args)
+			effect_args = list()
+
+		effect_args["amount"] = amount
 
 	// ---- Duration ----
 	var/duration = input(
