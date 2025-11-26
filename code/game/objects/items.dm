@@ -1431,7 +1431,7 @@ GLOBAL_VAR_INIT(rpg_loot_items, FALSE)
 	. = ..()
 	if(twohands_required)
 		return
-	if(altgripped || wielded) //Trying to unwield it
+	if(wielded) //Trying to unwield it. Ratwood edit. Original: (altgripped || wielded) 
 		ungrip(user)
 		return
 	if(alt_intents && !gripped_intents)

@@ -22,6 +22,7 @@ GLOBAL_LIST_INIT(character_flaws, list(
 	"Sleepless"=/datum/charflaw/sleepless,
 	"Mute"=/datum/charflaw/mute,
 	"Critical Weakness"=/datum/charflaw/critweakness,
+	"Silver Weakness"=/datum/charflaw/silverweakness,
 	"Hunted"=/datum/charflaw/hunted,
 	"Random or No Flaw"=/datum/charflaw/randflaw,
 	"No Flaw (3 TRIUMPHS)"=/datum/charflaw/noflaw,
@@ -477,3 +478,9 @@ GLOBAL_LIST_INIT(character_flaws, list(
 
 /datum/charflaw/critweakness/on_mob_creation(mob/user)
 	ADD_TRAIT(user, TRAIT_CRITICAL_WEAKNESS, TRAIT_GENERIC)
+
+/datum/charflaw/silverweakness
+	name = "Silver Weakness"
+	desc = "I'm sensitive to silver — it burns and injures me more than it should."
+/datum/charflaw/silverweakness/on_mob_creation(mob/user)
+	ADD_TRAIT(user, TRAIT_SILVER_WEAK, TRAIT_GENERIC)

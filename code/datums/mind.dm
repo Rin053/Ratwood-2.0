@@ -96,6 +96,8 @@ GLOBAL_LIST_EMPTY(personal_objective_minds)
 
 	var/active_quest = 0 //if you dont take any quest its 0. Max 2 quests for one player
 
+	var/cosmetic_class_title //cosmetic title for advclasses that support it
+
 	var/lastrecipe
 
 	var/datum/sleep_adv/sleep_adv = null

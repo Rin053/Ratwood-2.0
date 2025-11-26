@@ -20,7 +20,7 @@
 	min_pq = -4 //silly jesters are funny so low PQ requirement
 	max_pq = null
 	round_contrib_points = 2
-	social_rank = SOCIAL_RANK_NOBLE
+	social_rank = SOCIAL_RANK_MINOR_NOBLE
 
 /datum/outfit/job/roguetown/jester/pre_equip(mob/living/carbon/human/H)
 	..()
@@ -64,6 +64,7 @@
 	if(!istype(H.getorganslot(ORGAN_SLOT_TONGUE), /obj/item/organ/tongue/wild_tongue))
 		H.internal_organs_slot[ORGAN_SLOT_TONGUE] = new /obj/item/organ/tongue/wild_tongue
 	ADD_TRAIT(H, TRAIT_ZJUMP, TRAIT_GENERIC)
+	ADD_TRAIT(H, TRAIT_NOFALLDAMAGE1, TRAIT_GENERIC)
 	ADD_TRAIT(H, TRAIT_LEAPER, TRAIT_GENERIC)
 	ADD_TRAIT(H, TRAIT_NUTCRACKER, TRAIT_GENERIC)
 	if(prob(50))

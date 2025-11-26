@@ -101,12 +101,14 @@
 	clickcd = CLICK_CD_CHARGED
 
 /datum/intent/sword/bash
-	name = "pommel bash"
+	name = "crossguard bash"
 	blade_class = BCLASS_BLUNT
 	icon_state = "inbash"
 	attack_verb = list("bashes", "strikes")
 	penfactor = BLUNT_DEFAULT_PENFACTOR
-	damfactor = NONBLUNT_BLUNT_DAMFACTOR
+	damfactor = 1.2
+	swingdelay = 13
+	clickcd = 13
 	item_d_type = "blunt"
 	intent_intdamage_factor = BLUNT_DEFAULT_INT_DAMAGEFACTOR
 
@@ -396,8 +398,8 @@
 	name = "psydonic spear"
 	desc = "An ornate spear, plated in a ceremonial veneer of silver. The barbs pierce your palm, and - for just a moment - you see red. Never forget that you are why Psydon wept."
 	icon_state = "psyspear"
-	force = 15
-	force_wielded = 25
+	force = 20
+	force_wielded = 30
 	minstr = 11
 	wdefense = 6
 	resistance_flags = FIRE_PROOF	//It's meant to be smacked by a "lamptern", and is special enough to warrant overriding the spear weakness
@@ -414,6 +416,19 @@
 		added_int = 50,\
 		added_def = 2,\
 	)
+
+/obj/item/rogueweapon/spear/psyspear/old
+	name = "enduring spear"
+	desc = "An ornate spear, its silver tarnished by neglect. HE still guides the faithful's hand, if not this weapon."
+	icon_state = "psyspear"
+	force = 15
+	force_wielded = 25
+	is_silver = FALSE
+	smeltresult = /obj/item/ingot/steel
+	color = COLOR_FLOORTILE_GRAY
+
+/obj/item/rogueweapon/spear/psyspear/old/ComponentInitialize()
+	return
 
 /obj/item/rogueweapon/spear/silver
 	name = "silver spear"
@@ -436,21 +451,6 @@
 		added_int = 50,\
 		added_def = 2,\
 	)
-
-/obj/item/rogueweapon/spear/psyspear/old
-	name = "enduring spear"
-	desc = "An ornate spear, its silver tarnished by neglect. HE still guides the faithful's hand, if not this weapon."
-	icon_state = "psyspear"
-	force = 20
-	force_wielded = 30
-	minstr = 8
-	wdefense = 5
-	is_silver = FALSE
-	smeltresult = /obj/item/ingot/steel
-	color = COLOR_FLOORTILE_GRAY
-
-/obj/item/rogueweapon/spear/psyspear/old/ComponentInitialize()
-	return
 
 /obj/item/rogueweapon/spear/getonmobprop(tag)
 	. = ..()
@@ -1022,16 +1022,16 @@
 	name = "steel flamberge"
 	desc = "A close relative of the Grenzelhoftian \"zweihander\", favored by Otavan nobility. The name comes from its unique, flame-shaped blade; a labor only surmountable by Psydonia's finest weaponsmiths."
 	icon_state = "steelflamberge"
-	max_blade_int = 180
-	max_integrity = 130
+	max_blade_int = 200
+	max_integrity = 180
 	wdefense = 6
 
 /obj/item/rogueweapon/greatsword/grenz/flamberge/malum
 	name = "forgefiend flamberge"
 	desc = "This sword's creation took a riddle in its own making. A great sacrifice was made for a blade of perfect quality."
 	icon_state = "malumflamberge"
-	max_integrity = 200
-	max_blade_int = 200
+	max_integrity = 240
+	max_blade_int = 240
 
 /obj/item/rogueweapon/greatsword/grenz/flamberge/blacksteel
 	name = "blacksteel flamberge"

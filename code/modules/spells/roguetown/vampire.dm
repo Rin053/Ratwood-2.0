@@ -21,6 +21,9 @@
 	die_with_shapeshifted_form =  FALSE
 	do_gib = FALSE
 	shapeshift_type = /mob/living/simple_animal/hostile/retaliate/bat
+	shifted_speed_increase = 1.25
+	show_true_name = FALSE
+	convert_damage = FALSE
 
 /obj/effect/proc_holder/spell/targeted/shapeshift/gaseousform
 	name = "Mist Form"
@@ -29,6 +32,7 @@
 	cooldown_min = 50
 	die_with_shapeshifted_form =  FALSE
 	shapeshift_type = /mob/living/simple_animal/hostile/retaliate/gaseousform
+	convert_damage = FALSE
 
 /obj/effect/proc_holder/spell/targeted/shapeshift/crow
 	name = "Zad Form"
@@ -42,6 +46,9 @@
 	do_gib = TRUE
 	shapeshift_type = /mob/living/simple_animal/hostile/retaliate/bat/crow
 	sound = 'sound/vo/mobs/bird/birdfly.ogg'
+	shifted_speed_increase = 1.25
+	show_true_name = FALSE
+	convert_damage = FALSE
 	invocations = list("Zad formus!")
 	invocation_type = "shout"
 

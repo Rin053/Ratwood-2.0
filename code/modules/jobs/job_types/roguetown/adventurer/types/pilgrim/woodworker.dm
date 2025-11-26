@@ -58,7 +58,7 @@
 						/obj/item/rogueweapon/scabbard/sheath = 1
 						)
 	if(H.pronouns == SHE_HER || H.pronouns == THEY_THEM_F)
-		armor = /obj/item/clothing/suit/roguetown/shirt/dress/gen
+		armor = /obj/item/clothing/suit/roguetown/shirt/dress/gen/random
 	else
 		armor = /obj/item/clothing/suit/roguetown/armor/workervest
 		pants = /obj/item/clothing/under/roguetown/trou

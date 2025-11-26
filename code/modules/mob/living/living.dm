@@ -523,6 +523,19 @@
 		O.update_hands(src)
 		update_grab_intents()
 
+//Free resists ahead.
+//This is STUPID strong.
+//We're stuck with it for economy reasons.
+//As of now, you get a free resist if either is met:
+// - Grabbed character skill at master or higher(5).
+// - Grabbing character skill at journeymen or lower(3).
+	if(isliving(AM))
+		var/mob/living/M = AM
+		if(M.mind)
+			if(M.cmode && M.stat == CONSCIOUS && !M.restrained(ignore_grab = TRUE))
+				if(M.get_skill_level(/datum/skill/combat/wrestling) >= 5 || src.get_skill_level(/datum/skill/combat/wrestling) <= 3)
+					M.resist_grab(freeresist = TRUE) //Automatically attempt to break a passive grab if defender's combat mode is on. Anti-grabspam measure.
+
 /mob/living/proc/is_limb_covered(obj/item/bodypart/limb)
 	if(!limb)
 		return FALSE
@@ -626,8 +639,6 @@
 	if(pulling)
 		if(ismob(pulling))
 			var/mob/living/M = pulling
-			if(pulledby && pulledby == pulling)
-				reset_offsets("pulledby")
 			M.reset_offsets("pulledby")
 			reset_pull_offsets(pulling)
 			if(HAS_TRAIT(M, TRAIT_GARROTED))
@@ -1307,10 +1318,6 @@
 			if(!gcord)
 				gcord = L.get_inactive_held_item()
 			to_chat(pulledby, span_warning("[src] struggles against the [gcord]!"))
-			if(!src.mind) // NPCs do less damage to the garrote
-				gcord.take_damage(10)
-			else
-				gcord.take_damage(25)
 		if(!HAS_TRAIT(src, TRAIT_GARROTED))
 			visible_message(span_warning("[src] struggles to break free from [L]'s grip!"), \
 						span_warning("I struggle against [L]'s grip![rchance]"), null, null, L)
@@ -1339,7 +1346,7 @@
 		var/obj/item/inqarticles/garrote/gcord = L.get_active_held_item()
 		if(!gcord)
 			gcord = L.get_inactive_held_item()
-		gcord.take_damage(gcord.max_integrity)
+		gcord.take_damage(100)//Two escapes to snap it.
 		gcord.wipeslate(src)
 	log_combat(L, src, "broke grab")
 	L.changeNext_move(agg_grab ? CLICK_CD_GRABBING : CLICK_CD_GRABBING + 1 SECONDS)

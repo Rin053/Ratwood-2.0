@@ -16,16 +16,16 @@
 		src.adjust_skillrank(/datum/skill/misc/sneaking, 3, TRUE)
 		src.adjust_skillrank(/datum/skill/misc/climbing, 5, TRUE)
 
-		src.STASTR = 12
+		src.STASTR = 10
 		src.STACON = 6
-		src.STAWIL = 7
+		src.STAWIL = 11
 		src.STAPER = 12
 		src.STASPD = 14
 
 		AddSpell(new /obj/effect/proc_holder/spell/self/spiderfangs)
 		AddSpell(new /obj/effect/proc_holder/spell/self/createhoney)
 		AddSpell(new /obj/effect/proc_holder/spell/self/weaveweb)
-		real_name = "beespider"
+		real_name = "Beespider"
 		faction += "spiders" // It IS a spider
 
 // CAT SPECIES DATUM //
@@ -44,7 +44,6 @@
 		TRAIT_BREADY, //Ambusher
 		TRAIT_ORGAN_EATER,
 		TRAIT_PIERCEIMMUNE, //Prevents weapon dusting and caltrop effects when killed/stepping on shards, also 8 legs.
-		TRAIT_DODGEEXPERT,
 		TRAIT_LONGSTRIDER
 	)
 	inherent_biotypes = MOB_HUMANOID
@@ -122,7 +121,7 @@
 	item_state = null
 	lefthand_file = null
 	righthand_file = null
-	icon = 'icons/roguetown/weapons/unarmed32.dmi'
+	icon = 'icons/roguetown/weapons/misc32.dmi'
 	max_blade_int = 400
 	max_integrity = 400
 	force = 25 //More than the volf, more fragile, hits slower

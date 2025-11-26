@@ -16,6 +16,7 @@
 	gesture_required = TRUE // Potential offensive use, need a target
 	antimagic_allowed = TRUE
 	recharge_time = 15 SECONDS
+	human_req = TRUE
 	miracle = FALSE
 	zizo_spell = TRUE
 

@@ -94,6 +94,12 @@ GLOBAL_VAR_INIT(year_integer, text2num(year)) // = 2013???
 		popup.open()
 		return
 
+	if(href_list["reveal_cosmetic"])
+		if(mind && mind.cosmetic_class_title)
+			var/actual_job = job ? job : "Unknown"
+			to_chat(usr, span_notice("[mind.cosmetic_class_title] is [actual_job]."))
+		return
+
 	if(href_list["undiesthing"]) //canUseTopic check for this is handled by mob/Topic()
 		if(!get_location_accessible(src, BODY_ZONE_PRECISE_GROIN, skipundies = TRUE))
 			to_chat(usr, span_warning("I can't reach that! Something is covering it."))

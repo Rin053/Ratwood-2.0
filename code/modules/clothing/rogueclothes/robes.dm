@@ -9,7 +9,6 @@
 	sleeved = 'icons/roguetown/clothing/onmob/helpers/sleeves_armor.dmi'
 	boobed = TRUE
 	flags_inv = HIDEBOOB|HIDECROTCH
-	color = "#7c6d5c"
 	r_sleeve_status = SLEEVE_NORMAL
 	l_sleeve_status = SLEEVE_NORMAL
 	experimental_inhand = FALSE
@@ -101,9 +100,6 @@
 
 /obj/item/clothing/suit/roguetown/shirt/robe/black
 	color = CLOTHING_BLACK
-
-/obj/item/clothing/suit/roguetown/shirt/robe/white
-	color = CLOTHING_WHITE
 
 /obj/item/clothing/suit/roguetown/shirt/robe/priest
 	name = "solar vestments"

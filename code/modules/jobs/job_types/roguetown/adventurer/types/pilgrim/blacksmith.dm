@@ -9,9 +9,10 @@
 	category_tags = list(CTAG_PILGRIM, CTAG_TOWNER)
 	traits_applied = list(TRAIT_TRAINED_SMITH, TRAIT_SMITHING_EXPERT)
 	subclass_stats = list(
-		STATKEY_WIL = 2,
-		STATKEY_CON = 2,
+		STATKEY_WIL = 1,
+		STATKEY_CON = 1,
 		STATKEY_STR = 1,
+		STATKEY_INT = 2,
 		STATKEY_LCK = 1,
 		STATKEY_SPD = -1
 	)
@@ -45,6 +46,7 @@
 	mouth = /obj/item/rogueweapon/huntingknife
 	pants = /obj/item/clothing/under/roguetown/trou
 	backl = /obj/item/storage/backpack/rogue/backpack
+	backr = /obj/item/rogueweapon/scabbard/sheath
 	backpack_contents = list(
 		/obj/item/flint = 1,
 		/obj/item/rogueore/coal = 4,
@@ -52,8 +54,10 @@
 		/obj/item/flashlight/flare/torch = 1,
 		/obj/item/recipe_book/blacksmithing = 1,
 		/obj/item/recipe_book/survival = 1,
-		/obj/item/rogueweapon/scabbard/sheath = 1
+		/obj/item/armor_brush = 1,
+		/obj/item/polishing_cream = 1
 		)
+
 	if(H.mind)
 		var/molds = list(
 			"Iron sword mold" = /obj/item/mold/sword,

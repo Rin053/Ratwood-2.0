@@ -1,6 +1,6 @@
 /datum/job/roguetown/keeper
 	title = "Keeper"
-	tutorial = "Disfigured, shunned, or simply filled with purpose and dedication for Pestra. Some of you are horrifically mutated, disfigured, or diseased. No matter, even the pretty ones feel the toll as it leaves their strength atrophied. Someone has to harvest the holy blood required to purify lux and perpetuate Pestra's gift of medicine. Unfortunately, that's you. That's correct, I'm the one tasked with protecting the sacred Heart Beast of Pestra here. To study it and empower it so that Pestra's medicine may blossom even in the furthest reaches of Azure. Keep in mind you are NOT directly affiliated with the church of the see, the local bishop is not your boss. You answer to the sect of Pestra foremost."
+	tutorial = "Disfigured, shunned, or simply filled with purpose and dedication for Pestra. Some of you are horrifically mutated, disfigured, or diseased. No matter, even the pretty ones feel the toll as it leaves their strength atrophied. Someone has to harvest the holy blood required to purify lux and perpetuate Pestra's gift of medicine. Unfortunately, that's you. That's correct, I'm the one tasked with protecting the sacred Heart Beast of Pestra here. To study it and empower it so that Pestra's medicine may blossom even in the furthest reaches of Ferentia. Keep in mind you are NOT directly affiliated with the church of the see, the local bishop is not your boss. You answer to the sect of Pestra foremost."
 	flag = KEEPER
 	department_flag = CHURCHMEN
 	faction = "Station"
@@ -29,7 +29,7 @@
 
 /datum/advclass/keeper
 	name = "Keeper"
-	tutorial = "Disfigured, shunned, or simply filled with purpose and dedication for Pestra. Some of you are horrifically mutated, disfigured, or diseased. No matter, even the pretty ones feel the toll as it leaves their strength atrophied. Someone has to harvest the holy blood required to purify lux and perpetuate Pestra's gift of medicine. Unfortunately, that's you. That's correct, I'm the one tasked with protecting the sacred Heart Beast of Pestra here. To study it and empower it so that Pestra's medicine may blossom even in the furthest reaches of Azure. Keep in mind you are NOT directly affiliated with the church of the see, the local bishop is not your boss. You answer to the followers of Pestra foremost."
+	tutorial = "Disfigured, shunned, or simply filled with purpose and dedication for Pestra. Some of you are horrifically mutated, disfigured, or diseased. No matter, even the pretty ones feel the toll as it leaves their strength atrophied. Someone has to harvest the holy blood required to purify lux and perpetuate Pestra's gift of medicine. Unfortunately, that's you. That's correct, I'm the one tasked with protecting the sacred Heart Beast of Pestra here. To study it and empower it so that Pestra's medicine may blossom even in the furthest reaches of Ferentia. Keep in mind you are NOT directly affiliated with the church of the see, the local bishop is not your boss. You answer to the followers of Pestra foremost."
 	outfit = /datum/outfit/job/roguetown/keeper/basic
 	category_tags = list(CTAG_KEEPER)
 	// No perception as to dissuade picking statpacks to negate the strength penalty.
@@ -84,7 +84,8 @@
 							 /obj/item/rogueweapon/huntingknife/idagger/steel/parrying = 1,
 							 /obj/item/roguekey/keeper = 1,
 							 /obj/item/roguekey/keeper_inner = 1,
-							 /obj/item/storage/keyring/churchie = 1)
+							 /obj/item/storage/keyring/churchie = 1,
+							 /obj/item/rogueweapon/scabbard/sheath = 2)
 	H.put_in_hands(new /obj/item/storage/belt/rogue/surgery_bag/full/physician(H), TRUE)
 	var/datum/devotion/C = new /datum/devotion(H, H.patron)
 	C.grant_miracles(H, cleric_tier = CLERIC_T3, passive_gain = CLERIC_REGEN_MINOR, start_maxed = TRUE)

@@ -431,8 +431,8 @@
 	name = "psydonic war axe"
 	desc = "An ornate battle axe, plated in a ceremonial veneer of silver. The premiere instigator of conflict against elven attachees."
 	icon_state = "psyaxe"
-	force = 20
-	force_wielded = 25
+	force = 25
+	force_wielded = 30
 	minstr = 11
 	wdefense = 6
 	blade_dulling = DULLING_SHAFT_METAL
@@ -454,10 +454,8 @@
 	name = "enduring war axe"
 	desc = "An ornate battle axe, its silver tarnished by neglect. Even a dim light can pierce the dark."
 	icon_state = "psyaxe"
-	force = 25
-	force_wielded = 30
-	minstr = 9
-	wdefense = 4
+	force = 20
+	force_wielded = 25
 	is_silver = FALSE
 	smeltresult = /obj/item/ingot/steel
 	color = COLOR_FLOORTILE_GRAY
@@ -468,9 +466,9 @@
 /obj/item/rogueweapon/stoneaxe/battle/steppesman
 	name = "aavnic valaška"
 	desc = "A steel axe of Aavnic make that combines a deadly weapon with a walking stick - hence its pointed end. It has a flat head that fits the hand comfortably, and it's usable for chopping and smashing. You could probably stab someone if you tried really hard."
-	possible_item_intents = list(/datum/intent/axe/cut/battle, /datum/intent/axe/chop/battle, /datum/intent/mace/smash, /datum/intent/sword/peel)
-	gripped_intents = list(/datum/intent/axe/cut/battle ,/datum/intent/axe/chop/battle, /datum/intent/stab, /datum/intent/sword/peel)
-	force_wielded = 25	//No damage changes for wielded/unwielded
+	possible_item_intents = list(/datum/intent/axe/cut/battle, /datum/intent/axe/chop/battle, /datum/intent/mace/smash, /datum/intent/mace/warhammer/pick)
+	gripped_intents = list(/datum/intent/axe/cut/battle ,/datum/intent/axe/chop/battle, /datum/intent/stab, /datum/intent/mace/warhammer/pick)
+	force_wielded = 28	//No damage changes for wielded/unwielded
 	icon_state = "valaska"
 	demolition_mod = 2.5
 	walking_stick = TRUE
@@ -529,6 +527,18 @@
 	minstr = 11
 	max_blade_int = 250
 	smeltresult = /obj/item/ingot/steel
+
+/obj/item/rogueweapon/greataxe/steel/necran
+	name = "Respite"
+	desc = "An axe, anointed in censer soot and wrapped with linens. The tool of a headsman, for a purpose far greater than mere servitude. \
+	Fit with a well-honed head, coupled to a well balanced shaft. It bears the blessing of respite."
+	icon_state = "necroberd"
+	force = 18//+3, typical of Templar weapons.
+	force_wielded = 33//As above. No peel, unlike Tidecleaver.
+	max_blade_int = 300//+50
+	max_integrity = 300//+50 - Tidecleaver is +150. This gets blade int AND integrity, by comparison.
+	walking_stick = TRUE
+	vorpal = TRUE // snicker snack this shit cuts heads off effortlessly (DO NOT PUT THIS ON ANYTHING ELSE UNLESS IT'S SUPER FUCKING RARE!!!)
 
 /obj/item/rogueweapon/greataxe/silver
 	force = 15

@@ -449,7 +449,6 @@
 	body_parts_covered = CHEST|GROIN|LEGS|VITALS
 	icon_state = "dressgen"
 	item_state = "dressgen"
-	color = "#6b5445"
 
 /obj/item/clothing/suit/roguetown/shirt/dress/gen/black
 	color = CLOTHING_BLACK

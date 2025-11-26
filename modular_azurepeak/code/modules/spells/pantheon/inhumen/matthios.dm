@@ -37,7 +37,7 @@
 				to_chat(target, span_warning("A pair of prying eyes were laid on me..."))
 			return
 		var/mammonsonperson = get_mammons_in_atom(target)
-		var/mammonsinbank = SStreasury.bank_accounts[target]
+		var/mammonsinbank = SStreasury.bank_accounts[target] ? SStreasury.bank_accounts[target] : 0
 		var/totalvalue = mammonsinbank + mammonsonperson
 		to_chat(user, ("<font color='yellow'>[target] has [mammonsonperson] mammons on them, [mammonsinbank] in their nervelock, for a total of [totalvalue] mammons.</font>"))
 

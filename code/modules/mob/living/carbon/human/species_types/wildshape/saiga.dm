@@ -24,7 +24,7 @@
 		src.STASPD = 15
 
 		AddSpell(new /obj/effect/proc_holder/spell/self/saigahoofs)
-		real_name = "Saiga ([stored_mob.real_name])" //So we don't get a random name
+		real_name = "Saiga" //So we don't get a random name
 		faction += "saiga" // It IS a saiga
 
 // SAIGA SPECIES DATUM //

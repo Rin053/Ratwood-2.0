@@ -1038,7 +1038,7 @@
 		used_title =  J.display_title || J.title
 		if(J.f_title && (pronouns == SHE_HER || pronouns == THEY_THEM_F))
 			used_title = J.f_title
-		if(J.advjob_examine)
+		if(J.advjob_examine && advjob)
 			used_title = advjob
 	return used_title
 

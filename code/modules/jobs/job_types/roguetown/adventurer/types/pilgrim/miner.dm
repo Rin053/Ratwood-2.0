@@ -56,7 +56,7 @@
 						/obj/item/storage/hip/orestore/bronze = 1
 						)
 	if(H.pronouns == SHE_HER || H.pronouns == THEY_THEM_F)
-		armor = /obj/item/clothing/suit/roguetown/shirt/dress/gen
+		armor = /obj/item/clothing/suit/roguetown/shirt/dress/gen/random
 		shirt = /obj/item/clothing/suit/roguetown/shirt/undershirt/brown
 	if(H.pronouns == HE_HIM || H.pronouns == THEY_THEM || H.pronouns == IT_ITS)
 		armor = /obj/item/clothing/suit/roguetown/armor/workervest

@@ -66,7 +66,7 @@ SUBSYSTEM_DEF(ticker)
 	var/list/royals_readied = list()
 
 	/// Realm name, the location name of the current map
-	var/realm_name = "Azure Peak"
+	var/realm_name = "Rotwood Vale"
 	/// Reports the current ruler's display name
 	var/rulertype = "Grand Duke"
 	/// The current ruling mob
@@ -479,6 +479,7 @@ SUBSYSTEM_DEF(ticker)
 		if(player.ready == PLAYER_READY_TO_PLAY)
 			GLOB.joined_player_list += player.ckey
 			update_wretch_slots()
+			update_bandit_slots()
 			player.create_character(FALSE)
 		else
 			player.new_player_panel()
