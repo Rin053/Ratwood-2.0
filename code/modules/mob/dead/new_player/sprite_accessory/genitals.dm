@@ -37,6 +37,8 @@
 */
 
 /datum/sprite_accessory/penis/is_visible(obj/item/organ/organ, obj/item/bodypart/bodypart, mob/living/carbon/owner)
+	if(owner.sexcon.bottom_exposed == TRUE)
+		return TRUE
 	if(owner.underwear)
 		return FALSE
 	return is_human_part_visible(owner, HIDEJUMPSUIT|HIDECROTCH)

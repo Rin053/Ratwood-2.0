@@ -58,6 +58,9 @@
 	var/mob/living/carbon/knotted_owner = null // whom has the knot
 	var/mob/living/carbon/knotted_recipient = null // whom took the knot
 
+	var/bottom_exposed = FALSE
+	var/top_exposed = FALSE
+
 /datum/sex_controller/New(mob/living/carbon/human/owner)
 	user = owner
 
@@ -399,6 +402,9 @@
 	if(penis && hascall(penis, "update_erect_state"))
 		penis.update_erect_state()
 
+/datum/sex_controller/proc/update_exposure()
+	user.regenerate_icons()
+
 /datum/sex_controller/proc/adjust_arousal(amount)
 	if(aphrodisiac > 1 && amount > 0)
 		set_arousal(arousal + (amount * aphrodisiac))
@@ -624,6 +630,7 @@
 	if(user.getorganslot(ORGAN_SLOT_PENIS))
 		dat += " ~|~ <a href='?src=[REF(src)];task=manual_arousal_down'>\<</a> [manual_arousal_name] <a href='?src=[REF(src)];task=manual_arousal_up'>\></a>"
 	dat += "</center><center><a href='?src=[REF(src)];task=toggle_finished'>[do_until_finished ? "UNTIL IM FINISHED" : "UNTIL I STOP"]</a>"
+	dat += "</center><center><a href='?src=[REF(src)];task=toggle_top_exposed'>[top_exposed ? "TOP EXPOSED" : "TOP CONCEALED"] ~|~</a> <a href='?src=[REF(src)];task=toggle_bottom_exposed'>[bottom_exposed ? "BOTTOM EXPOSED" : "BOTTOM CONCEALED"]</a>"
 	if(current_action && !desire_stop)
 		var/datum/sex_action/action = SEX_ACTION(current_action)
 		if(action.knot_on_finish && knot_penis_type())
@@ -700,6 +707,12 @@
 			adjust_arousal_manual(-1)
 		if("toggle_finished")
 			do_until_finished = !do_until_finished
+		if("toggle_top_exposed")
+			top_exposed = !top_exposed
+			update_exposure()
+		if("toggle_bottom_exposed")
+			bottom_exposed = !bottom_exposed
+			update_exposure()
 		if("set_arousal")
 			var/amount = input(user, "Value above 120 will immediately cause orgasm!", "Set Arousal", arousal) as num
 			if(aphrodisiac > 1 && amount > 0)
