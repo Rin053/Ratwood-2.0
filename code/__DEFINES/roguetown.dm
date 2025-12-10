@@ -75,20 +75,20 @@ Balloon Alert / Floating Text defines
 
 #define RACES_TOLERATED \
 	/datum/species/elf/dark,\
-	/datum/species/tieberian,\
 	/datum/species/lizardfolk,\
 	/datum/species/tabaxi,\
 	/datum/species/akula,\
 	/datum/species/anthromorph,\
 	/datum/species/demihuman,\
 	/datum/species/lamia,\
+	/datum/species/anthromorphsmall,\
 
 #define RACES_SHUNNED \
-	/datum/species/anthromorphsmall,\
 	/datum/species/kobold,\
 	/datum/species/dullahan,\
 	/datum/species/halforc,\
 	/datum/species/goblinp,\
+	/datum/species/tieberian,\
 
 #define RACES_DESPISED \
 	/datum/species/dullahan,\
