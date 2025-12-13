@@ -523,34 +523,36 @@
 	desc = "A ring, once of great power, now holding little but a spark. This had surely been clutched in talon through the ages."
 	smeltresult = /obj/item/ash//You've ruined it. Good going, champ.
 	sellprice = 125
+	var/active_item
 
 /obj/item/clothing/ring/oathmarked/equipped(mob/living/user, slot)
 	. = ..()
 	if(ishuman(user))
-		var/mob/living/carbon/human/H = user
-		if(H.merctype == 16) //Oathmarked
-			//The bad.
-			H.remove_status_effect(/datum/status_effect/debuff/lost_oath_ring)
-			H.remove_stress(/datum/stressevent/oath_ring_lost)
-			//The good.
-			H.add_stress(/datum/stressevent/oath_ring)
-			//Stat change.
-			user.change_stat(STATKEY_CON, 1)
-			user.change_stat(STATKEY_WIL, 1)
+		if(active_item)
+			return
+		else if(slot == SLOT_RING)
+			var/mob/living/carbon/human/H = user
+			if(H.merctype == 16) //Oathmarked
+				active_item = TRUE
+				//The bad.
+				H.remove_status_effect(/datum/status_effect/debuff/lost_oath_ring)
+				H.remove_stress(/datum/stressevent/oath_ring_lost)
+				//The good.
+				H.add_stress(/datum/stressevent/oath_ring)
+				H.apply_status_effect(/datum/status_effect/buff/oath_ring)
 
 /obj/item/clothing/ring/oathmarked/dropped(mob/living/user)
 	. = ..()
 	if(ishuman(user))
 		var/mob/living/carbon/human/H = user
-		if(H.merctype == 16) //Oathmarked
+		if(H.merctype == 16 || active_item) //Oathmarked
 			//The bad.
 			H.apply_status_effect(/datum/status_effect/debuff/lost_oath_ring)
 			H.add_stress(/datum/stressevent/oath_ring_lost)
 			//More bad.
 			H.remove_stress(/datum/stressevent/oath_ring)
-			//Stat change.
-			user.change_stat(STATKEY_CON, -1)
-			user.change_stat(STATKEY_WIL, -1)
+			H.remove_status_effect(/datum/status_effect/buff/oath_ring)
+			active_item = FALSE
 
 /obj/item/clothing/ring/oathmarked/examine(mob/user)
 	. = ..()

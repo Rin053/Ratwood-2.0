@@ -1658,3 +1658,12 @@
 	alert_type = /atom/movable/screen/alert/status_effect/buff
 	effectedstats = list(STATKEY_SPD = 3, STATKEY_WIL = 1, STATKEY_CON = 1)
 	status_type = STATUS_EFFECT_REPLACE
+
+/datum/status_effect/buff/oath_ring
+	id = "oath_ring_buff"
+	alert_type = /atom/movable/screen/alert/status_effect/buff/oath_ring
+	effectedstats = list(STATKEY_CON = 1, STATKEY_WIL = 1)
+
+/atom/movable/screen/alert/status_effect/buff/oath_ring
+	name = "Oathmarked"
+	desc = "The oath drives me forward, so long as the reminder is kept near."
