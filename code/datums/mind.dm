@@ -964,9 +964,9 @@ GLOBAL_LIST_EMPTY(personal_objective_minds)
 							
 							// Add subtle examination text to indicate this is a loadout reproduction
 							if(I.desc)
-								I.desc += " The craftsmanship suggests this may be a reproduction."
+								I.desc += " The item suggests this may be a mere reproduction."
 							else
-								I.desc = "The craftsmanship suggests this may be a reproduction."
+								I.desc = "The item suggests this may be a mere reproduction."
 							
 							// Set sellprice to 0
 							I.sellprice = 0
@@ -981,15 +981,29 @@ GLOBAL_LIST_EMPTY(personal_objective_minds)
 								// Set armor class to LIGHT for all loadout armor
 								if(C.armor_class != ARMOR_CLASS_NONE)
 									C.armor_class = ARMOR_CLASS_LIGHT
-								// Set all loadout armor to basic padded values
+								// Apply ARMOR_MIND_PROTECTION with slight randomization (±10%)
+								var/list/_baseArmor = ARMOR_MIND_PROTECTION
+								var/_percent = rand(-10, 10)
+								var/_scale = 1 + (_percent / 100)
+								var/_ab = round(_baseArmor["blunt"] * _scale)
+								var/_asl = round(_baseArmor["slash"] * _scale)
+								var/_ast = round(_baseArmor["stab"] * _scale)
+								var/_ap = round(_baseArmor["piercing"] * _scale)
+								var/_af = round(_baseArmor["fire"] * _scale)
+								var/_aa = round(_baseArmor["acid"] * _scale)
 								if(C.armor)
-									C.armor = ARMOR_MIND_PROTECTION
-								// Set max integrity to light armor base
-								C.max_integrity = ARMOR_INT_CHEST_LIGHT_BASE
+									C.armor = getArmor(_ab, _asl, _ast, _ap, _af, _aa, 0)
+								// Randomize max integrity around light base by ±10% and ensure full integrity
+								var/_base_int = ARMOR_INT_CHEST_LIGHT_BASE
+								var/_variance = round(_base_int * 0.1)
+								C.max_integrity = _base_int + rand(-_variance, _variance)
+								C.obj_integrity = C.max_integrity
 							
 							// Reduce weapon damage by 30% (rounded down)
 							if(I.force > 0)
 								I.force = round(I.force * 0.7)
+							// Ensure non-clothing loadout items start at full integrity as well
+							I.obj_integrity = I.max_integrity
 							
 							// Halve weapon defense (wdefense) values
 							if(I.wdefense > 0)
