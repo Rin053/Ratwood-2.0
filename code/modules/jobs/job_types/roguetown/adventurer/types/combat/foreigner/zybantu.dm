@@ -31,8 +31,10 @@
 	You can choose a martial loadout, for: +2PER/+1STR, JMAN spears, EXPT shields. \
 	Alternatively, neglect your martial, for: +2PER/+1SPD, JMAN holy, EXPT staves, T2 miracles."
 
+//This is gross, but it works. Better than a new define.
 /datum/outfit/job/roguetown/adventurer/dnomad
-	allowed_patrons = list(ALL_INHUMEN_PATRONS, /datum/patron/old_god)
+	allowed_patrons = list(/datum/patron/inhumen/baotha, /datum/patron/inhumen/graggar,
+	/datum/patron/inhumen/zizo, /datum/patron/inhumen/matthios, /datum/patron/old_god)
 
 /datum/outfit/job/roguetown/adventurer/dnomad/pre_equip(mob/living/carbon/human/H)
 	..()
