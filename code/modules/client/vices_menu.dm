@@ -1543,19 +1543,27 @@ GLOBAL_LIST_EMPTY(cached_loadout_icons)
 					vars[slot_var] = new selected()
 					var/datum/charflaw/new_vice = vars[slot_var]
 					
-					// Update the living character's vices immediately
+					// Update the living character's vices immediately ONLY if editing the active character
+					// (prevent applying other character slot vices to current character)
 					if(usr && ishuman(usr))
 						var/mob/living/carbon/human/H = usr
-						// Remove old vice if it exists
-						if(old_vice && (old_vice in H.vices))
-							H.vices -= old_vice
-						// Add new vice to character
-						if(new_vice)
-							H.vices += new_vice
-							new_vice.on_mob_creation(H)
-							// If this is slot 1, also update legacy charflaw field
-							if(slot == 1)
-								H.charflaw = new_vice
+						// Only apply if this is the character currently being played
+						if(H.real_name == real_name)
+							// Remove old vice if it exists (compare by type, not instance)
+							if(old_vice)
+								for(var/datum/charflaw/vice in H.vices)
+									if(vice.type == old_vice.type)
+										// Clean up old vice effects
+										vice.on_removal(H)
+										H.vices -= vice
+										break
+							// Add new vice to character
+							if(new_vice)
+								H.vices += new_vice
+								new_vice.on_mob_creation(H)
+								// If this is slot 1, also update legacy charflaw field
+								if(slot == 1)
+									H.charflaw = new_vice
 					
 					to_chat(usr, span_notice("Selected [choice] for vice slot [slot]."))
 					if(new_vice.desc)
@@ -1572,15 +1580,23 @@ GLOBAL_LIST_EMPTY(cached_loadout_icons)
 				var/datum/charflaw/old_vice = vars[slot_var]
 				vars[slot_var] = null
 				
-				// Update the living character's vices immediately
+				// Update the living character's vices immediately ONLY if editing the active character
+				// (prevent applying other character slot vices to current character)
 				if(usr && ishuman(usr))
 					var/mob/living/carbon/human/H = usr
-					// Remove the old vice from the character's vices list if it exists
-					if(old_vice && (old_vice in H.vices))
-						H.vices -= old_vice
-					// If this was the first slot, also clear the legacy charflaw field
-					if(slot == 1 && H.charflaw == old_vice)
-						H.charflaw = null
+					// Only apply if this is the character currently being played
+					if(H.real_name == real_name)
+						// Remove the old vice from the character's vices list (compare by type, not instance)
+						if(old_vice)
+							for(var/datum/charflaw/vice in H.vices)
+								if(vice.type == old_vice.type)
+									// Clean up old vice effects
+									vice.on_removal(H)
+									H.vices -= vice
+									// If this was the first slot, also clear the legacy charflaw field
+									if(slot == 1 && H.charflaw == vice)
+										H.charflaw = null
+									break
 				
 				save_character()
 				open_vices_menu(usr)

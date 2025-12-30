@@ -57,6 +57,18 @@
 	time = rand(6 MINUTES, 30 MINUTES)
 	next_sate = world.time + time
 
+// Clean up addiction effects when vice is removed
+/datum/charflaw/addiction/on_removal(mob/user)
+	if(!ishuman(user))
+		return
+	var/mob/living/carbon/human/H = user
+	// Remove stress event
+	if(stress_event)
+		H.remove_stress(stress_event)
+	// Remove debuff
+	if(debuff)
+		H.remove_status_effect(debuff)
+
 /datum/charflaw/addiction/flaw_on_life(mob/user)
 	if(!ishuman(user))
 		return

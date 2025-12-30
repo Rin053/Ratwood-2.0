@@ -45,6 +45,10 @@ GLOBAL_LIST_INIT(character_flaws, list(
 /datum/charflaw/proc/flaw_on_life(mob/user)
 	return
 
+// Called when a vice is removed from a character to clean up persistent effects
+/datum/charflaw/proc/on_removal(mob/user)
+	return
+
 /mob/proc/has_flaw(flaw)
 	return
 
