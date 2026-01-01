@@ -374,16 +374,16 @@ GLOBAL_LIST_EMPTY(cached_loadout_icons)
 		"vice3" = vice3,
 		"vice4" = vice4,
 		"vice5" = vice5,
-		"loadout" = loadout,
-		"loadout2" = loadout2,
-		"loadout3" = loadout3,
-		"loadout4" = loadout4,
-		"loadout5" = loadout5,
-		"loadout6" = loadout6,
-		"loadout7" = loadout7,
-		"loadout8" = loadout8,
-		"loadout9" = loadout9,
-		"loadout10" = loadout10,
+		"loadout" = loadout?.type,
+		"loadout2" = loadout2?.type,
+		"loadout3" = loadout3?.type,
+		"loadout4" = loadout4?.type,
+		"loadout5" = loadout5?.type,
+		"loadout6" = loadout6?.type,
+		"loadout7" = loadout7?.type,
+		"loadout8" = loadout8?.type,
+		"loadout9" = loadout9?.type,
+		"loadout10" = loadout10?.type,
 		"loadout_1_name" = loadout_1_name,
 		"loadout_2_name" = loadout_2_name,
 		"loadout_3_name" = loadout_3_name,
@@ -443,54 +443,64 @@ GLOBAL_LIST_EMPTY(cached_loadout_icons)
 	vice4 = preset["vice4"]
 	vice5 = preset["vice5"]
 	
-	// Validate loadout datums exist in GLOB before restoring
-	if(preset["loadout"] && (preset["loadout"] in GLOB.loadout_items.Copy()))
-		loadout = preset["loadout"]
+	// Load loadout types and instantiate them if valid
+	var/loadout_type = preset["loadout"]
+	if(loadout_type && ispath(loadout_type, /datum/loadout_item))
+		loadout = new loadout_type()
 	else
 		loadout = null
 	
-	if(preset["loadout2"] && (preset["loadout2"] in GLOB.loadout_items.Copy()))
-		loadout2 = preset["loadout2"]
+	var/loadout_type2 = preset["loadout2"]
+	if(loadout_type2 && ispath(loadout_type2, /datum/loadout_item))
+		loadout2 = new loadout_type2()
 	else
 		loadout2 = null
 	
-	if(preset["loadout3"] && (preset["loadout3"] in GLOB.loadout_items.Copy()))
-		loadout3 = preset["loadout3"]
+	var/loadout_type3 = preset["loadout3"]
+	if(loadout_type3 && ispath(loadout_type3, /datum/loadout_item))
+		loadout3 = new loadout_type3()
 	else
 		loadout3 = null
 	
-	if(preset["loadout4"] && (preset["loadout4"] in GLOB.loadout_items.Copy()))
-		loadout4 = preset["loadout4"]
+	var/loadout_type4 = preset["loadout4"]
+	if(loadout_type4 && ispath(loadout_type4, /datum/loadout_item))
+		loadout4 = new loadout_type4()
 	else
 		loadout4 = null
 	
-	if(preset["loadout5"] && (preset["loadout5"] in GLOB.loadout_items.Copy()))
-		loadout5 = preset["loadout5"]
+	var/loadout_type5 = preset["loadout5"]
+	if(loadout_type5 && ispath(loadout_type5, /datum/loadout_item))
+		loadout5 = new loadout_type5()
 	else
 		loadout5 = null
 	
-	if(preset["loadout6"] && (preset["loadout6"] in GLOB.loadout_items.Copy()))
-		loadout6 = preset["loadout6"]
+	var/loadout_type6 = preset["loadout6"]
+	if(loadout_type6 && ispath(loadout_type6, /datum/loadout_item))
+		loadout6 = new loadout_type6()
 	else
 		loadout6 = null
 	
-	if(preset["loadout7"] && (preset["loadout7"] in GLOB.loadout_items.Copy()))
-		loadout7 = preset["loadout7"]
+	var/loadout_type7 = preset["loadout7"]
+	if(loadout_type7 && ispath(loadout_type7, /datum/loadout_item))
+		loadout7 = new loadout_type7()
 	else
 		loadout7 = null
 	
-	if(preset["loadout8"] && (preset["loadout8"] in GLOB.loadout_items.Copy()))
-		loadout8 = preset["loadout8"]
+	var/loadout_type8 = preset["loadout8"]
+	if(loadout_type8 && ispath(loadout_type8, /datum/loadout_item))
+		loadout8 = new loadout_type8()
 	else
 		loadout8 = null
 	
-	if(preset["loadout9"] && (preset["loadout9"] in GLOB.loadout_items.Copy()))
-		loadout9 = preset["loadout9"]
+	var/loadout_type9 = preset["loadout9"]
+	if(loadout_type9 && ispath(loadout_type9, /datum/loadout_item))
+		loadout9 = new loadout_type9()
 	else
 		loadout9 = null
 	
-	if(preset["loadout10"] && (preset["loadout10"] in GLOB.loadout_items.Copy()))
-		loadout10 = preset["loadout10"]
+	var/loadout_type10 = preset["loadout10"]
+	if(loadout_type10 && ispath(loadout_type10, /datum/loadout_item))
+		loadout10 = new loadout_type10()
 	else
 		loadout10 = null
 	loadout_1_name = preset["loadout_1_name"]
