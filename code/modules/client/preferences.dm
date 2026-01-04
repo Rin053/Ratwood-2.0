@@ -2722,73 +2722,73 @@ Slots: [job.spawn_positions] [job.round_contrib_points ? "RCP: +[job.round_contr
 	return 1
 
 /datum/preferences/proc/resolve_loadout_to_color(item_path)
-	if (loadout && (item_path == loadout.type) && loadout_1_hex)
+	if (loadout && (item_path == loadout.path) && loadout_1_hex)
 		return loadout_1_hex
-	if (loadout2 && (item_path == loadout2.type) && loadout_2_hex)
+	if (loadout2 && (item_path == loadout2.path) && loadout_2_hex)
 		return loadout_2_hex
-	if (loadout3 && (item_path == loadout3.type) && loadout_3_hex)
+	if (loadout3 && (item_path == loadout3.path) && loadout_3_hex)
 		return loadout_3_hex
-	if (loadout4 && (item_path == loadout4.type) && loadout_4_hex)
+	if (loadout4 && (item_path == loadout4.path) && loadout_4_hex)
 		return loadout_4_hex
-	if (loadout5 && (item_path == loadout5.type) && loadout_5_hex)
+	if (loadout5 && (item_path == loadout5.path) && loadout_5_hex)
 		return loadout_5_hex
-	if (loadout6 && (item_path == loadout6.type) && loadout_6_hex)
+	if (loadout6 && (item_path == loadout6.path) && loadout_6_hex)
 		return loadout_6_hex
-	if (loadout7 && (item_path == loadout7.type) && loadout_7_hex)
+	if (loadout7 && (item_path == loadout7.path) && loadout_7_hex)
 		return loadout_7_hex
-	if (loadout8 && (item_path == loadout8.type) && loadout_8_hex)
+	if (loadout8 && (item_path == loadout8.path) && loadout_8_hex)
 		return loadout_8_hex
-	if (loadout9 && (item_path == loadout9.type) && loadout_9_hex)
+	if (loadout9 && (item_path == loadout9.path) && loadout_9_hex)
 		return loadout_9_hex
-	if (loadout10 && (item_path == loadout10.type) && loadout_10_hex)
+	if (loadout10 && (item_path == loadout10.path) && loadout_10_hex)
 		return loadout_10_hex
 
 	return FALSE
 
 /datum/preferences/proc/resolve_loadout_to_name(item_path)
-	if (loadout && (item_path == loadout.type) && loadout_1_name)
+	if (loadout && (item_path == loadout.path) && loadout_1_name)
 		return loadout_1_name
-	if (loadout2 && (item_path == loadout2.type) && loadout_2_name)
+	if (loadout2 && (item_path == loadout2.path) && loadout_2_name)
 		return loadout_2_name
-	if (loadout3 && (item_path == loadout3.type) && loadout_3_name)
+	if (loadout3 && (item_path == loadout3.path) && loadout_3_name)
 		return loadout_3_name
-	if (loadout4 && (item_path == loadout4.type) && loadout_4_name)
+	if (loadout4 && (item_path == loadout4.path) && loadout_4_name)
 		return loadout_4_name
-	if (loadout5 && (item_path == loadout5.type) && loadout_5_name)
+	if (loadout5 && (item_path == loadout5.path) && loadout_5_name)
 		return loadout_5_name
-	if (loadout6 && (item_path == loadout6.type) && loadout_6_name)
+	if (loadout6 && (item_path == loadout6.path) && loadout_6_name)
 		return loadout_6_name
-	if (loadout7 && (item_path == loadout7.type) && loadout_7_name)
+	if (loadout7 && (item_path == loadout7.path) && loadout_7_name)
 		return loadout_7_name
-	if (loadout8 && (item_path == loadout8.type) && loadout_8_name)
+	if (loadout8 && (item_path == loadout8.path) && loadout_8_name)
 		return loadout_8_name
-	if (loadout9 && (item_path == loadout9.type) && loadout_9_name)
+	if (loadout9 && (item_path == loadout9.path) && loadout_9_name)
 		return loadout_9_name
-	if (loadout10 && (item_path == loadout10.type) && loadout_10_name)
+	if (loadout10 && (item_path == loadout10.path) && loadout_10_name)
 		return loadout_10_name
 
 	return FALSE
 
 /datum/preferences/proc/resolve_loadout_to_desc(item_path)
-	if (loadout && (item_path == loadout.type) && loadout_1_desc)
+	if (loadout && (item_path == loadout.path) && loadout_1_desc)
 		return loadout_1_desc
-	if (loadout2 && (item_path == loadout2.type) && loadout_2_desc)
+	if (loadout2 && (item_path == loadout2.path) && loadout_2_desc)
 		return loadout_2_desc
-	if (loadout3 && (item_path == loadout3.type) && loadout_3_desc)
+	if (loadout3 && (item_path == loadout3.path) && loadout_3_desc)
 		return loadout_3_desc
-	if (loadout4 && (item_path == loadout4.type) && loadout_4_desc)
+	if (loadout4 && (item_path == loadout4.path) && loadout_4_desc)
 		return loadout_4_desc
-	if (loadout5 && (item_path == loadout5.type) && loadout_5_desc)
+	if (loadout5 && (item_path == loadout5.path) && loadout_5_desc)
 		return loadout_5_desc
-	if (loadout6 && (item_path == loadout6.type) && loadout_6_desc)
+	if (loadout6 && (item_path == loadout6.path) && loadout_6_desc)
 		return loadout_6_desc
-	if (loadout7 && (item_path == loadout7.type) && loadout_7_desc)
+	if (loadout7 && (item_path == loadout7.path) && loadout_7_desc)
 		return loadout_7_desc
-	if (loadout8 && (item_path == loadout8.type) && loadout_8_desc)
+	if (loadout8 && (item_path == loadout8.path) && loadout_8_desc)
 		return loadout_8_desc
-	if (loadout9 && (item_path == loadout9.type) && loadout_9_desc)
+	if (loadout9 && (item_path == loadout9.path) && loadout_9_desc)
 		return loadout_9_desc
-	if (loadout10 && (item_path == loadout10.type) && loadout_10_desc)
+	if (loadout10 && (item_path == loadout10.path) && loadout_10_desc)
 		return loadout_10_desc
 
 	return FALSE
