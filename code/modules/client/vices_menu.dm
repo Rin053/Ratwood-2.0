@@ -30,6 +30,18 @@
 					to_chat(user, span_warning("Night-eyed virtue conflicts with Colorblind vice!"))
 				return TRUE
 	
+	// Socialite (Beautiful) vs Ugly
+	if(virtue_type == /datum/virtue/utility/socialite)
+		for(var/datum/charflaw/vice in vice_list)
+			if(vice && vice.type == /datum/charflaw/ugly)
+				if(show_message && user)
+					to_chat(user, span_warning("Socialite virtue conflicts with Ugly vice!"))
+				return TRUE
+			if(vice && vice.type == /datum/charflaw/eerie_beauty)
+				if(show_message && user)
+					to_chat(user, span_warning("Socialite virtue conflicts with Eerie Beauty vice!"))
+				return TRUE
+	
 	// Deathless (no hunger/breath) vs any food/breathing related vices
 	// Deathless conflicts with nothing currently, but kept for future reference
 	
@@ -73,6 +85,22 @@
 			if(virt && virt.type == /datum/virtue/utility/night_vision)
 				if(show_message && user)
 					to_chat(user, span_warning("Colorblind vice conflicts with Night-eyed virtue!"))
+				return TRUE
+	
+	// Ugly vs Socialite (Beautiful)
+	if(vice_type == /datum/charflaw/ugly)
+		for(var/datum/virtue/virt in virtue_list)
+			if(virt && virt.type == /datum/virtue/utility/socialite)
+				if(show_message && user)
+					to_chat(user, span_warning("Ugly vice conflicts with Socialite virtue!"))
+				return TRUE
+	
+	// Eerie Beauty vs Socialite (Beautiful)
+	if(vice_type == /datum/charflaw/eerie_beauty)
+		for(var/datum/virtue/virt in virtue_list)
+			if(virt && virt.type == /datum/virtue/utility/socialite)
+				if(show_message && user)
+					to_chat(user, span_warning("Eerie Beauty vice conflicts with Socialite virtue!"))
 				return TRUE
 	
 	// Mute vs Second Voice (can't have second voice if you're mute)

@@ -25,6 +25,16 @@ GLOBAL_LIST_INIT(character_flaws, list(
 	"Critical Weakness (+1 TRI)"=/datum/charflaw/critweakness,
 	"Silver Weakness"=/datum/charflaw/silverweakness,
 	"Hunted (+1 TRI)"=/datum/charflaw/hunted,
+	"Ugly"=/datum/charflaw/ugly,
+	"Nudist"=/datum/charflaw/nudist,
+	"Inhumen Anatomy"=/datum/charflaw/inhumen_anatomy,
+	"Missing Nose"=/datum/charflaw/missing_nose,
+	"Disfigured"=/datum/charflaw/disfigured,
+	"Pacifism"=/datum/charflaw/pacifism,
+	"Annoying Face"=/datum/charflaw/annoying_face,
+	"Eerie Beauty"=/datum/charflaw/eerie_beauty,
+	"Nude Sleeper"=/datum/charflaw/nude_sleeper,
+	"Rotman"=/datum/charflaw/rotman,
 	/datum/charflaw/mind_broken::name = /datum/charflaw/mind_broken,
 	"Random or No Flaw"=/datum/charflaw/randflaw,
 	"No Flaw (-3 TRIUMPHS)"=/datum/charflaw/noflaw,
@@ -325,6 +335,166 @@ GLOBAL_LIST_INIT(character_flaws, list(
 	if(ishuman(user))
 		var/mob/living/carbon/human/H = user
 		H.adjust_triumphs(1)
+
+/datum/charflaw/ugly
+	name = "Ugly"
+	desc = "My face is ugly and makes everyone who looks at me miserable. Incompatible with Beautiful virtue."
+
+/datum/charflaw/ugly/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_UNSEEMLY, TRAIT_GENERIC)
+
+/datum/charflaw/ugly/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_UNSEEMLY, TRAIT_GENERIC)
+
+/datum/charflaw/nudist
+	name = "Nudist"
+	desc = "I refuse to wear clothes. They are a hindrance to my freedom."
+
+/datum/charflaw/nudist/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_NUDIST, TRAIT_GENERIC)
+
+/datum/charflaw/nudist/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_NUDIST, TRAIT_GENERIC)
+
+/datum/charflaw/inhumen_anatomy
+	name = "Inhumen Anatomy"
+	desc = "My anatomy is inhumen, preventing me from wearing hats and shoes."
+
+/datum/charflaw/inhumen_anatomy/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_INHUMEN_ANATOMY, TRAIT_GENERIC)
+
+/datum/charflaw/inhumen_anatomy/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_INHUMEN_ANATOMY, TRAIT_GENERIC)
+
+/datum/charflaw/missing_nose
+	name = "Missing Nose"
+	desc = "I struggle to breathe. My stamina regeneration is halved."
+
+/datum/charflaw/missing_nose/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_MISSING_NOSE, TRAIT_GENERIC)
+
+/datum/charflaw/missing_nose/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_MISSING_NOSE, TRAIT_GENERIC)
+
+/datum/charflaw/disfigured
+	name = "Disfigured"
+	desc = "No one can recognize me. My face has been permanently altered."
+
+/datum/charflaw/disfigured/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_DISFIGURED, TRAIT_GENERIC)
+
+/datum/charflaw/disfigured/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_DISFIGURED, TRAIT_GENERIC)
+
+/datum/charflaw/pacifism
+	name = "Pacifism"
+	desc = "I cannot harm another living being."
+
+/datum/charflaw/pacifism/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_PACIFISM, TRAIT_GENERIC)
+
+/datum/charflaw/pacifism/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_PACIFISM, TRAIT_GENERIC)
+
+/datum/charflaw/annoying_face
+	name = "Annoying Face"
+	desc = "I am cursed with an odd voice and appearance."
+
+/datum/charflaw/annoying_face/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_COMICSANS, TRAIT_GENERIC)
+
+/datum/charflaw/annoying_face/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_COMICSANS, TRAIT_GENERIC)
+
+/datum/charflaw/eerie_beauty
+	name = "Eerie Beauty"
+	desc = "Some would say my visage is an artwork created by the gods themselves; others call me an unsettling abomination. Incompatible with Socialite virtue."
+
+/datum/charflaw/eerie_beauty/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_BEAUTIFUL_UNCANNY, TRAIT_GENERIC)
+
+/datum/charflaw/eerie_beauty/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_BEAUTIFUL_UNCANNY, TRAIT_GENERIC)
+
+/datum/charflaw/nude_sleeper
+	name = "Nude Sleeper"
+	desc = "I can't fall asleep unless I'm nude and in bed."
+
+/datum/charflaw/nude_sleeper/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_NUDE_SLEEPER, TRAIT_GENERIC)
+
+/datum/charflaw/nude_sleeper/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_NUDE_SLEEPER, TRAIT_GENERIC)
+
+/datum/charflaw/rotman
+	name = "Rotman"
+	desc = "I am partially undead. My heart does not beat."
+
+/datum/charflaw/rotman/on_mob_creation(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		ADD_TRAIT(H, TRAIT_ROTMAN, TRAIT_GENERIC)
+
+/datum/charflaw/rotman/on_removal(mob/user)
+	..()
+	if(ishuman(user))
+		var/mob/living/carbon/human/H = user
+		REMOVE_TRAIT(H, TRAIT_ROTMAN, TRAIT_GENERIC)
 
 /datum/charflaw/hunted/flaw_on_life(mob/user)
 	if(!ishuman(user))
