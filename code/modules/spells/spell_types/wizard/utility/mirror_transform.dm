@@ -595,17 +595,8 @@
 						tail = new /obj/item/organ/tail/anthro()
 						tail.Insert(H, TRUE, FALSE)
 					tail.accessory_type = valid_tails[new_style]
-					var/datum/sprite_accessory/tail/tail_type = SPRITE_ACCESSORY(tail.accessory_type)
-					// Use character's existing colors
-					var/default_color1 = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					var/default_color2 = H.dna.features["mcolor2"] || default_color1
-					if(tail_type.color_keys >= 1)
-						var/list/color_list = list(default_color1)
-						if(tail_type.color_keys >= 2)
-							color_list += default_color2
-						tail.accessory_colors = color_list_to_string(color_list)
-					else
-						tail.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					tail.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -669,17 +660,8 @@
 						ears = new /obj/item/organ/ears()
 						ears.Insert(H, TRUE, FALSE)
 					ears.accessory_type = valid_ears[new_style]
-					var/datum/sprite_accessory/ears/ears_type = SPRITE_ACCESSORY(ears.accessory_type)
-					// Use character's existing colors
-					var/default_color1 = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					var/default_color2 = H.dna.features["mcolor2"] || default_color1
-					if(ears_type.color_keys >= 1)
-						var/list/color_list = list(default_color1)
-						if(ears_type.color_keys >= 2)
-							color_list += default_color2
-						ears.accessory_colors = color_list_to_string(color_list)
-					else
-						ears.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					ears.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -744,17 +726,8 @@
 						wings = new /obj/item/organ/wings()
 						wings.Insert(H, TRUE, FALSE)
 					wings.accessory_type = valid_wings[new_style]
-					var/datum/sprite_accessory/wings/wings_type = SPRITE_ACCESSORY(wings.accessory_type)
-					// Use character's existing colors
-					var/default_color1 = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					var/default_color2 = H.dna.features["mcolor2"] || default_color1
-					if(wings_type.color_keys >= 1)
-						var/list/color_list = list(default_color1)
-						if(wings_type.color_keys >= 2)
-							color_list += default_color2
-						wings.accessory_colors = color_list_to_string(color_list)
-					else
-						wings.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					wings.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -817,16 +790,8 @@
 						frills = new /obj/item/organ/frills()
 						frills.Insert(H, TRUE, FALSE)
 					frills.accessory_type = valid_frills[new_style]
-					var/datum/sprite_accessory/frills/frills_type = SPRITE_ACCESSORY(frills.accessory_type)
-					// Use character's existing colors
-					var/default_color = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					if(frills_type.color_keys >= 1)
-						var/list/color_list = list(default_color)
-						if(frills_type.color_keys >= 2)
-							color_list += default_color
-						frills.accessory_colors = color_list_to_string(color_list)
-					else
-						frills.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					frills.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -870,16 +835,8 @@
 						antennas = new /obj/item/organ/antennas()
 						antennas.Insert(H, TRUE, FALSE)
 					antennas.accessory_type = valid_antennas[new_style]
-					var/datum/sprite_accessory/antenna/antennas_type = SPRITE_ACCESSORY(antennas.accessory_type)
-					// Use character's existing colors
-					var/default_color = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					if(antennas_type.color_keys >= 1)
-						var/list/color_list = list(default_color)
-						if(antennas_type.color_keys >= 2)
-							color_list += default_color
-						antennas.accessory_colors = color_list_to_string(color_list)
-					else
-						antennas.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					antennas.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -923,16 +880,8 @@
 						snout = new /obj/item/organ/snout()
 						snout.Insert(H, TRUE, FALSE)
 					snout.accessory_type = valid_snouts[new_style]
-					var/datum/sprite_accessory/snout/snout_type = SPRITE_ACCESSORY(snout.accessory_type)
-					// Use character's existing colors
-					var/default_color = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					if(snout_type.color_keys >= 1)
-						var/list/color_list = list(default_color)
-						if(snout_type.color_keys >= 2)
-							color_list += default_color
-						snout.accessory_colors = color_list_to_string(color_list)
-					else
-						snout.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					snout.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -976,16 +925,8 @@
 						tail_feature = new /obj/item/organ/tail_feature()
 						tail_feature.Insert(H, TRUE, FALSE)
 					tail_feature.accessory_type = valid_tail_features[new_style]
-					var/datum/sprite_accessory/tail_feature/tail_feature_type = SPRITE_ACCESSORY(tail_feature.accessory_type)
-					// Use character's existing colors
-					var/default_color = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					if(tail_feature_type.color_keys >= 1)
-						var/list/color_list = list(default_color)
-						if(tail_feature_type.color_keys >= 2)
-							color_list += default_color
-						tail_feature.accessory_colors = color_list_to_string(color_list)
-					else
-						tail_feature.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					tail_feature.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -1029,16 +970,8 @@
 						head_feature = new /obj/item/organ/head_feature()
 						head_feature.Insert(H, TRUE, FALSE)
 					head_feature.accessory_type = valid_head_features[new_style]
-					var/datum/sprite_accessory/head_feature/head_feature_type = SPRITE_ACCESSORY(head_feature.accessory_type)
-					// Use character's existing colors
-					var/default_color = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					if(head_feature_type.color_keys >= 1)
-						var/list/color_list = list(default_color)
-						if(head_feature_type.color_keys >= 2)
-							color_list += default_color
-						head_feature.accessory_colors = color_list_to_string(color_list)
-					else
-						head_feature.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					head_feature.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -1082,16 +1015,8 @@
 						neck_feature = new /obj/item/organ/neck_feature()
 						neck_feature.Insert(H, TRUE, FALSE)
 					neck_feature.accessory_type = valid_neck_features[new_style]
-					var/datum/sprite_accessory/neck_feature/neck_feature_type = SPRITE_ACCESSORY(neck_feature.accessory_type)
-					// Use character's existing colors
-					var/default_color = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					if(neck_feature_type.color_keys >= 1)
-						var/list/color_list = list(default_color)
-						if(neck_feature_type.color_keys >= 2)
-							color_list += default_color
-						neck_feature.accessory_colors = color_list_to_string(color_list)
-					else
-						neck_feature.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					neck_feature.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -1135,16 +1060,8 @@
 						back_feature = new /obj/item/organ/back_feature()
 						back_feature.Insert(H, TRUE, FALSE)
 					back_feature.accessory_type = valid_back_features[new_style]
-					var/datum/sprite_accessory/back_feature/back_feature_type = SPRITE_ACCESSORY(back_feature.accessory_type)
-					// Use character's existing colors
-					var/default_color = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					if(back_feature_type.color_keys >= 1)
-						var/list/color_list = list(default_color)
-						if(back_feature_type.color_keys >= 2)
-							color_list += default_color
-						back_feature.accessory_colors = color_list_to_string(color_list)
-					else
-						back_feature.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					back_feature.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
@@ -1253,16 +1170,8 @@
 						horns = new /obj/item/organ/horns()
 						horns.Insert(H, TRUE, FALSE)
 					horns.accessory_type = valid_horns[new_style]
-					var/datum/sprite_accessory/horns/horns_type = SPRITE_ACCESSORY(horns.accessory_type)
-					// Use character's existing colors
-					var/default_color = H.dna.features["mcolor"] || H.skin_tone || "#FFFFFF"
-					if(horns_type.color_keys >= 1)
-						var/list/color_list = list(default_color)
-						if(horns_type.color_keys >= 2)
-							color_list += default_color
-						horns.accessory_colors = color_list_to_string(color_list)
-					else
-						horns.accessory_colors = ""
+					// Use build_colors_for_accessory to properly set colors from character
+					horns.build_colors_for_accessory(null)
 					H.update_body()
 					should_update = TRUE
 
