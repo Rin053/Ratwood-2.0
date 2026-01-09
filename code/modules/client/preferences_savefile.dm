@@ -7,7 +7,7 @@
 //	where you would want the updater procs below to run
 
 //	This also works with decimals.
-#define SAVEFILE_VERSION_MAX	36
+#define SAVEFILE_VERSION_MAX	37
 
 // Safely extract a type path from datums or type values; returns null if unset/invalid.
 /proc/preferences_typepath_or_null(value)
@@ -174,7 +174,18 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 						testing("Zardman back to Sissean.")
 						species_name = "Sissean"
 		_load_species(S, species_name)
-
+	if(current_version < 37)
+		var/species_name
+		S["species"] >> species_name
+		testing("Save version < 37, updating [species_name].")
+		if(species_name)
+			var/newtype = GLOB.species_list[species_name]
+			if(!newtype)
+				switch(species_name)
+					if("Verminvolk")
+						testing("Verminvolk  to Critterkin.")
+						species_name = "Critterkin"
+		_load_species(S, species_name)
 /datum/preferences/proc/load_path(ckey,filename="preferences.sav")
 	if(!ckey)
 		return

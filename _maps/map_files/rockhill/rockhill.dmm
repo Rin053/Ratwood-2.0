@@ -8948,6 +8948,7 @@
 /obj/item/clothing/cloak/half/red,
 /obj/item/clothing/suit/roguetown/shirt/undershirt/puritan,
 /obj/item/clothing/suit/roguetown/shirt/tunic/noblecoat,
+/obj/item/rogueweapon/mace/parasol/noble,
 /turf/open/floor/carpet/royalblack,
 /area/rogue/indoors/town/manor/rockhill)
 "cLa" = (
@@ -18417,6 +18418,7 @@
 /obj/item/paper/scroll,
 /obj/item/paper/scroll,
 /obj/item/paper/scroll,
+/obj/item/rogueweapon/mace/parasol/noble,
 /turf/open/floor/carpet/inn,
 /area/rogue/indoors/town/manor/rockhill)
 "fDE" = (
@@ -22364,6 +22366,8 @@
 	keylock = 1;
 	lockid = "manor"
 	},
+/obj/item/rogueweapon/mace/parasol/noble,
+/obj/item/rogueweapon/mace/parasol/noble,
 /turf/open/floor/rogue/ruinedwood/spiral,
 /area/rogue/indoors/town/manor/rockhill)
 "gKx" = (
@@ -41709,6 +41713,7 @@
 /obj/structure/fluff/railing/border/west{
 	pixel_x = -8
 	},
+/obj/item/rogueweapon/mace/parasol/noble,
 /turf/open/floor/carpet/inn,
 /area/rogue/indoors/town/manor/rockhill)
 "mJz" = (
@@ -49785,6 +49790,7 @@
 /obj/item/rogueweapon/sword/rapier,
 /obj/item/perfume/random,
 /obj/item/lockpickring/mundane,
+/obj/item/rogueweapon/mace/parasol/noble,
 /turf/open/floor/rogue/wood,
 /area/rogue/indoors/town/manor/rockhill)
 "pmm" = (
@@ -50431,6 +50437,7 @@
 /obj/item/clothing/wrists/roguetown/royalsleeves,
 /obj/item/clothing/wrists/roguetown/royalsleeves,
 /obj/item/clothing/suit/roguetown/shirt/dress/silkdress/princess,
+/obj/item/rogueweapon/mace/parasol/noble,
 /turf/open/floor/carpet/royalblack,
 /area/rogue/indoors/town/manor/rockhill)
 "pvK" = (
@@ -54960,6 +54967,7 @@
 /obj/effect/spawner/lootdrop/roguetown/dungeon/clothing,
 /obj/effect/spawner/lootdrop/roguetown/dungeon/clothing,
 /obj/effect/spawner/lootdrop/roguetown/dungeon/clothing,
+/obj/item/rogueweapon/mace/parasol,
 /turf/open/floor/rogue/woodturned,
 /area/rogue/indoors/town)
 "qST" = (
@@ -55019,6 +55027,7 @@
 /obj/effect/spawner/lootdrop/roguetown/dungeon/clothing,
 /obj/effect/spawner/lootdrop/roguetown/dungeon/clothing,
 /obj/effect/spawner/lootdrop/roguetown/dungeon/clothing,
+/obj/item/rogueweapon/mace/parasol,
 /turf/open/floor/rogue/woodturned,
 /area/rogue/indoors/town)
 "qTG" = (
@@ -74608,6 +74617,7 @@
 /obj/item/clothing/suit/roguetown/shirt/tunic/purple,
 /obj/item/clothing/suit/roguetown/armor/gambeson/heavy/royal,
 /obj/item/storage/backpack/rogue/satchel,
+/obj/item/rogueweapon/mace/parasol/noble,
 /turf/open/floor/rogue/carpet/lord/center,
 /area/rogue/indoors/town/manor/rockhill)
 "xcx" = (
