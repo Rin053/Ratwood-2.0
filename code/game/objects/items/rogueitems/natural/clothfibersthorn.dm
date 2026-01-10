@@ -169,13 +169,13 @@
 	detail_tag = "_soaked"
 	var/wet = 0
 	/// Effectiveness when used as a bandage, how much it'll lower the bloodloss, bloodloss will get multiplied by this.
-	var/bandage_effectiveness = 0.5 
+	var/bandage_effectiveness = 0.5
 	var/bandage_speed = 7 SECONDS
 	///How much you can bleed into the bandage until it needs to be changed
 	var/bandage_health = 150 //75 total blood stopped
 	//bandage_health * (1 - bandage_effectiveness) = total amount of blood saved from one bandage
 	/// If the bandage is soaked in some kind of medicine.
-	var/medicine_quality 
+	var/medicine_quality
 	var/medicine_amount = 0
 
 /obj/item/natural/cloth/Initialize()
@@ -342,7 +342,7 @@
 	var/used_time = bandage_speed
 	used_time -= ((user.get_skill_level(/datum/skill/misc/medicine) * 0.15) * bandage_speed) //15% time reduction per level
 	playsound(loc, 'sound/foley/bandage.ogg', 100, FALSE)
-	if(!do_mob(user, M, used_time))
+	if(!move_after(user, used_time, target = M))
 		return
 	playsound(loc, 'sound/foley/bandage.ogg', 100, FALSE)
 
@@ -351,9 +351,9 @@
 	H.update_damage_overlays()
 
 	if(M == user)
-		user.visible_message(span_notice("[user] bandages [user.p_their()] [affecting]."), span_notice("I bandage my [affecting]."))
+		user.visible_message(span_notice("[user] bandages [user.p_their()] [affecting]."), span_notice("I bandage my [affecting.name]."))
 	else
-		user.visible_message(span_notice("[user] bandages [M]'s [affecting]."), span_notice("I bandage [M]'s [affecting]."))
+		user.visible_message(span_notice("[user] bandages [M]'s [affecting]."), span_notice("I bandage [M]'s [affecting.name]."))
 
 /obj/item/natural/thorn
 	name = "thorn"
