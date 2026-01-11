@@ -255,8 +255,6 @@
 		var/mob/living/carbon/C = user
 		if(C.domhand)
 			used_str = C.get_str_arms(C.used_hand)
-	if(istype(user.rmb_intent, /datum/rmb_intent/strong))
-		used_str++
 	if(istype(user.rmb_intent, /datum/rmb_intent/weak))
 		used_str--
 	if(ishuman(user))
@@ -365,86 +363,7 @@
 			miner.mind.add_sleep_experience(/datum/skill/labor/mining, (miner.STAINT*0.2))
 		if(DULLING_SHAFT_CONJURED)
 			dullfactor = DULLFACTOR_COUNTERED_BY
-		if(DULLING_SHAFT_WOOD)	//Weak to cut / chop. No changes vs stab, resistant to blunt
-			switch(user.used_intent.blade_class)
-				if(BCLASS_CUT)
-					if(!I.remove_bintegrity(1))
-						dullfactor = DULLFACTOR_ANTAG
-					else
-						dullfactor = DULLFACTOR_COUNTERED_BY
-				if(BCLASS_CHOP)
-					if(!I.remove_bintegrity(1))
-						dullfactor = DULLFACTOR_ANTAG
-					else
-						dullfactor = DULLFACTOR_COUNTERED_BY
-				if(BCLASS_STAB)
-					dullfactor = DULLFACTOR_NEUTRAL
-				if(BCLASS_BLUNT)
-					dullfactor = DULLFACTOR_COUNTERS
-				if(BCLASS_SMASH)
-					dullfactor = DULLFACTOR_COUNTERS
-				if(BCLASS_PICK)
-					dullfactor = DULLFACTOR_COUNTERS
-		if(DULLING_SHAFT_REINFORCED)	//Weak to stab. No changes vs blunt, resistant to cut / chop
-			switch(user.used_intent.blade_class)
-				if(BCLASS_CUT)
-					if(!I.remove_bintegrity(1))
-						dullfactor = DULLFACTOR_ANTAG
-					else
-						dullfactor = DULLFACTOR_COUNTERS
-				if(BCLASS_CHOP)
-					if(!I.remove_bintegrity(1))
-						dullfactor = DULLFACTOR_ANTAG
-					else
-						dullfactor = DULLFACTOR_COUNTERS
-				if(BCLASS_STAB)
-					dullfactor = DULLFACTOR_COUNTERED_BY
-				if(BCLASS_BLUNT)
-					dullfactor = DULLFACTOR_NEUTRAL
-				if(BCLASS_SMASH)
-					dullfactor = DULLFACTOR_COUNTERED_BY
-				if(BCLASS_PICK)
-					dullfactor = DULLFACTOR_COUNTERS
-		if(DULLING_SHAFT_METAL)	//Weak to blunt. No changes vs stab, resistant to cut / chop. Pick can actually damage it.
-			switch(user.used_intent.blade_class)
-				if(BCLASS_CUT)
-					if(!I.remove_bintegrity(1))
-						dullfactor = DULLFACTOR_ANTAG
-					else
-						dullfactor = DULLFACTOR_COUNTERS
-				if(BCLASS_CHOP)
-					if(!I.remove_bintegrity(1))
-						dullfactor = DULLFACTOR_ANTAG
-					else
-						dullfactor = DULLFACTOR_COUNTERS
-				if(BCLASS_STAB)
-					dullfactor = DULLFACTOR_COUNTERS
-				if(BCLASS_BLUNT)
-					dullfactor = DULLFACTOR_COUNTERED_BY
-				if(BCLASS_SMASH)
-					dullfactor = DULLFACTOR_COUNTERED_BY
-				if(BCLASS_PICK)
-					dullfactor = DULLFACTOR_NEUTRAL
-		if(DULLING_SHAFT_GRAND)	//Resistant to all
-			switch(user.used_intent.blade_class)
-				if(BCLASS_CUT)
-					if(!I.remove_bintegrity(1))
-						dullfactor = 0
-					else
-						dullfactor = DULLFACTOR_ANTAG
-				if(BCLASS_CHOP)
-					if(!I.remove_bintegrity(1))
-						dullfactor = 0
-					else
-						dullfactor = DULLFACTOR_ANTAG
-				if(BCLASS_STAB)
-					dullfactor = DULLFACTOR_ANTAG
-				if(BCLASS_BLUNT)
-					dullfactor = DULLFACTOR_ANTAG
-				if(BCLASS_SMASH)
-					dullfactor = DULLFACTOR_NEUTRAL
-				if(BCLASS_PICK)
-					dullfactor = DULLFACTOR_ANTAG
+
 	var/newdam = (I.force_dynamic * user.used_intent.damfactor) - I.force_dynamic
 	if(user.used_intent.damfactor > 1 && I.sharpness != IS_BLUNT)	//Only relevant if damfactor actually adds damage.
 		if(dullness_ratio <= SHARPNESS_TIER1_FLOOR)
@@ -466,6 +385,10 @@
 			if(prob(33))
 				to_chat(user, span_info("The blade is dull..."))
 			newforce *= (lerpratio * 2)
+
+	if(istype(user.rmb_intent, /datum/rmb_intent/strong))
+		newforce += (I.force_dynamic * STRONG_STANCE_DMG_BONUS)
+
 	testing("endforce [newforce]")
 	return newforce
 
