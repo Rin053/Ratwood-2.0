@@ -26,6 +26,18 @@
 	societies that they share blood ties with than other Beastling races."
 	skin_tone_wording = "Ancestry"
 	default_color = "FFFFFF"
+
+	use_titles = TRUE
+	race_titles = list(
+	"Half-Cat", "Half-Dog", "Half-Volf", "Half-Lion", "Half-Venard",
+	"Half-Tiger", "Half-Sheep", "Half-Goat", "Half-Rous", "Half-Possum",
+	"Half-Pig", "Half-Boar", "Half-Rabbit", "Half-Horse", "Half-Donkey",
+	"Half-Hyena", "Half-Deer", "Half-Bear", "Half-Panda", "Half-Coyote",
+	"Half-Moose", "Half-Jackal", "Half-Panther", "Half-Lynx", "Half-Leopard",
+	"Half-Monkey", "Half-Bird", "Half-Seal", "Half-Bat", "Half-Otter", "Half-Cow",
+	"Half-Bull", "Half-Monster"
+	)
+
 	species_traits = list(EYECOLOR,HAIR,FACEHAIR,LIPS,STUBBLE,OLDGREY,MUTCOLORS_PARTSONLY)
 	allowed_taur_types = list(
 		/obj/item/bodypart/taur/otie,

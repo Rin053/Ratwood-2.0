@@ -12,6 +12,15 @@
 	expanded_desc = "A race akin to wild-kin, except afflicted with significantly smaller stature. \
 	Sometimes referred to with the derogatory term 'verminfolk' by those that disrespect the small."
 	default_color = "444"
+
+	use_titles = TRUE
+	race_titles = list(
+	"Cat-Critter", "Dog-Critter", "Venard-Critter", "Rous-Critter", "Possum-Critter",
+	"Pig-Critter", "Rabbit-Critter", "Raccoon-Critter", "Red Panda-Critter", "Seal-Critter",
+	"Hyena-Critter", "Coyote-Critter", "Jackal-Critter", "Bat-Critter", "Otter-Critter",
+	"Monster-Critter"
+	)
+
 	species_traits = list(
 		MUTCOLORS,
 		EYECOLOR,
