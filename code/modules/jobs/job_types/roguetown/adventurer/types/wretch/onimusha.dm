@@ -11,7 +11,7 @@
 	subclass_stats = list(
 		STATKEY_STR = 4, //9 weighted stats, compared to Berserker's 8, but their highest weapon skill is Journeyman.
 		STATKEY_CON = 3,
-		STATKEY_END = 2,
+		STATKEY_WIL = 2,
 		STATKEY_INT = -2,
 		STATKEY_FOR = -2
 	)
@@ -152,7 +152,7 @@
 	subclass_languages = list(/datum/language/kazengunese)
 	traits_applied = list(TRAIT_NOPAINSTUN) //Inherits this from the Custodian adv, still light armor only.
 	subclass_stats = list(
-		STATKEY_END = 2,
+		STATKEY_WIL = 2,
 		STATKEY_PER = 1,
 		STATKEY_SPD = 2, 
 		STATKEY_STR = 1,
