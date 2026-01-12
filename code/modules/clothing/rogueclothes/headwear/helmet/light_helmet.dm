@@ -161,6 +161,19 @@
 	flags_inv = HIDEEARS
 	body_parts_covered = HEAD|HAIR|EARS|NOSE|EYES
 
+/obj/item/clothing/head/roguetown/mentorhat/attack_right(mob/user)
+	..()
+	if(loc != user || !ishuman(user))
+		return
+	var/mob/living/carbon/human/H = user
+	if(flags_inv & HIDEEARS)
+		flags_inv &= ~HIDEEARS
+		to_chat(H, span_notice("I adjust [src] to show my ears."))
+	else
+		flags_inv |= HIDEEARS
+		to_chat(H, span_notice("I adjust [src] to hide my ears."))
+	H.update_inv_head()
+
 /obj/item/clothing/head/roguetown/hbit
 	name = "head bit"
 	desc = "A restraining head piece made of reinforced leather."
