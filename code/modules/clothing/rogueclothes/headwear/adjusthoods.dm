@@ -135,6 +135,20 @@
 	desc = "It sits just so, obscuring the face just enough to spoil recognition."
 	color = CLOTHING_BLACK
 
+/obj/item/clothing/head/roguetown/roguehood/shalal/hijab/kazengunese
+	name = "kazengunese headwrap"
+	desc = "A cloth hood of Kazengunese origin, which fully conceals one's face. Painted black for the wearer to blend into the night."
+	icon = 'icons/roguetown/clothing/special/ninjahood.dmi'
+	mob_overlay_icon = 'icons/roguetown/clothing/special/onmob/ninjahood.dmi'
+	icon_state = "ninjahood"
+	item_state = "ninjahood"
+	flags_inv = HIDEEARS|HIDEFACE|HIDEHAIR|HIDEFACIALHAIR|HIDESNOUT
+	max_integrity = 150
+	prevent_crits = list(BCLASS_CUT, BCLASS_BLUNT, BCLASS_TWIST)
+	slot_flags = ITEM_SLOT_HEAD|ITEM_SLOT_MASK|ITEM_SLOT_NECK
+	armor = ARMOR_HEAD_PSYDON //basically the same as a warscholar hood
+	color = CLOTHING_BLACK
+
 // Holy Hoods
 
 /obj/item/clothing/head/roguetown/roguehood/astrata

@@ -48,6 +48,18 @@
 //craftable variation of eastsuit, essentially requiring the presence of a tailor with relevant materials
 //still weak against blunt
 
+/obj/item/clothing/suit/roguetown/armor/basiceast/crafteast/outlaw
+	color = "#bbbbbb"
+
+/obj/item/clothing/suit/roguetown/armor/basiceast/crafteast/shrinekeeper
+	name = "eastern ceremonial robe"
+	desc = "A simple eastern robe, traditionally worn by Kazengunese priests. This one is reinforced with cured leather inlays."
+	slot_flags = ITEM_SLOT_ARMOR|ITEM_SLOT_SHIRT
+	allowed_race = CLOTHED_RACES_TYPES
+	color = "#414143"
+	icon_state = "shrinekeeper"
+	item_state = "shrinekeeper"
+
 /obj/item/clothing/suit/roguetown/armor/basiceast/mentorsuit
 	name = "old dobo robe"
 	desc = "The scars on your body were once stories of strength and bravado."

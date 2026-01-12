@@ -79,6 +79,19 @@
 /datum/intent/sword/cut/zwei
 	reach = 2
 
+/datum/intent/sword/cut/miaodao
+	reach = 2
+	swingdelay = 2
+	penfactor = 20
+
+/datum/intent/sword/cut/miaodao/fast
+	clickcd = 9
+
+/datum/intent/sword/peel/miaodao
+	name = "long sword armor peel"
+	peel_divisor = 4
+	reach = 2
+
 /datum/intent/sword/thrust/zwei
 	reach = 2
 
@@ -1010,6 +1023,29 @@
 	force = 14
 	force_wielded = 35
 
+/obj/item/rogueweapon/greatsword/miaodao
+	name = "steel miaodao"
+	icon_state = "odachi"
+	desc = "An unusually long saber of Lingyunese origin. The lighter blade lends itself to one-handed use better than a zweihander, but maintaining edge alignment is tricky and requires experience."
+	force = 24
+	force_wielded = 30
+	minstr = 8
+	wdefense = 6
+	wdefense_wbonus = 1 //Only +1 defense from wielding
+	max_blade_int = 150 //Thin blade
+	wbalance = WBALANCE_SWIFT
+	possible_item_intents = list(/datum/intent/sword/cut/miaodao/fast, /datum/intent/sword/strike)
+	gripped_intents = list(/datum/intent/sword/cut/miaodao, /datum/intent/rend/reach, /datum/intent/sword/thrust/zwei)
+	alt_intents = null
+
+/obj/item/rogueweapon/greatsword/miaodao/getonmobprop(tag)
+	. = ..()
+	if(tag)
+		switch(tag)
+			if("gen") return list("shrink" = 0.5, "sx" = -14, "sy" = -8, "nx" = 15, "ny" = -7, "wx" = -10, "wy" = -5, "ex" = 7, "ey" = -6, "northabove" = 0, "southabove" = 1, "eastabove" = 1, "westabove" = 0, "nturn" = -13, "sturn" = 110, "wturn" = -60, "eturn" = -30, "nflip" = 1, "sflip" = 1, "wflip" = 8, "eflip" = 1)
+			if("wielded") return list("shrink" = 0.6,"sx" = 9,"sy" = -4,"nx" = -7,"ny" = 1,"wx" = -9,"wy" = 2,"ex" = 10,"ey" = 2,"northabove" = 0,"southabove" = 1,"eastabove" = 1,"westabove" = 0,"nturn" = 5,"sturn" = -190,"wturn" = -170,"eturn" = -10,"nflip" = 8,"sflip" = 8,"wflip" = 1,"eflip" = 0)
+			if("onback") return list("shrink" = 0.5, "sx" = -1, "sy" = 2, "nx" = 0, "ny" = 2, "wx" = 2, "wy" = 1, "ex" = 0, "ey" = 1, "nturn" = 0, "sturn" = 0, "wturn" = 70, "eturn" = 15, "nflip" = 1, "sflip" = 1, "wflip" = 1, "eflip" = 1, "northabove" = 1, "southabove" = 0, "eastabove" = 0, "westabove" = 0)
+
 /obj/item/rogueweapon/greatsword/grenz
 	name = "steel zweihander"
 	icon_state = "steelzwei"
@@ -1428,6 +1464,12 @@
 	desc = "A regional earspoon lance with a carved handle, adorned with the colours of a Steppesman's banner."
 	icon_state = "avspear"
 
+/obj/item/rogueweapon/spear/boar/kazengun
+	name = "jūmonji yari"
+	icon_state = "jumonjiyari"
+	desc = "A spear with a long, straight head and a pair of curved blades pointing upward. A Lingyunese design, the side-blades parallel an Aavnic partizan. Its function is certainly similar, tearing the flesh of any unfortunate enough to be pierced by it."
+	gripped_intents = list(SPEAR_THRUST, /datum/intent/spear/cut/naginata, PARTIZAN_REND) //Gets rend and an usable cut, but no peel.
+
 /obj/item/rogueweapon/spear/lance
 	name = "lance"
 	desc = "A long polearm designed to be used from horseback, couched under the arm. It has a vambrace to prevent the arm sliding up \
@@ -1450,9 +1492,10 @@
 	force = 16
 	force_wielded = 30
 	possible_item_intents = list(/datum/intent/spear/cut/naginata, SPEAR_BASH) // no stab for you little chuddy, it's a slashing weapon
-	gripped_intents = list(/datum/intent/rend/reach, /datum/intent/spear/cut/naginata, PARTIZAN_PEEL_BAD, SPEAR_BASH)
+	gripped_intents = list(/datum/intent/spear/cut/naginata, /datum/intent/rend/reach, PARTIZAN_PEEL, SPEAR_BASH)
 	icon_state = "naginata"
 	icon = 'icons/roguetown/weapons/64.dmi'
+	wbalance = WBALANCE_SWIFT
 	minstr = 7
 	max_blade_int = 150 //Nippon suteeru (dogshit)
 	wdefense = 5
@@ -1484,7 +1527,7 @@
 	max_integrity = 290 //blacksteel, so its gotta be more durable
 	max_blade_int = 200
 	sellprice = 250
-	wdefense = 12
+	wdefense = 9
 
 /obj/item/rogueweapon/halberd/capglaive/getonmobprop(tag)
 	. = ..()

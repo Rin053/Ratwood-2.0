@@ -126,6 +126,17 @@
 	smeltresult = /obj/item/ingot/steel
 	body_parts_covered = HEAD|HAIR|EARS
 
+/obj/item/clothing/head/roguetown/helmet/sallet/beastskull
+	name = "beast skull"
+	desc = "The skull of a horned beast, carved and fashioned into a helmet. An iron skull cap has been inserted on the inside."
+	icon_state = "marauder_head"
+	max_integrity = 280
+	smeltresult = /obj/item/ingot/iron
+	mob_overlay_icon = 'icons/roguetown/clothing/onmob/64x64/head.dmi'
+	worn_x_dimension = 64
+	worn_y_dimension = 64
+	bloody_icon = 'icons/effects/blood64.dmi'
+
 /obj/item/clothing/head/roguetown/helmet/sallet/attackby(obj/item/W, mob/living/user, params)
 	..()
 	if(istype(W, /obj/item/natural/cloth) && !detail_tag)

@@ -1772,6 +1772,7 @@
 #include "code\modules\jobs\job_types\roguetown\adventurer\types\wretch\licker.dm"
 #include "code\modules\jobs\job_types\roguetown\adventurer\types\wretch\lunacyembracer.dm"
 #include "code\modules\jobs\job_types\roguetown\adventurer\types\wretch\necromancer.dm"
+#include "code\modules\jobs\job_types\roguetown\adventurer\types\wretch\onimusha.dm"
 #include "code\modules\jobs\job_types\roguetown\adventurer\types\wretch\outlaw.dm"
 #include "code\modules\jobs\job_types\roguetown\adventurer\types\wretch\plaguebearer.dm"
 #include "code\modules\jobs\job_types\roguetown\adventurer\types\wretch\poacher.dm"
@@ -2381,7 +2382,7 @@
 #include "code\modules\roguetown\roguejobs\artificer\contraptions.dm"
 #include "code\modules\roguetown\roguejobs\artificer\handsaw_chisel.dm"
 #include "code\modules\roguetown\roguejobs\artificer\artificer_recipes\artificer_recipes.dm"
-#include "code\modules\roguetown\roguejobs\blacksmith\_ANVIL_DEFINES.dm"
+#include "code\modules\roguetown\roguejobs\blacksmith\_anvil_defines.dm"
 #include "code\modules\roguetown\roguejobs\blacksmith\anvil.dm"
 #include "code\modules\roguetown\roguejobs\blacksmith\casting.dm"
 #include "code\modules\roguetown\roguejobs\blacksmith\forge.dm"
@@ -2950,5 +2951,6 @@
 #include "modular_hearthstone\code\modules\mob\living\simple_animal\rogue\rogue_corpse.dm"
 #include "modular_hearthstone\code\modules\reagents\reagent_containers\lux.dm"
 #include "modular_helmsguard\code\modules\mobs\farm\horse.dm"
+#include "modular_stonehedge\code\modules\clothing\rogueclothes\hats.dm"
 #include "modular_twilight_axis\code\game\objects\items\scabbard.dm"
 // END_INCLUDE

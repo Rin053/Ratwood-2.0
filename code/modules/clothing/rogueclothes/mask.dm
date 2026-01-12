@@ -443,6 +443,21 @@
 	max_integrity = 200
 	smeltresult = /obj/item/ingot/steel
 
+/obj/item/clothing/mask/rogue/facemask/steel/kazengun
+	name = "steel mempo"
+	desc = "A steel half-mask of Kazengun origin. Cast in the visage of a fiend, it fits snugly around the neck, offering additional protection at the cost of head mobility."
+	icon_state = "steelmempo"
+	body_parts_covered = NECK|MOUTH|NOSE
+
+/obj/item/clothing/mask/rogue/facemask/steel/kazengun/full
+	desc = "A steel mask of Kazengun origin. Cast in the visage of a fiend, it fits snugly around the neck, offering additional protection at the cost of head mobility."
+	icon_state = "steelyoroi"
+	body_parts_covered = NECK|FACE
+
+/obj/item/clothing/mask/rogue/facemask/steel/kazengun/full/kitsune
+	desc = "A steel mask of Kazengun origin. Cast in the visage of a vulpine monster, it fits snugly around the neck, offering additional protection at the cost of head mobility."
+	icon_state = "kitsuneyoroi"
+
 /obj/item/clothing/mask/rogue/facemask/steel/paalloy
 	name = "ancient mask"
 	desc = "Polished gilbranze, molded into an intimidating visage. Touch the cheek; it is warm, like flesh. But it is not flesh. Not yet."
@@ -496,7 +511,7 @@
 	desc = "A wood mask carved in the visage of the fox spirits said to ply their tricks in the forests of Kazengun."
 	icon_state = "kitsune"
 
-/obj/item/clothing/mask/rogue/facemask/steel/kazengun
+/obj/item/clothing/mask/rogue/facemask/steel/kazengun2
 	name = "soldier's half-mask"
 	desc = "\"The first lesson of war is that it would be better to live in peace.\""
 	block2add = null
@@ -504,7 +519,7 @@
 	icon_state = "kazengunmouthguard"
 	item_state = "kazengunmouthguard"
 
-/obj/item/clothing/mask/rogue/facemask/steel/kazengun/full
+/obj/item/clothing/mask/rogue/facemask/steel/kazengun/full2
 	name = "ogre mask"
 	desc = "\"The second lesson: Rich men have dreams. Poor men die to make them come true.\""
 	icon_state = "kazengunfaceguard"

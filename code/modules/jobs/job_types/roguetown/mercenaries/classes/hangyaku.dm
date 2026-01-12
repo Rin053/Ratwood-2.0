@@ -95,9 +95,9 @@
 	var/mask_choice = input(H, "Choose your mask.", "GREET THE SUN?") as anything in masks
 	switch(mask_choice)
 		if("Full Mask")
-			H.equip_to_slot_or_del(new /obj/item/clothing/mask/rogue/facemask/steel/kazengun/full, SLOT_WEAR_MASK, TRUE)
+			H.equip_to_slot_or_del(new /obj/item/clothing/mask/rogue/facemask/steel/kazengun/full2, SLOT_WEAR_MASK, TRUE)
 		if("Half-Mask")
-			H.equip_to_slot_or_del(new /obj/item/clothing/mask/rogue/facemask/steel/kazengun, SLOT_WEAR_MASK, TRUE)
+			H.equip_to_slot_or_del(new /obj/item/clothing/mask/rogue/facemask/steel/kazengun2, SLOT_WEAR_MASK, TRUE)
 
 /datum/advclass/mercenary/chonin
 	name = "Hangyaku-Chonin"

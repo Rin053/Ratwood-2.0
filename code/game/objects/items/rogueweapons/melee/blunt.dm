@@ -14,6 +14,9 @@
 	item_d_type = "blunt"
 	intent_intdamage_factor = BLUNT_DEFAULT_INT_DAMAGEFACTOR
 
+/datum/intent/mace/strike/reach
+	reach = 2
+
 /datum/intent/mace/smash
 	name = "smash"
 	blade_class = BCLASS_SMASH
@@ -27,6 +30,9 @@
 	item_d_type = "blunt"
 	intent_intdamage_factor = BLUNT_DEFAULT_INT_DAMAGEFACTOR
 	desc = "A powerful, charged up strike that deals normal damage but can throw a standing opponent back and slow them down, based on your strength. Ineffective below 10 strength. Slowdown & Knockback scales to your Strength up to 14 (1 - 4 tiles). Cannot be used consecutively more than every 5 seconds on the same target. Prone targets halve the knockback distance. Not fully charging the attack limits knockback to 1 tile."
+
+/datum/intent/mace/smash/reach
+	reach = 2
 
 /datum/intent/mace/smash/spec_on_apply_effect(mob/living/H, mob/living/user, params)
 	var/chungus_khan_str = user.STASTR
@@ -61,11 +67,10 @@
 	icon_state = "instab"
 	reach = 2
 	clickcd = CLICK_CD_CHARGED
-	recovery = 30
+	recovery = 10
 	warnie = "mobwarning"
 	hitsound = list('sound/combat/hits/bladed/genstab (1).ogg', 'sound/combat/hits/bladed/genstab (2).ogg', 'sound/combat/hits/bladed/genstab (3).ogg')
-	penfactor = 25
-	damfactor = 0.9
+	penfactor = 40 //Same as a dagger.
 	item_d_type = "stab"
 
 //blunt objs ฅ^•ﻌ•^ฅ
@@ -444,6 +449,7 @@
 	icon_state = "polemace"
 	force = 15
 	force_wielded = 35
+	gripped_intents = list(/datum/intent/mace/strike/reach, /datum/intent/mace/smash/reach, /datum/intent/mace/rangedthrust, /datum/intent/effect/daze)
 	smeltresult = /obj/item/ingot/steel
 	smelt_bar_num = 2
 	wdefense_wbonus = 5
@@ -462,6 +468,7 @@
 	icon_state = "pufferprod"
 	force = 15
 	force_wielded = 35
+	gripped_intents = list(/datum/intent/mace/strike, /datum/intent/mace/smash/reach, /datum/intent/mace/rangedthrust, /datum/intent/effect/daze)
 	minstr = 11
 	max_integrity = 900
 	smeltresult = /obj/item/ingot/steelholy
@@ -479,8 +486,21 @@
 	name = "duel settler"
 	desc = "The tenets of ravoxian duels are enscribed upon the head of this maul."
 	icon_state = "ravoxhammer"
-	gripped_intents = list(/datum/intent/mace/strike, /datum/intent/mace/smash, /datum/intent/effect/daze) // It loses the Goden stab so I give it daze
+	gripped_intents = list(/datum/intent/mace/strike/reach, /datum/intent/mace/smash/reach, /datum/intent/effect/daze)
 	max_integrity = 350 // I am reluctant to give a steel goden more force as it breaks weapon so durability it is.
+
+/obj/item/rogueweapon/mace/goden/steel/tetsubo
+	name = "tetsubo"
+	desc = "A heavier variant of the kanabo, fitted with a steel sleeve bearing menacing spikes and favored by Ogrun Warlords. Requires immense strength to use, but hits like a raging bull."
+	icon_state = "tetsubo"
+	force = 20
+	force_wielded = 40 //Minotaur greataxe, but for blunt weapons
+	possible_item_intents = list(/datum/intent/mace/strike/reach)
+	gripped_intents = list(/datum/intent/mace/strike/reach, /datum/intent/mace/smash/reach, /datum/intent/effect/daze)
+	sharpness = IS_SHARP
+	icon = 'icons/roguetown/weapons/64.dmi'
+	minstr = 15
+	slot_flags = ITEM_SLOT_BACK
 
 /obj/item/rogueweapon/mace/goden/psymace
 	name = "psydonic mace"

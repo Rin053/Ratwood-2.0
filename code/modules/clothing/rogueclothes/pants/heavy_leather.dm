@@ -102,6 +102,9 @@
 	name = "strange ripped pants"
 	desc = "Weird pants typically worn by the destitute in Kazengun. Or, those looking to make a fashion statement."
 	icon_state = "eastpants2"
+	sleeved = 'icons/roguetown/clothing/onmob/helpers/sleeves_pants.dmi'
+	armor = list("blunt" = 50, "slash" = 90, "stab" = 60, "piercing" = 30, "fire" = 0, "acid" = 0)
+	prevent_crits = list(BCLASS_CUT, BCLASS_STAB, BCLASS_BLUNT)
 	allowed_race = NON_DWARVEN_RACE_TYPES
 
 //Gronn

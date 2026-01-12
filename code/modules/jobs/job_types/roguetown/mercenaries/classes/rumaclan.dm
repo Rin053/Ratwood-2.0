@@ -14,7 +14,7 @@
 		STATKEY_WIL = 3,
 		STATKEY_STR = 2,
 		STATKEY_PER = 1,
-		STATKEY_SPD = -1
+
 	)
 	subclass_skills = list(
 		/datum/skill/misc/swimming = SKILL_LEVEL_APPRENTICE,
@@ -34,6 +34,7 @@
 	..()
 	to_chat(H, span_warning("You are well versed and experienced in swordfighting, you have no problem in taking up most jobs so long as the coin is good, for either yourself or the clan and the seonjang."))
 	belt = /obj/item/storage/belt/rogue/leather
+	head = /obj/item/clothing/head/roguetown/mentorhat
 	beltr = /obj/item/rogueweapon/scabbard/sword/kazengun/steel
 	beltl = /obj/item/rogueweapon/sword/sabre/mulyeog/rumahench
 	shirt = /obj/item/clothing/suit/roguetown/shirt/undershirt/easttats
