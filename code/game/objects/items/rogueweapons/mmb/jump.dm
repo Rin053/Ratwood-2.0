@@ -57,7 +57,8 @@
 
 	if(m_intent == MOVE_INTENT_RUN)
 		emote("leap", forced = TRUE)
-		OffBalance(30)
+		if(!HAS_TRAIT(src, TRAIT_HARES_GRACE))
+			OffBalance(30)
 		jadded = 45
 		jrange = 3
 
@@ -65,7 +66,8 @@
 			jextra = TRUE
 	else
 		emote("jump", forced = TRUE)
-		OffBalance(20)
+		if(!HAS_TRAIT(src, TRAIT_HARES_GRACE))
+			OffBalance(20)
 		jadded = 20
 		jrange = 2
 
