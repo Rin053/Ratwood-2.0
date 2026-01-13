@@ -9,6 +9,7 @@
 #define TRAIT_XENOPHOBIC "Xenophobic"
 #define TRAIT_TOLERANT "Tolerant"
 #define TRAIT_LEAPER "Leaper"
+#define TRAIT_HARES_GRACE "Hare's Grace"
 #define TRAIT_NUTCRACKER "Nutcracker"
 #define TRAIT_SEEPRICES "Skilled Appraiser"
 #define TRAIT_SEEPRICES_SHITTY "Appraiser"
@@ -290,6 +291,7 @@ GLOBAL_LIST_INIT(roguetraits, list(
 	TRAIT_BEAUTIFUL_UNCANNY = span_info("<i>Some</i> would say my visage is an artwork created by the gods themselves; the others call me an unsettling abomination."),
 	TRAIT_BAD_MOOD = span_warning("Everything just seems to piss me off"),
 	TRAIT_LEAPER = "I can leap like a frog, landing where I want.",
+	TRAIT_HARES_GRACE = "I can leap without penalties and use less stamina when jumping.",
 	TRAIT_NUTCRACKER = "I love kicking idiots on the nuts!",
 	TRAIT_SEEPRICES = "I can tell the prices of things down to the zenny.",
 	TRAIT_SEEPRICES_SHITTY = "I can tell the prices of things... <i>Kind of</i>.",

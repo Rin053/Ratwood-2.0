@@ -513,7 +513,7 @@ GLOBAL_LIST_EMPTY(chosen_names)
 
 			dat += "<BR>"
 			dat += "<b>Race:</b> <a href='?_src_=prefs;preference=species;task=input'>[pref_species.name]</a>[spec_check(user) ? "" : " (!)"]<BR>"
-			if(length(pref_species.custom_selection))
+			if(length(pref_species.custom_selection) && !pref_species.uses_title_based_bonuses())
 				var/race_bonus_display
 				if(race_bonus)
 					for(var/bonus in pref_species.custom_selection)
@@ -521,11 +521,12 @@ GLOBAL_LIST_EMPTY(chosen_names)
 							race_bonus_display = bonus
 							break
 				dat += "<b>Race Bonus:</b> <a href='?_src_=prefs;preference=race_bonus_select;task=input'>[race_bonus_display ? "[race_bonus_display]" : "None"]</a><BR>"
-			else
+			else if(!length(pref_species.custom_selection))
 				race_bonus = null
 			if(pref_species.use_titles)
 				var/display_title = selected_title ? selected_title : "None"
-				dat += "<b>Race Title:</b> <a href='?_src_=prefs;preference=race_title;task=input'>[display_title]</a><BR>"
+				var/bonus_display = pref_species.uses_title_based_bonuses() ? pref_species.get_race_bonus_display(display_title) : ""
+				dat += "<b>Race Title:</b> <a href='?_src_=prefs;preference=race_title;task=input'>[display_title]</a>[bonus_display ? " [bonus_display]" : ""]<BR>"
 
 //			dat += "<a href='?_src_=prefs;preference=species;task=random'>Random Species</A> "
 //			dat += "<a href='?_src_=prefs;preference=toggle_random;random_type=[RANDOM_SPECIES]'>Always Random Species: [(randomise[RANDOM_SPECIES]) ? "Yes" : "No"]</A><br>"
@@ -1868,18 +1869,28 @@ Slots: [job.spawn_positions] [job.round_contrib_points ? "RCP: +[job.round_contr
 				if("race_title")
 					var/list/titles = pref_species.race_titles
 					var/list/choices = list("None")
+					var/show_bonuses = pref_species.uses_title_based_bonuses()
+					
 					for(var/A in titles)
 						if(A == pref_species.languages)
 							continue
-						choices += list(A)
+						if(show_bonuses)
+							var/bonus_text = pref_species.get_race_bonus_display(A)
+							choices += list("[A][bonus_text ? " [bonus_text]" : ""]")
+						else
+							choices += list(A)
+					
 					if(user?.client)
 						var/result = tgui_input_list(user, "What do they call your kind?", "RACE TITLE", choices)
-
 						if(result)
-							if(result == "None")
-								selected_title = "None"
-							else
-								selected_title = result
+							var/title_only = result
+							if(show_bonuses && findtext(result, " ("))
+								title_only = copytext(result, 1, findtext(result, " ("))
+							
+							selected_title = (title_only == "None") ? "None" : title_only
+
+							if(show_bonuses)
+								race_bonus = pref_species.get_race_bonus_from_title(title_only)
 
 				if("voice_pitch")
 					var/new_voice_pitch = tgui_input_number(user, "Choose your character's voice pitch ([MIN_VOICE_PITCH] to [MAX_VOICE_PITCH], lower is deeper):", "Voice Pitch", 1, 1.35, 0.8, round_value = FALSE)

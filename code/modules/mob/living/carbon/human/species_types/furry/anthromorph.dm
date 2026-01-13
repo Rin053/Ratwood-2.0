@@ -8,7 +8,7 @@
 	Wild-kins are a highly diverse and varied group of people, the majority of which are descendants of the \
 	first followers of Dendor who rejected civilization in favour of the deep forests. However, some came from \
 	magical anomalies or curses, Divine or otherwise.<br>\
-	(+1 Constitution, +1 Perception)"
+	(+2 stats based on subrace selection)"
 
 	expanded_desc = "Wild-kins are a highly diverse and varied group of people, the majority of which are descendants of the \
 	first followers of Dendor who rejected civilization in favour of the deep forests. However, some came from \
@@ -87,7 +87,45 @@
 		OFFSET_SHIRT_F = list(0,0), OFFSET_ARMOR_F = list(0,0), OFFSET_UNDIES_F = list(0,-1), \
 		OFFSET_BREASTS_F = list(0,-1), \
 		)
-	race_bonus = list(STAT_PERCEPTION = 1, STAT_CONSTITUTION = 1)
+	race_bonus = list()
+	custom_selection = list(
+		"Cat-Kin (+1 SPD)" = list(STATKEY_SPD),
+		"Dog-Kin (+1 CON, +1 PER)" = list(STATKEY_CON, STATKEY_PER),
+		"Volf-Kin (+1 PER, +1 INT)" = list(STATKEY_PER, STATKEY_INT),
+		"Lion-Kin (+1 STR)" = list(STATKEY_STR),
+		"Venard-Kin (+1 SPD)" = list(STATKEY_SPD),
+		"Tiger-Kin (+1 STR)" = list(STATKEY_STR),
+		"Sheep-Kin (+1 WIL, +1 CON)" = list(STATKEY_WIL, STATKEY_CON),
+		"Goat-Kin (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Rous-Kin (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Possum-Kin (+1 LCK, +1 INT)" = list(STATKEY_LCK, STATKEY_INT),
+		"Pig-Kin (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Boar-Kin (+1 STR)" = list(STATKEY_STR),
+		"Rabbit-Kin (+1 SPD, Hare's Grace)" = list(STATKEY_SPD),
+		"Horse-Kin (+1 STR)" = list(STATKEY_STR),
+		"Donkey-Kin (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Hyena-Kin (+1 WIL, +1 INT)" = list(STATKEY_WIL, STATKEY_INT),
+		"Deer-Kin (+1 SPD)" = list(STATKEY_SPD),
+		"Bear-Kin (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Panda-Kin (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Coyote-Kin (+1 SPD)" = list(STATKEY_SPD),
+		"Moose-Kin (+1 STR)" = list(STATKEY_STR),
+		"Jackal-Kin (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Panther-Kin (+1 STR)" = list(STATKEY_STR),
+		"Lynx-Kin (+1 SPD)" = list(STATKEY_SPD),
+		"Leopard-Kin (+1 STR)" = list(STATKEY_STR),
+		"Monkey-Kin (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Bird-Kin (+1 SPD)" = list(STATKEY_SPD),
+		"Seal-Kin (+1 CON, +1 INT)" = list(STATKEY_CON, STATKEY_INT),
+		"Bat-Kin (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Otter-Kin (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Cow-Kin (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Bull-Kin (+1 STR)" = list(STATKEY_STR),
+		"Bee-Kin (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Lizard-Kin (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Monster-Kin (+1 WIL, +1 INT)" = list(STATKEY_WIL, STATKEY_INT),
+		"Chimera (+1 LCK, +1 INT)" = list(STATKEY_LCK, STATKEY_INT),
+	)
 	enflamed_icon = "widefire"
 	organs = list(
 		ORGAN_SLOT_BRAIN = /obj/item/organ/brain,
@@ -185,9 +223,22 @@
 		/datum/descriptor_choice/prominent_four_wild,
 	)
 
-/datum/species/anthromorph/on_species_gain(mob/living/carbon/C, datum/species/old_species)
+/datum/species/anthromorph/uses_title_based_bonuses()
+	return TRUE
+
+/datum/species/anthromorph/get_default_title_bonus()
+	return list(STAT_PERCEPTION = 1, STAT_CONSTITUTION = 1)
+
+/datum/species/anthromorph/get_trait_titles()
+	var/static/list/title_traits = list("Rabbit-Kin" = "Hare's Grace")
+	return title_traits
+
+/datum/species/anthromorph/on_species_gain(mob/living/carbon/C, datum/species/old_species, datum/preferences/pref_load)
 	..()
 	RegisterSignal(C, COMSIG_MOB_SAY, PROC_REF(handle_speech))
+	if(ishuman(C))
+		var/mob/living/carbon/human/H = C
+		apply_hares_grace_from_race_title(H, pref_load)
 
 /datum/species/anthromorph/on_species_loss(mob/living/carbon/C)
 	. = ..()

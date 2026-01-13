@@ -10,7 +10,7 @@
 	acquired their Beastling traits due to magical curses or blessings from a god, typically \
 	Dendor. Half-kins can reproduce with one another, and their children will inherit features \
 	from both parents. Half-kin genes are dominant when mixing with Humens or Elves.<br>\
-	(+1 Endurance, +1 Perception)"
+	(+2 stats based on subrace selection)"
 
 	expanded_desc = "Half-kins are a highly diversified people. Half-kins are primarily \
 	a consequence of Beastling races mixing with a Humens and Elves, although some have \
@@ -87,7 +87,44 @@
 		OFFSET_SHIRT_F = list(0,0), OFFSET_ARMOR_F = list(0,0), OFFSET_UNDIES_F = list(0,-1), \
 		OFFSET_BREASTS_F = list(0,-1), \
 		)
-	race_bonus = list(STAT_PERCEPTION = 1, STAT_WILLPOWER = 1)
+	race_bonus = list()
+	custom_selection = list(
+		"Half-Cat (+1 SPD)" = list(STATKEY_SPD),
+		"Half-Dog (+1 CON, +1 PER)" = list(STATKEY_CON, STATKEY_PER),
+		"Half-Volf (+1 PER, +1 INT)" = list(STATKEY_PER, STATKEY_INT),
+		"Half-Lion (+1 STR)" = list(STATKEY_STR),
+		"Half-Venard (+1 SPD)" = list(STATKEY_SPD),
+		"Half-Tiger (+1 STR)" = list(STATKEY_STR),
+		"Half-Sheep (+1 WIL, +1 CON)" = list(STATKEY_WIL, STATKEY_CON),
+		"Half-Goat (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Half-Rous (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Half-Possum (+1 LCK, +1 INT)" = list(STATKEY_LCK, STATKEY_INT),
+		"Half-Pig (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Half-Boar (+1 STR)" = list(STATKEY_STR),
+		"Half-Rabbit (+1 SPD, Hare's Grace)" = list(STATKEY_SPD),
+		"Half-Horse (+1 STR)" = list(STATKEY_STR),
+		"Half-Donkey (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Half-Hyena (+1 WIL, +1 INT)" = list(STATKEY_WIL, STATKEY_INT),
+		"Half-Deer (+1 SPD)" = list(STATKEY_SPD),
+		"Half-Bear (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Half-Panda (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Half-Coyote (+1 SPD)" = list(STATKEY_SPD),
+		"Half-Moose (+1 STR)" = list(STATKEY_STR),
+		"Half-Jackal (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Half-Panther (+1 STR)" = list(STATKEY_STR),
+		"Half-Lynx (+1 SPD)" = list(STATKEY_SPD),
+		"Half-Leopard (+1 STR)" = list(STATKEY_STR),
+		"Half-Monkey (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Half-Bird (+1 SPD)" = list(STATKEY_SPD),
+		"Half-Seal (+1 CON, +1 INT)" = list(STATKEY_CON, STATKEY_INT),
+		"Half-Bat (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Half-Otter (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Half-Cow (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Half-Bull (+1 STR)" = list(STATKEY_STR),
+		"Half-Bee (+1 INT, +1 PER)" = list(STATKEY_INT, STATKEY_PER),
+		"Half-Lizard (+1 CON, +1 WIL)" = list(STATKEY_CON, STATKEY_WIL),
+		"Half-Monster (+1 WIL, +1 INT)" = list(STATKEY_WIL, STATKEY_INT),
+	)
 	enflamed_icon = "widefire"
 	organs = list(
 		ORGAN_SLOT_BRAIN = /obj/item/organ/brain,
@@ -206,9 +243,22 @@
 		"Kazengun" = SKIN_COLOR_KAZENGUN,
 	)
 
-/datum/species/demihuman/on_species_gain(mob/living/carbon/C, datum/species/old_species)
+/datum/species/demihuman/uses_title_based_bonuses()
+	return TRUE
+
+/datum/species/demihuman/get_default_title_bonus()
+	return list(STAT_PERCEPTION = 1, STAT_WILLPOWER = 1)
+
+/datum/species/demihuman/get_trait_titles()
+	var/static/list/title_traits = list("Half-Rabbit" = "Hare's Grace")
+	return title_traits
+
+/datum/species/demihuman/on_species_gain(mob/living/carbon/C, datum/species/old_species, datum/preferences/pref_load)
 	..()
 	RegisterSignal(C, COMSIG_MOB_SAY, PROC_REF(handle_speech))
+	if(ishuman(C))
+		var/mob/living/carbon/human/H = C
+		apply_hares_grace_from_race_title(H, pref_load)
 
 /datum/species/demihuman/on_species_loss(mob/living/carbon/C)
 	. = ..()

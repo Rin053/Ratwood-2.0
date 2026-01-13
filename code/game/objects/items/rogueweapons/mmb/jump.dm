@@ -75,6 +75,9 @@
 		if(!H.check_armor_skill() || H.legcuffed)
 			jadded += 50
 			jrange = 1
+	
+	if(HAS_TRAIT(src, TRAIT_HARES_GRACE))
+		jadded = round(jadded / 2) // Half stamina drain for rabbits
 
 	jump_action_resolve(A, jadded, jrange, jextra)
 	return TRUE
@@ -113,7 +116,7 @@
 			throw_at(A, jrange, 1, src, spin = FALSE)
 			while(src.throwing)
 				sleep(1)
-		if(!HAS_TRAIT(src, TRAIT_ZJUMP) && (m_intent == MOVE_INTENT_RUN))	//Jesters and werewolves don't get immobilized at all
+		if(!HAS_TRAIT(src, TRAIT_ZJUMP) && !HAS_TRAIT(src, TRAIT_HARES_GRACE) && (m_intent == MOVE_INTENT_RUN))	//Jesters, werewolves, and rabbits don't get immobilized at all
 			Immobilize((HAS_TRAIT(src, TRAIT_LEAPER) ? 5 : 10))	//Acrobatics get half the time
 		if(isopenturf(src.loc))
 			var/turf/open/T = src.loc

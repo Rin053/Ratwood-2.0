@@ -117,10 +117,23 @@ GLOBAL_LIST_INIT(special_traits, build_special_traits())
 		if(ispath(bonus, /datum/virtue))
 			var/datum/virtue/v = bonus
 			apply_virtue(character, new v)
+	if(islist(bonus))	//The bonus is a list of stats
+		for(var/stat in bonus)
+			if(stat in MOBSTATS)
+				character.change_stat(stat, 1)
 	if(bonus in MOBSTATS)
 		character.change_stat(bonus, 1) //atm it only supports one stat getting a +1
 	if(bonus in GLOB.roguetraits)
 		ADD_TRAIT(character, bonus, TRAIT_GENERIC)
+
+/proc/apply_hares_grace_from_race_title(mob/living/carbon/human/H, datum/preferences/pref_load)
+	if(!H || !pref_load || !H.dna?.species)
+		return
+	var/datum/species/species = H.dna.species
+	var/title = pref_load.selected_title
+	var/trait_name = species.get_trait_for_title(title)
+	if(trait_name == "Hare's Grace")
+		ADD_TRAIT(H, TRAIT_HARES_GRACE, SPECIES_TRAIT)
 
 /proc/virtue_check(var/datum/virtue/V, heretic = FALSE)
 	if(V)

@@ -298,6 +298,71 @@ GLOBAL_LIST_EMPTY(roundstart_races)
 		return 0
 	return 1
 
+/datum/species/proc/get_stat_display_name(stat)
+	var/static/list/stat_display_names = list(
+		STATKEY_STR = "Strength",
+		STATKEY_PER = "Perception",
+		STATKEY_INT = "Intelligence",
+		STATKEY_CON = "Constitution",
+		STATKEY_WIL = "Willpower",
+		STATKEY_SPD = "Speed",
+		STATKEY_LCK = "Fortune",
+		STAT_STRENGTH = "Strength",
+		STAT_PERCEPTION = "Perception",
+		STAT_INTELLIGENCE = "Intelligence",
+		STAT_CONSTITUTION = "Constitution",
+		STAT_WILLPOWER = "Willpower",
+		STAT_SPEED = "Speed",
+		STAT_FORTUNE = "Fortune"
+	)
+	return stat_display_names[stat] || capitalize(stat)
+
+/datum/species/proc/format_race_bonus_display(list/bonus, title = null)
+	if(!bonus || !length(bonus))
+		return ""
+	var/list/parts = list()
+	for(var/stat in bonus)
+		var/amt = isnum(bonus[stat]) ? bonus[stat] : 1
+		if(amt == 0)
+			continue
+		var/stat_name = get_stat_display_name(stat)
+		parts += "[amt > 0 ? "+" : ""][amt] [stat_name]"
+	if(title)
+		var/trait_name = get_trait_for_title(title)
+		if(trait_name)
+			parts += "Trait: [trait_name]"
+	if(length(parts))
+		return "(" + parts.Join(", ") + ")"
+	return ""
+
+/datum/species/proc/get_default_title_bonus()
+	return null
+
+/datum/species/proc/get_race_bonus_from_title(title)
+	if(!uses_title_based_bonuses())
+		return null
+	if(title == "None")
+		return get_default_title_bonus()
+	if(!custom_selection || !title)
+		return null
+	for(var/bonus_name in custom_selection)
+		if(bonus_name == title || (findtext(bonus_name, title + " (") == 1))
+			return custom_selection[bonus_name]
+	return null
+
+/datum/species/proc/get_race_bonus_display(title)
+	return format_race_bonus_display(get_race_bonus_from_title(title), title)
+
+/datum/species/proc/uses_title_based_bonuses()
+	return FALSE
+
+/datum/species/proc/get_trait_titles()
+	return list()
+
+/datum/species/proc/get_trait_for_title(title)
+	var/list/trait_titles = get_trait_titles()
+	return trait_titles[title]
+
 /datum/species/proc/get_random_features()
 	var/list/returned = MANDATORY_FEATURE_LIST
 	returned["mcolor"] = random_color()
