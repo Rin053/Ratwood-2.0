@@ -36,6 +36,9 @@ GLOBAL_LIST_EMPTY(roundstart_races)
 
 	var/hairyness = null
 
+	var/use_titles = FALSE
+	var/list/race_titles = list()
+
 	var/custom_clothes = FALSE //append species id to clothing sprite name
 	var/use_f = FALSE //males use female clothes. for elves DO NOT TURN BOTH ON EVER
 	var/use_m = FALSE //females use male clothes. for half orcs DO NOT TURN BOTH ON
@@ -1857,6 +1860,7 @@ GLOBAL_LIST_EMPTY(roundstart_races)
 				new /obj/effect/temp_visual/dir_setting/bloodsplatter(H.loc, splatter_dir)
 				if(istype(location))
 					H.add_splatter_floor(location)
+					H.add_splatter_wall(location, force = I.force)
 				if(get_dist(user, H) <= 1)	//people with TK won't get smeared with blood
 					user.add_mob_blood(H)
 

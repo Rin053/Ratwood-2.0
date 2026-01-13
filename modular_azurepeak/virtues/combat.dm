@@ -177,5 +177,4 @@
 	added_traits = list(TRAIT_COMBAT_AWARE)
 
 /datum/virtue/combat/combat_aware/apply_to_human(mob/living/carbon/human/recipient)
-	recipient.change_stat(STATKEY_PER, 1)
 	recipient.verbs += /mob/living/carbon/human/proc/togglecombatawareness
