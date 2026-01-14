@@ -87,11 +87,6 @@
 /datum/intent/sword/cut/miaodao/fast
 	clickcd = 9
 
-/datum/intent/sword/peel/miaodao
-	name = "long sword armor peel"
-	peel_divisor = 4
-	reach = 2
-
 /datum/intent/sword/thrust/zwei
 	reach = 2
 
