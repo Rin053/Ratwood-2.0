@@ -146,7 +146,7 @@
 	max_integrity = 150
 	prevent_crits = list(BCLASS_CUT, BCLASS_BLUNT, BCLASS_TWIST)
 	slot_flags = ITEM_SLOT_HEAD|ITEM_SLOT_MASK|ITEM_SLOT_NECK
-	armor = ARMOR_HEAD_PSYDON //basically the same as a warscholar hood
+	armor = ARMOR_SPELLSINGER
 	color = CLOTHING_BLACK
 
 // Holy Hoods
