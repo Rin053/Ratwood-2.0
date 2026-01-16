@@ -53,6 +53,7 @@
 		/obj/item/rope/chain = 1,
 		/obj/item/rogueweapon/scabbard/sheath = 1,
 	)
+	wretch_select_bounty(H)
 
 //studded hood and shit brought to you by vide noir
 //it requires sewing to make the padded hood and blacksmithing to make studded hood, like studded armor.
