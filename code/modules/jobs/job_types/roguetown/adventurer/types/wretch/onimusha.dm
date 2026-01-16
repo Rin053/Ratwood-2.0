@@ -96,7 +96,7 @@
 	belt = /obj/item/storage/belt/rogue/leather/plaquesilver/outlaw
 	gloves = /obj/item/clothing/gloves/roguetown/eastgloves1
 	shoes = /obj/item/clothing/shoes/roguetown/armor/rumaclan
-	neck = /obj/item/clothing/head/roguetown/helmet/leather/armorhood/advanced
+	neck = /obj/item/clothing/head/roguetown/roguehood/reinforced/newmoon/armorhood/advanced
 	wrists = /obj/item/clothing/wrists/roguetown/bracers/leather/heavy
 	mask = /obj/item/clothing/mask/rogue/facemask/steel/kazengun
 	beltr = /obj/item/rogueweapon/huntingknife/idagger/steel/kazengun
