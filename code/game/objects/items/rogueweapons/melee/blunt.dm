@@ -67,10 +67,11 @@
 	icon_state = "instab"
 	reach = 2
 	clickcd = CLICK_CD_CHARGED
-	recovery = 10
+	recovery = 30
+	penfactor = 25
+	damfactor = 0.9
 	warnie = "mobwarning"
 	hitsound = list('sound/combat/hits/bladed/genstab (1).ogg', 'sound/combat/hits/bladed/genstab (2).ogg', 'sound/combat/hits/bladed/genstab (3).ogg')
-	penfactor = 40 //Same as a dagger.
 	item_d_type = "stab"
 
 //blunt objs ฅ^•ﻌ•^ฅ
