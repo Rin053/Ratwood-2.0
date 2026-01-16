@@ -433,6 +433,12 @@
 	additional_items = list(/obj/item/clothing/suit/roguetown/armor/leather)
 	created_item = /obj/item/clothing/suit/roguetown/armor/leather/studded
 
+/datum/anvil_recipe/armor/iron/studdedhood
+	name = "Studded Leather Hood"
+	req_bar = /obj/item/ingot/iron
+	additional_items = list(/obj/item/clothing/head/roguetown/roguehood/reinforced/newmoon/armorhood)
+	created_item = /obj/item/clothing/head/roguetown/roguehood/reinforced/newmoon/armorhood/advanced
+
 /datum/anvil_recipe/armor/studdedbikini
 	name = "Studded Leather Corslet (+ Leather Corslet)"
 	req_bar = /obj/item/ingot/iron

@@ -54,6 +54,41 @@
 		/obj/item/rogueweapon/scabbard/sheath = 1,
 	)
 
+//studded hood and shit brought to you by vide noir
+//it requires sewing to make the padded hood and blacksmithing to make studded hood, like studded armor.
+//this is an upgrade to leather helmet cause it's more bothersome and (there is literally no reason to have leather helmets cause there is no weight class for them anyway.)
+//but this atleast hides your identity and looks cool, have more crit resist types.
+/obj/item/clothing/head/roguetown/roguehood/reinforced/newmoon/armorhood
+	name = "padded leather hood"
+	desc = "A padded leather hood with buckles."
+	icon = 'modular_stonehedge/icons/clothing/armor/head.dmi'
+	mob_overlay_icon = 'modular_stonehedge/icons/clothing/armor/onmob/head.dmi'
+	icon_state = "studhood"
+	item_state = "studhood"
+	color = null
+	flags_inv =	HIDEHAIR|HIDEEARS|HIDEFACE
+	slot_flags = ITEM_SLOT_NECK|ITEM_SLOT_HEAD
+	body_parts_covered = HEAD|EARS|HAIR|NOSE|EYES|NECK
+	//Something between leather and metal helmet, worse than metal helmet by far.
+	armor = list("blunt" = 70, "slash" = 65, "stab" = 60, "piercing" = 20, "fire" = 0, "acid" = 0)
+	prevent_crits = list(BCLASS_CUT, BCLASS_BLUNT, BCLASS_TWIST)
+	max_integrity = 240
+	adjustable = CAN_CADJUST
+	toggle_icon_state = TRUE
+
+/obj/item/clothing/head/roguetown/roguehood/reinforced/newmoon/armorhood/ComponentInitialize()
+	AddComponent(/datum/component/adjustable_clothing, NECK, null, null, null, null, (UPD_HEAD|UPD_MASK|UPD_NECK))
+
+/obj/item/clothing/head/roguetown/roguehood/reinforced/newmoon/armorhood/advanced
+	name = "studded leather hood"
+	desc = "A thick studded leather hood with buckles."
+	icon_state = "studhood" //make into new sprite
+	item_state = "studhood"
+	max_integrity = 280
+	//closer to metal helmet but still quite behind, same blunt resist of hardened leather helmet though.
+	armor = list("blunt" = 90, "slash" = 80, "stab" = 70, "piercing" = 20, "fire" = 0, "acid" = 0)
+	prevent_crits = list(BCLASS_CUT, BCLASS_STAB, BCLASS_BLUNT, BCLASS_TWIST, BCLASS_CHOP, BCLASS_SMASH) //studded armor values with stab prot too
+
 /datum/advclass/wretch/swordhunter
 	name = "Sword Hunter"
 	tutorial = "Hailing from Lingyue, yours is an unique art: You seek the swords of worthy foes and add them to your collection, all in worship of Matiosu."
