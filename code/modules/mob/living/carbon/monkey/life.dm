@@ -1,15 +1,32 @@
+/mob/living/carbon/monkey
 
 
-/mob/living/carbon/spirit
-
-
-/mob/living/carbon/spirit/Life()
+/mob/living/carbon/monkey/Life()
 	set invisibility = 0
 
 	if (notransform)
 		return
 
-/mob/living/carbon/spirit/handle_environment()
+	if(..())
+
+		if(!client)
+			if(stat == CONSCIOUS)
+				if(on_fire || buckled || restrained())
+					if(!resisting && prob(MONKEY_RESIST_PROB))
+						resisting = TRUE
+						walk_to(src,0)
+						resist()
+				else if(resisting)
+					resisting = FALSE
+				else if((mode == MONKEY_IDLE && !pickupTarget && !prob(MONKEY_SHENANIGAN_PROB)) || !handle_combat())
+					if(prob(25) && (mobility_flags & MOBILITY_MOVE) && isturf(loc) && !pulledby)
+						step(src, pick(GLOB.cardinals))
+					else if(prob(1))
+						emote(pick("scratch","jump","roll","tail"))
+			else
+				walk_to(src,0)
+
+/mob/living/carbon/monkey/handle_environment()
 //ATMO/TURF/TEMPERATURE
 	var/turf/cur_turf = get_turf(src)
 	var/loc_temp = cur_turf.temperature
@@ -56,12 +73,12 @@
 
 	return
 
-/mob/living/carbon/spirit/handle_random_events()
+/mob/living/carbon/monkey/handle_random_events()
 	..()
 	if (prob(1) && prob(2))
 		emote("scratch")
 
-/mob/living/carbon/spirit/has_smoke_protection()
+/mob/living/carbon/monkey/has_smoke_protection()
 	if(wear_mask)
 		if(wear_mask.clothing_flags & BLOCK_GAS_SMOKE_EFFECT)
 			return 1

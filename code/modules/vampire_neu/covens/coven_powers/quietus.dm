@@ -70,8 +70,9 @@
 /datum/coven_power/quietus/silence_of_death/proc/should_affect_target(mob/living/carbon/human/target)
 	if(target == owner)
 		return FALSE
-	//the silence spares your own Clan, rival kindred get no such mercy
-	if(target.is_clanmate(owner))
+	if(target.clan_position?.is_subordinate_to(owner))
+		return FALSE
+	if(target.clan_position?.is_superior_to(owner))
 		return FALSE
 	return TRUE
 
@@ -142,7 +143,7 @@
 
 /datum/coven_power/quietus/scorpions_touch
 	name = "Scorpion's Touch"
-	desc = "Utilize your vitae to cause blood to ooze out faster, and for wounds to become more painful."
+	desc = "Create a powerful substance to set your enemies on fire."
 
 	level = 2
 	research_cost = 1
@@ -153,36 +154,25 @@
 
 /datum/coven_power/quietus/scorpions_touch/activate()
 	. = ..()
-	owner.put_in_hands(new /obj/item/melee/touch_attack/quietus(owner))
+	owner.put_in_active_hand(new /obj/item/melee/touch_attack/quietus(owner))
 
 //SCORPION'S TOUCH
 /obj/item/melee/touch_attack/quietus
 	name = "\improper poison touch"
-	desc = "Vile, black vitae dribbling down a hand, ready to seep into a wound."
+	desc = "This is kind of like when you rub your feet on a shag rug so you can zap your friends, only a lot less safe."
 	icon = 'icons/mob/roguehudgrabs.dmi'
 	icon_state = "grabbing_greyscale"
-	color = COLOR_ALMOST_BLACK
-	force = 4
-	d_type = "stab"
-	sharpness = IS_SHARP
-	can_parry = FALSE
-	associated_skill = /datum/skill/magic/blood
-	var/force_per_bloodskill = 4
-	var/armor_penetration_per_bloodskill = 6
+	color = COLOR_RED_LIGHT
 
-/obj/item/melee/touch_attack/quietus/attack(mob/living/target, mob/living/carbon/user)
-	var/bloodskill = user.get_skill_level(/datum/skill/magic/blood)
-	force = initial(force) + (bloodskill * force_per_bloodskill)
-	armor_penetration = initial(armor_penetration) + (bloodskill * armor_penetration_per_bloodskill)
-	var/bleed_before = isliving(target) ? target.get_bleed_rate() : 0
-	. = ..()
-	if(QDELETED(target) || !isliving(target))
+/obj/item/melee/touch_attack/quietus/afterattack(atom/target, mob/living/carbon/user, proximity)
+	if(!proximity)
 		return
-	if(target.get_bleed_rate() <= bleed_before)
-		return
-	target.apply_status_effect(/datum/status_effect/debuff/blackvitae)
-	target.visible_message(span_warning("[target]'s wounds begin to fester and rot!"))
-	to_chat(target, span_danger("WHAT ACHES NOW SEETHES WITH AGONY! EVERYTHING HURTS <span class='italics'>MORE</span>!"))
+	if(isliving(target))
+		var/mob/living/L = target
+		L.adjustFireLoss(10, burn_flag = BURN_FLAG_FIRE)
+		L.adjust_fire_stacks(3)
+		L.ignite_mob()
+	return ..()
 
 //BAAL'S CARESS
 /datum/coven_power/quietus/baals_caress
@@ -200,9 +190,6 @@
 
 /datum/coven_power/quietus/baals_caress/can_activate(atom/target, alert = FALSE)
 	. = ..()
-	if(!.)
-		return FALSE
-
 	var/obj/item/rogueweapon/target_weapon = target
 	if(!istype(target_weapon))
 		if(alert)
@@ -229,20 +216,9 @@
 	check_flags = COVEN_CHECK_CAPABLE | COVEN_CHECK_CONSCIOUS | COVEN_CHECK_IMMOBILE | COVEN_CHECK_LYING
 	violates_masquerade = TRUE
 
-	var/obj/effect/proc_holder/spell/granted_spell
-
 /datum/coven_power/quietus/taste_of_death/post_gain()
 	. = ..()
-	if(!owner?.mind)
-		return
-	granted_spell = new /obj/effect/proc_holder/spell/invoked/projectile/acidsplash/quietus
-	owner.mind.AddSpell(granted_spell)
-
-/datum/coven_power/quietus/taste_of_death/post_lose()
-	. = ..()
-	if(granted_spell)
-		owner?.mind?.RemoveSpell(granted_spell)
-		granted_spell = null
+	owner.mind.AddSpell(new /obj/effect/proc_holder/spell/invoked/projectile/acidsplash/quietus)
 
 /obj/effect/proc_holder/spell/invoked/projectile/acidsplash/quietus
 	projectile_type = /obj/projectile/magic/acidsplash/quietus
@@ -266,10 +242,10 @@
 /datum/coven_power/quietus/dagons_call/activate()
 	. = ..()
 	var/mob/living/lastattacker = owner.lastattacker_weakref?.resolve()
-	if(isliving(lastattacker) && !lastattacker.is_clanmate(owner))
+	if(isliving(lastattacker))
 		lastattacker.adjustStaminaLoss(80)
 		lastattacker.adjust_fire_stacks(6)
-		lastattacker.adjustFireLoss(10)
+		lastattacker.adjustFireLoss(10, burn_flag = BURN_FLAG_FIRE)
 		to_chat(owner, "You send your curse on [lastattacker], the last creature you attacked.")
 	else
 		to_chat(owner, "You don't seem to have last attacked soul earlier...")
