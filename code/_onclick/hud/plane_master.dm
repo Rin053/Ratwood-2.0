@@ -372,7 +372,8 @@
 	render_target = SUNLIGHTING_RENDER_TARGET
 
 // Glow sprites (torch flames, lamp halos) draw here, above the lighting multiply.
-// A plane master is required so the ink-wash filter can reach them. BLEND_DEFAULT matches an unmastered plane.
+// The master exists so the live ink relay can capture this plane. The wash is not a filter on this
+// master: layer filters here did not cover the view. BLEND_DEFAULT matches an unmastered plane.
 /atom/movable/screen/plane_master/above_lighting
 	name = "above lighting plane master"
 	plane = ABOVE_LIGHTING_PLANE
