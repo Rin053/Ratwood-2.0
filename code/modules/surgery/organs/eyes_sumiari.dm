@@ -16,8 +16,8 @@
 // The fade is linear across that whole span: half the brightness is half the color.
 // It meets 0 at this point and stays there. There is no step, and no tint left over past it.
 #define SUMIARI_MONO_FULL 1
-// Glare is only the top of daylight. It eases off as brightness falls, while color is still gone
-// until the tile is no longer fully lit.
+// Glare eases in across the brightest end of that same line. Full brightness is exactly colorless.
+// Just under it, a little color is already coming back, so the fade never steps.
 #define SUMIARI_GLARE_START 0.82
 #define SUMIARI_GLARE_FULL 1.0
 // Full-glare multiply on the ink image. Below 1 flattens contrast.
