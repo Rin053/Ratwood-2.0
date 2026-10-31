@@ -46,7 +46,7 @@
 		)
 	inherent_traits = list(TRAIT_HUMEN_INGENUITY)
 	// TEMPORARY test default. Revert by deleting this organs list (or setting EYES back to /obj/item/organ/eyes)
-	// and deleting /datum/species/human/northern/on_species_gain in eyes_sumiari.dm.
+	// and deleting northern on_species_gain / on_species_loss in eyes_sumiari.dm.
 	organs = list(
 		ORGAN_SLOT_BRAIN = /obj/item/organ/brain,
 		ORGAN_SLOT_HEART = /obj/item/organ/heart,

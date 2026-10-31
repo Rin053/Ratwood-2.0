@@ -18,6 +18,21 @@
 // Full-glare add. Lifts ink-black toward dark gray. Combined with the slope, paper-white blooms past 1.
 #define SUMIARI_GLARE_BIAS 0.26
 
+// Vision-only flourishes. Each one is the ink wash, nothing else. 0 turns that flourish off.
+// A faint ink edge on colored darkness. The center of the view stays clear, and lit ground stays bare.
+#define SUMIARI_INK_VIGNETTE 1
+// Edge strength, 0 to 1. The icon is drawn once from this value.
+#define SUMIARI_INK_VIGNETTE_ALPHA 0.22
+// A little of the real sun or moon color, added only where the world is still in color.
+// Open night picks up the moon. A cave has no sunlight plane, so it stays neutral.
+#define SUMIARI_MOON_TINT 1
+// How much of that sky color is added. Kept small so it reads as paper, not a blue filter.
+#define SUMIARI_MOON_TINT_STRENGTH 0.14
+// Sun glare eases off as the sun itself dims. A torch still hazes, only less so under the moon.
+#define SUMIARI_NIGHT_GLARE 1
+// Glare alpha at full brightness when the sun is down. 1 leaves the day curve untouched.
+#define SUMIARI_NIGHT_GLARE_SCALE 0.4
+
 // Ink-wash contrast. 1 is flat grayscale. Higher crushes shadows and lifts highlights.
 #define SUMIARI_INK_CONTRAST 1.55
 // Luma value that stays put. Below the midpoint so shadows fall into ink and highlights reach paper.
@@ -46,6 +61,8 @@
 #define SUMIARI_PLANE_LIGHT -54
 #define SUMIARI_PLANE_MASK -53
 #define SUMIARI_PLANE_GLARE -52
+#define SUMIARI_PLANE_DARK -51
+#define SUMIARI_PLANE_MOON -50
 
 #define SUMIARI_TARGET_RED "sumiari_ch_r"
 #define SUMIARI_TARGET_GREEN "sumiari_ch_g"
@@ -56,6 +73,8 @@
 #define SUMIARI_TARGET_LIGHT "sumiari_light"
 #define SUMIARI_TARGET_MASK "sumiari_mask"
 #define SUMIARI_TARGET_GLARE "sumiari_glare"
+#define SUMIARI_TARGET_DARK "sumiari_dark"
+#define SUMIARI_TARGET_MOON "sumiari_moon"
 
 // Stored in place of a null render_target. BYOND drops a list entry whose value is null.
 #define SUMIARI_NO_TARGET ""
@@ -95,6 +114,13 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/vision_on = FALSE
 	var/list/saved_render_targets
 	var/list/screen_pieces
+	// The glare plate's filter is rebuilt when the sun moves, so night haze can ease without a new composite.
+	var/atom/movable/screen/sumiari_mask_layer/glare_layer
+
+var/global/list/sumiari_active_eyes = list()
+var/global/sumiari_screen_live = 0
+// Headless sweep builds the composite with a hud and no client. Live play still requires a client.
+var/global/sumiari_test_without_client = FALSE
 
 /obj/item/organ/eyes/sumiari/Insert(mob/living/carbon/M, special = FALSE, drop_if_replaced = FALSE, initialising)
 	. = ..()
@@ -106,11 +132,12 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	owner.update_sight()
 	RegisterSignal(owner, COMSIG_MOB_LOGIN, PROC_REF(on_owner_login))
 	RegisterSignal(owner, COMSIG_MOB_LOGOUT, PROC_REF(on_owner_logout))
+	RegisterSignal(owner, COMSIG_MOVABLE_Z_CHANGED, PROC_REF(on_owner_z_change))
 	attach_client_vision()
 
 /obj/item/organ/eyes/sumiari/Remove(mob/living/carbon/M, special = 0)
 	if(M)
-		UnregisterSignal(M, list(COMSIG_MOB_LOGIN, COMSIG_MOB_LOGOUT))
+		UnregisterSignal(M, list(COMSIG_MOB_LOGIN, COMSIG_MOB_LOGOUT, COMSIG_MOVABLE_Z_CHANGED))
 		M.see_in_dark = initial(M.see_in_dark)
 		M.see_invisible = initial(M.see_invisible)
 		M.lighting_alpha = initial(M.lighting_alpha)
@@ -129,15 +156,27 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	SIGNAL_HANDLER
 	release_client_vision(owner)
 
+// Plane masters survive a z-change. Recapture so a backdrop that ran on the way through cannot leave a plane unmasked.
+/obj/item/organ/eyes/sumiari/proc/on_owner_z_change(datum/source, old_z, new_z)
+	SIGNAL_HANDLER
+	if(!vision_on || old_z == new_z)
+		return
+	hold_lighting_capture()
+	capture_world_planes()
+
 /obj/item/organ/eyes/sumiari/proc/attach_client_vision()
-	if(!owner?.client || !owner.hud_used)
+	if(!owner?.hud_used)
+		return
+	if(!owner.client && !sumiari_test_without_client)
 		return
 	if(vision_on && length(screen_pieces))
+		sumiari_active_eyes[src] = TRUE
 		present_screen_pieces()
 		hold_lighting_capture()
 		capture_world_planes()
 		return
 	vision_on = TRUE
+	sumiari_active_eyes[src] = TRUE
 	if(!saved_render_targets)
 		saved_render_targets = list()
 	hold_lighting_capture()
@@ -146,10 +185,16 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	present_screen_pieces()
 
 /obj/item/organ/eyes/sumiari/proc/release_client_vision(mob/living/carbon/M)
+	sumiari_active_eyes -= src
 	vision_on = FALSE
+	glare_layer = null
 	clear_screen_pieces(M)
 	restore_render_targets(M)
 	saved_render_targets = null
+	var/mob/living/carbon/who = M || owner
+	var/atom/movable/screen/plane_master/lighting/lighting = who?.hud_used?.plane_masters["[LIGHTING_PLANE]"]
+	if(lighting)
+		lighting.alpha = who.lighting_alpha
 
 /obj/item/organ/eyes/sumiari/proc/present_screen_pieces()
 	if(!owner)
@@ -216,9 +261,13 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	remember_render_target(plane, sumiari_world_render_target(plane.plane))
 
 /obj/item/organ/eyes/sumiari/proc/build_screen_pieces()
+	glare_layer = null
+	if(screen_pieces)
+		QDEL_LIST(screen_pieces)
 	screen_pieces = list()
 	build_mask_plates()
 	build_world_relays()
+	build_flourishes()
 
 /obj/item/organ/eyes/sumiari/proc/add_plate(plane, target_name, list/plate_filters)
 	var/atom/movable/screen/sumiari_plate/plate = new
@@ -230,6 +279,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	layer.name = target_name
 	layer.filters = plate_filters
 	layer.blockscharging = FALSE
+	if(target_name == SUMIARI_TARGET_GLARE)
+		glare_layer = layer
 	screen_pieces += plate
 	screen_pieces += layer
 
@@ -303,6 +354,47 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 		screen_pieces += ink_relay
 		screen_pieces += glare_relay
 
+// Ink edge, and a trace of the sky's own color, both limited to pixels the lighting plane still calls dark.
+/obj/item/organ/eyes/sumiari/proc/build_flourishes()
+#if SUMIARI_INK_VIGNETTE || SUMIARI_MOON_TINT
+	add_plate(SUMIARI_PLANE_DARK, SUMIARI_TARGET_DARK, list(
+		filter(type = "layer", render_source = SUMIARI_TARGET_LIGHT, blend_mode = BLEND_OVERLAY),
+		filter(type = "color", color = sumiari_matrix_invert_gray()),
+		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
+	))
+#endif
+#if SUMIARI_MOON_TINT
+	add_plate(SUMIARI_PLANE_MOON, SUMIARI_TARGET_MOON, list(
+		filter(type = "layer", render_source = SUNLIGHTING_RENDER_TARGET, blend_mode = BLEND_OVERLAY),
+		filter(type = "color", color = sumiari_matrix_moon_tint()),
+	))
+	var/atom/movable/screen/sumiari_relay/moon = new
+	moon.name = "sumiari moon"
+	moon.layer = SUMIARI_RELAY_LAYER_BASE + 28
+	moon.blend_mode = BLEND_ADD
+	moon.blockscharging = FALSE
+	moon.filters = list(
+		filter(type = "layer", render_source = SUMIARI_TARGET_MOON, blend_mode = BLEND_OVERLAY),
+		filter(type = "alpha", render_source = SUMIARI_TARGET_DARK),
+	)
+	screen_pieces += moon
+#endif
+#if SUMIARI_INK_VIGNETTE
+	var/atom/movable/screen/sumiari_vignette/vignette = new
+	vignette.icon = sumiari_vignette_icon()
+	vignette.blockscharging = FALSE
+	vignette.filters = list(filter(type = "alpha", render_source = SUMIARI_TARGET_DARK))
+	screen_pieces += vignette
+#endif
+
+/obj/item/organ/eyes/sumiari/proc/refresh_time_filters()
+	if(!vision_on || !glare_layer)
+		return
+	glare_layer.filters = list(
+		filter(type = "layer", render_source = SUMIARI_TARGET_LIGHT, blend_mode = BLEND_OVERLAY),
+		filter(type = "color", color = sumiari_matrix_glare_to_alpha()),
+	)
+
 /atom/movable/screen/plane_master/proc/apply_sumiari_sight(mob/mymob)
 	if(!sumiari_plane_is_world(plane))
 		return
@@ -326,6 +418,14 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	icon_state = "blank"
 	blockscharging = FALSE
 
+/atom/movable/screen/sumiari_plate/Initialize(mapload)
+	. = ..()
+	sumiari_screen_live++
+
+/atom/movable/screen/sumiari_plate/Destroy()
+	sumiari_screen_live--
+	return ..()
+
 // Holds the layer/color filters for one mask step. A blank icon plus a layer filter is how sunlight
 // already samples a full-plane render target, so the mask is not clipped to a 32x32 icon.
 /atom/movable/screen/sumiari_mask_layer
@@ -336,17 +436,54 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	appearance_flags = PASS_MOUSE | NO_CLIENT_COLOR | KEEP_TOGETHER
 	blockscharging = FALSE
 
+/atom/movable/screen/sumiari_mask_layer/Initialize(mapload)
+	. = ..()
+	sumiari_screen_live++
+
+/atom/movable/screen/sumiari_mask_layer/Destroy()
+	sumiari_screen_live--
+	return ..()
+
 // One captured world plane, drawn in world order on the relay plane.
 // Color is the plane as captured. Ink is that same plane, colorless, masked by the lighting image.
+// No NO_CLIENT_COLOR: the game plane takes client colour, and so does this copy of it.
+// Death's monochrome, and any other client colour, therefore covers the wash.
 /atom/movable/screen/sumiari_relay
 	icon = 'icons/mob/screen_gen.dmi'
 	icon_state = ""
 	screen_loc = "CENTER-2:-16,CENTER"
 	plane = SUMIARI_RELAY_PLANE
 	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
-	appearance_flags = PASS_MOUSE | NO_CLIENT_COLOR | KEEP_TOGETHER
+	appearance_flags = PASS_MOUSE | KEEP_TOGETHER
 	blend_mode = BLEND_DEFAULT
 	blockscharging = FALSE
+
+/atom/movable/screen/sumiari_relay/Initialize(mapload)
+	. = ..()
+	sumiari_screen_live++
+
+/atom/movable/screen/sumiari_relay/Destroy()
+	sumiari_screen_live--
+	return ..()
+
+// Full-view ink edge. The darkness mask hides it wherever the lighting plane is bright.
+/atom/movable/screen/sumiari_vignette
+	icon_state = ""
+	screen_loc = "CENTER-7,CENTER-7"
+	plane = SUMIARI_RELAY_PLANE
+	layer = SUMIARI_RELAY_LAYER_BASE + 30
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	appearance_flags = PASS_MOUSE | KEEP_TOGETHER
+	blend_mode = BLEND_DEFAULT
+	blockscharging = FALSE
+
+/atom/movable/screen/sumiari_vignette/Initialize(mapload)
+	. = ..()
+	sumiari_screen_live++
+
+/atom/movable/screen/sumiari_vignette/Destroy()
+	sumiari_screen_live--
+	return ..()
 
 /proc/sumiari_refresh_client_vision(mob/M)
 	if(!iscarbon(M))
@@ -401,11 +538,58 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	return list(0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0)
 
 // Alpha is 0 below the glare threshold and 1 at full brightness. The renderer clamps.
-/proc/sumiari_matrix_glare_to_alpha()
+// sun_override forces the night ease. Null uses the live sun.
+/proc/sumiari_matrix_glare_to_alpha(sun_override)
 	var/span = SUMIARI_GLARE_FULL - SUMIARI_GLARE_START
-	var/scale = 1 / span
-	var/bias = -SUMIARI_GLARE_START / span
+	var/night = sumiari_night_glare_scale(sun_override)
+	var/scale = night / span
+	var/bias = night * (-SUMIARI_GLARE_START / span)
 	return list(0, 0, 0, scale, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, bias)
+
+// Scales the sunlight plane and forces its alpha to 1. The darkness mask then decides where it shows.
+/proc/sumiari_matrix_moon_tint()
+	var/strength = SUMIARI_MOON_TINT_STRENGTH
+	return list(strength, 0, 0, 0, 0, strength, 0, 0, 0, 0, strength, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+
+// 1 in daylight. SUMIARI_NIGHT_GLARE_SCALE when the sun is down. Linear between those.
+/proc/sumiari_night_glare_scale(sun_override)
+#if !SUMIARI_NIGHT_GLARE
+	return 1
+#else
+	var/sun = isnull(sun_override) ? sumiari_sun_strength() : sun_override
+	if(sun >= SUMIARI_GLARE_START)
+		return 1
+	if(sun <= 0)
+		return SUMIARI_NIGHT_GLARE_SCALE
+	return SUMIARI_NIGHT_GLARE_SCALE + (1 - SUMIARI_NIGHT_GLARE_SCALE) * (sun / SUMIARI_GLARE_START)
+#endif
+
+// One full-view ink edge. Drawn once and reused. Transparent in the middle, ink at the rim.
+/proc/sumiari_vignette_icon()
+	var/static/icon/cached
+	if(cached)
+		return cached
+	var/icon/canvas = icon('icons/mob/screen_gen.dmi', "blank")
+	canvas.Scale(96, 96)
+	canvas.MapColors(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	var/side = 96
+	var/bands = 18
+	for(var/band in 1 to bands)
+		var/alpha = round(255 * SUMIARI_INK_VIGNETTE_ALPHA * band / bands)
+		var/ink = rgb(12, 14, 18, alpha)
+		canvas.DrawBox(ink, band, band, side - band + 1, band)
+		canvas.DrawBox(ink, band, side - band + 1, side - band + 1, side - band + 1)
+		canvas.DrawBox(ink, band, band, band, side - band + 1)
+		canvas.DrawBox(ink, side - band + 1, band, side - band + 1, side - band + 1)
+	canvas.Scale(480, 480)
+	cached = canvas
+	return cached
+
+/proc/sumiari_on_sun_changed()
+	for(var/obj/item/organ/eyes/sumiari/eyes as anything in sumiari_active_eyes)
+		if(QDELETED(eyes))
+			continue
+		eyes.refresh_time_filters()
 
 // Strength of one light sample. Peak channel, so a red lamp matches a white lamp of the same power.
 /proc/sumiari_channel_intensity(red, green, blue)
@@ -766,6 +950,9 @@ var/global/sumiari_run_headless_test = FALSE
 	log_world("SUMIARI TEST after_remove eyes=[human.getorganslot(ORGAN_SLOT_EYES)?.type || "none"] see_in_dark=[human.see_in_dark] see_invisible=[human.see_invisible] lighting_alpha=[human.lighting_alpha]")
 	qdel(human)
 	sumiari_probe_gnoll()
+	sumiari_test_without_client = TRUE
+	sumiari_runtime_sweep()
+	sumiari_test_without_client = FALSE
 	log_world("SUMIARI TEST DONE")
 
 // The GPU mask is this formula. Below the glare threshold, blending full color with the no-glare ink
@@ -792,8 +979,20 @@ var/global/sumiari_run_headless_test = FALSE
 	var/list/glare_matrix = sumiari_matrix_glare_to_alpha()
 	var/glare_start = glare_matrix[4] * SUMIARI_GLARE_START + glare_matrix[20]
 	var/glare_full = glare_matrix[4] + glare_matrix[20]
-	if(abs(glare_start) > 0.02 || abs(glare_full - 1) > 0.02)
-		log_world("SUMIARI TEST glare matrix start=[glare_start] full=[glare_full]")
+	var/night_now = sumiari_night_glare_scale()
+	if(abs(glare_start) > 0.02 || abs(glare_full - night_now) > 0.02)
+		log_world("SUMIARI TEST glare matrix start=[glare_start] full=[glare_full] night=[night_now]")
+		return FALSE
+	var/list/day_matrix = sumiari_matrix_glare_to_alpha(1)
+	var/list/night_matrix = sumiari_matrix_glare_to_alpha(0)
+	var/day_full = day_matrix[4] + day_matrix[20]
+	var/night_full = night_matrix[4] + night_matrix[20]
+	if(abs(day_full - 1) > 0.02 || abs(night_full - sumiari_night_glare_scale(0)) > 0.02)
+		log_world("SUMIARI TEST glare day=[day_full] night=[night_full]")
+		return FALSE
+	if(abs(sumiari_night_glare_scale(0) - SUMIARI_NIGHT_GLARE_SCALE) > 0.001 && SUMIARI_NIGHT_GLARE)
+		return FALSE
+	if(abs(sumiari_night_glare_scale(1) - 1) > 0.001)
 		return FALSE
 	if(length(sumiari_matrix_channel(1)) != 20 || length(sumiari_matrix_gray_to_alpha()) != 20 || length(sumiari_matrix_invert_gray()) != 20)
 		return FALSE
@@ -950,16 +1149,371 @@ var/global/sumiari_run_headless_test = FALSE
 	log_world(line)
 	to_chat(src, line)
 
+// Builds and tears down the composite without a client. The picture itself still needs a player to look at.
+/proc/sumiari_runtime_sweep()
+	log_world("SUMIARI TEST sweep begin live=[sumiari_screen_live] sun=[sumiari_sun_strength()] night_glare=[sumiari_night_glare_scale()]")
+	var/failed = FALSE
+	var/legendary_sneak = SEE_INVISIBLE_LIVING + (5 * 0.55) + 1
+	if(SUMIARI_SEE_INVISIBLE <= legendary_sneak || SUMIARI_SEE_INVISIBLE >= SEE_INVISIBLE_OBSERVER)
+		log_world("SUMIARI TEST FAIL sneak sight [SUMIARI_SEE_INVISIBLE] vs legendary [legendary_sneak]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST sneak PASS see_invisible=[SUMIARI_SEE_INVISIBLE] legendary=[legendary_sneak]")
+	var/list/trash = list()
+	var/turf/origin = locate(20, 20, 1)
+	if(!isturf(origin))
+		log_world("SUMIARI TEST FAIL sweep had no turf")
+		return
+	var/mob/living/carbon/human/body = new(origin)
+	trash += body
+	body.set_species(/datum/species/human/northern)
+	var/obj/item/organ/eyes/sumiari/eyes = body.getorganslot(ORGAN_SLOT_EYES)
+	if(!istype(eyes))
+		log_world("SUMIARI TEST FAIL sweep mob had no sumiari eyes")
+		sumiari_sweep_dispose(trash)
+		return
+	body.hud_used = new body.hud_type(body)
+	eyes.attach_client_vision()
+	var/pieces = sumiari_screen_live
+	log_world("SUMIARI TEST sweep attached vision_on=[eyes.vision_on] pieces=[pieces] glare=[eyes.glare_layer ? "yes" : "no"]")
+	if(!eyes.vision_on || pieces <= 0 || !eyes.glare_layer)
+		log_world("SUMIARI TEST FAIL composite did not build")
+		failed = TRUE
+	if(!sumiari_sweep_planes_captured(body))
+		failed = TRUE
+	var/atom/movable/screen/sumiari_relay/openspace_color = sumiari_sweep_relay(eyes, "color", OPENSPACE_BACKDROP_PLANE)
+	var/atom/movable/screen/plane_master/openspace = body.hud_used.plane_masters["[OPENSPACE_BACKDROP_PLANE]"]
+	if(!openspace_color || !openspace || openspace_color.blend_mode != openspace.blend_mode)
+		log_world("SUMIARI TEST FAIL openspace relay blend=[openspace_color?.blend_mode] master=[openspace?.blend_mode]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST openspace PASS blend=[openspace.blend_mode]")
+	var/found_moon = FALSE
+	var/found_vignette = FALSE
+	for(var/atom/movable/screen/piece as anything in eyes.screen_pieces)
+		if(piece.name == "sumiari moon")
+			found_moon = TRUE
+		if(istype(piece, /atom/movable/screen/sumiari_vignette))
+			found_vignette = TRUE
+	if(SUMIARI_MOON_TINT && !found_moon)
+		log_world("SUMIARI TEST FAIL moon tint relay missing")
+		failed = TRUE
+	if(SUMIARI_INK_VIGNETTE && !found_vignette)
+		log_world("SUMIARI TEST FAIL ink vignette missing")
+		failed = TRUE
+	if((SUMIARI_MOON_TINT && found_moon) || (SUMIARI_INK_VIGNETTE && found_vignette))
+		log_world("SUMIARI TEST flourish PASS moon=[found_moon] vignette=[found_vignette]")
+	eyes.attach_client_vision()
+	if(sumiari_screen_live != pieces)
+		log_world("SUMIARI TEST FAIL second attach leaked [sumiari_screen_live] vs [pieces]")
+		failed = TRUE
+	eyes.refresh_time_filters()
+	sumiari_on_sun_changed()
+	if(sumiari_screen_live != pieces)
+		log_world("SUMIARI TEST FAIL sun refresh changed piece count")
+		failed = TRUE
+	var/turf/elsewhere = sumiari_sweep_other_z(origin)
+	if(!elsewhere)
+		log_world("SUMIARI TEST FAIL no other z")
+		failed = TRUE
+	else
+		body.forceMove(elsewhere)
+		if(!eyes.vision_on || sumiari_screen_live != pieces || !sumiari_sweep_planes_captured(body))
+			log_world("SUMIARI TEST FAIL z-change vision_on=[eyes.vision_on] pieces=[sumiari_screen_live]")
+			failed = TRUE
+		else
+			log_world("SUMIARI TEST z-change PASS z=[elsewhere.z] pieces=[sumiari_screen_live]")
+		body.forceMove(origin)
+	var/list/lights = list()
+	for(var/i in 1 to 24)
+		var/obj/item/flashlight/flare/torch/torch = new(origin)
+		torch.on = TRUE
+		torch.update_brightness()
+		lights += torch
+		trash += torch
+	if(sumiari_screen_live != pieces)
+		log_world("SUMIARI TEST FAIL lights changed piece count to [sumiari_screen_live]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST lights PASS count=24 pieces=[pieces]")
+	for(var/obj/item/flashlight/flare/torch/torch as anything in lights)
+		qdel(torch)
+		trash -= torch
+	if(!sumiari_sweep_blindness(body, eyes))
+		failed = TRUE
+	if(eyes.vision_on && sumiari_screen_live == pieces)
+		log_world("SUMIARI TEST blindness kept composite PASS")
+	else
+		log_world("SUMIARI TEST FAIL blindness tore the composite down")
+		failed = TRUE
+	body.death(FALSE, TRUE)
+	var/atom/movable/screen/sumiari_relay/color_sample = sumiari_sweep_relay(eyes, "color", GAME_PLANE)
+	var/colour_reaches = color_sample && !(color_sample.appearance_flags & NO_CLIENT_COLOR)
+	if(body.stat != DEAD || !istype(body.getorganslot(ORGAN_SLOT_EYES), /obj/item/organ/eyes/sumiari) || !eyes.vision_on)
+		log_world("SUMIARI TEST FAIL death stat=[body.stat] eyes=[body.getorganslot(ORGAN_SLOT_EYES)?.type] vision_on=[eyes.vision_on]")
+		failed = TRUE
+	else if(!colour_reaches)
+		log_world("SUMIARI TEST FAIL death monochrome cannot reach the wash")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST death PASS eyes kept, composite kept, relays take client colour")
+	body.revive(TRUE, TRUE)
+	var/still_mono = FALSE
+	for(var/datum/client_colour/monochrome/mono in body.client_colours)
+		still_mono = TRUE
+	if(body.stat == DEAD || still_mono || !istype(body.getorganslot(ORGAN_SLOT_EYES), /obj/item/organ/eyes/sumiari))
+		log_world("SUMIARI TEST FAIL revive stat=[body.stat] mono=[still_mono] eyes=[body.getorganslot(ORGAN_SLOT_EYES)?.type]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST revive PASS")
+	eyes = body.getorganslot(ORGAN_SLOT_EYES)
+	SEND_SIGNAL(body, COMSIG_MOB_LOGOUT)
+	if(eyes.vision_on || sumiari_screen_live != 0 || !sumiari_sweep_planes_restored(body))
+		log_world("SUMIARI TEST FAIL logout vision_on=[eyes.vision_on] live=[sumiari_screen_live]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST logout PASS planes restored live=0")
+	SEND_SIGNAL(body, COMSIG_MOB_LOGIN)
+	if(!eyes.vision_on || !sumiari_sweep_planes_captured(body))
+		log_world("SUMIARI TEST FAIL reenter did not rebuild")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST reenter PASS pieces=[sumiari_screen_live]")
+	var/mob/living/carbon/human/vessel = new(origin)
+	trash += vessel
+	vessel.set_species(/datum/species/elf/dark)
+	vessel.hud_used = new vessel.hud_type(vessel)
+	var/datum/mind/mind = new
+	mind.active = TRUE
+	mind.transfer_to(body)
+	mind.transfer_to(vessel, TRUE)
+	if(istype(vessel.getorganslot(ORGAN_SLOT_EYES), /obj/item/organ/eyes/sumiari))
+		log_world("SUMIARI TEST FAIL mind transfer gave the other body sumiari eyes")
+		failed = TRUE
+	SEND_SIGNAL(body, COMSIG_MOB_LOGOUT)
+	SEND_SIGNAL(vessel, COMSIG_MOB_LOGIN)
+	if(eyes.vision_on || sumiari_screen_live != 0)
+		log_world("SUMIARI TEST FAIL mind leave kept the composite live=[sumiari_screen_live]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST mind transfer PASS donor released, recipient has [vessel.getorganslot(ORGAN_SLOT_EYES)?.type || "none"]")
+	SEND_SIGNAL(body, COMSIG_MOB_LOGIN)
+	if(!eyes.vision_on)
+		log_world("SUMIARI TEST FAIL return to the sumiari body did not attach")
+		failed = TRUE
+	qdel(mind)
+	var/mob/dead/observer/admin/ghost = new(origin)
+	trash += ghost
+	var/admin_ghost_sight = ghost.see_invisible
+	if(iscarbon(ghost) || admin_ghost_sight < SEE_INVISIBLE_OBSERVER)
+		log_world("SUMIARI TEST FAIL aghost sight=[admin_ghost_sight]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST aghost PASS ghost sight=[admin_ghost_sight] body releases on logout")
+	var/removed_invisible = initial(body.see_invisible)
+	eyes.Remove(body)
+	if(body.getorganslot(ORGAN_SLOT_EYES) || sumiari_screen_live != 0 || !sumiari_sweep_planes_restored(body))
+		log_world("SUMIARI TEST FAIL eye removal live=[sumiari_screen_live] eyes=[body.getorganslot(ORGAN_SLOT_EYES)?.type]")
+		failed = TRUE
+	else if(body.see_invisible != removed_invisible && body.see_invisible != initial(body.see_invisible))
+		log_world("SUMIARI TEST FAIL eye removal see_invisible=[body.see_invisible]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST eye removal PASS see_invisible=[body.see_invisible]")
+	var/obj/item/organ/eyes/sumiari/replaced = new
+	replaced.Insert(body)
+	if(!istype(body.getorganslot(ORGAN_SLOT_EYES), /obj/item/organ/eyes/sumiari) || !replaced.vision_on)
+		log_world("SUMIARI TEST FAIL eye replacement vision_on=[replaced.vision_on]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST eye replacement PASS pieces=[sumiari_screen_live]")
+	eyes = replaced
+	var/before_species = sumiari_screen_live
+	body.set_species(/datum/species/elf/dark)
+	var/datum/organ_dna/after_elf = body.dna?.organ_dna?[ORGAN_SLOT_EYES]
+	if(istype(body.getorganslot(ORGAN_SLOT_EYES), /obj/item/organ/eyes/sumiari) || after_elf?.organ_type == /obj/item/organ/eyes/sumiari || sumiari_screen_live != 0)
+		log_world("SUMIARI TEST FAIL species leave eyes=[body.getorganslot(ORGAN_SLOT_EYES)?.type] dna=[after_elf?.organ_type] live=[sumiari_screen_live]")
+		failed = TRUE
+	else if(!sumiari_sweep_planes_restored(body))
+		log_world("SUMIARI TEST FAIL species leave left planes captured")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST species leave PASS eyes=[body.getorganslot(ORGAN_SLOT_EYES)?.type] was_pieces=[before_species]")
+	body.set_species(/datum/species/human/northern)
+	eyes = body.getorganslot(ORGAN_SLOT_EYES)
+	var/datum/organ_dna/back = body.dna?.organ_dna?[ORGAN_SLOT_EYES]
+	if(!istype(eyes, /obj/item/organ/eyes/sumiari) || back?.organ_type != /obj/item/organ/eyes/sumiari)
+		log_world("SUMIARI TEST FAIL species return eyes=[eyes?.type] dna=[back?.organ_type]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST species return PASS")
+	var/crowd_before = sumiari_screen_live
+	var/start = world.timeofday
+	for(var/i in 1 to 8)
+		var/mob/living/carbon/human/extra = new(origin)
+		extra.set_species(/datum/species/human/northern)
+		extra.hud_used = new extra.hud_type(extra)
+		var/obj/item/organ/eyes/sumiari/extra_eyes = extra.getorganslot(ORGAN_SLOT_EYES)
+		extra_eyes.attach_client_vision()
+		extra_eyes.release_client_vision(extra)
+		var/datum/hud/extra_hud = extra.hud_used
+		extra.hud_used = null
+		qdel(extra_hud)
+		qdel(extra)
+	var/elapsed = world.timeofday - start
+	if(elapsed < 0)
+		elapsed += 864000
+	if(sumiari_screen_live != crowd_before)
+		log_world("SUMIARI TEST FAIL crowd leaked live=[sumiari_screen_live] before=[crowd_before] time=[elapsed]")
+		failed = TRUE
+	else
+		log_world("SUMIARI TEST crowd PASS bodies=8 time_ds=[elapsed] live=[sumiari_screen_live]")
+	sumiari_sweep_dispose(trash)
+	if(sumiari_screen_live != 0 || length(sumiari_active_eyes))
+		log_world("SUMIARI TEST FAIL sweep leftover live=[sumiari_screen_live] active=[length(sumiari_active_eyes)]")
+		failed = TRUE
+	if(failed)
+		log_world("SUMIARI TEST sweep FAIL")
+	else
+		log_world("SUMIARI TEST sweep PASS")
+
+/proc/sumiari_sweep_planes_captured(mob/living/carbon/body)
+	if(!body?.hud_used)
+		log_world("SUMIARI TEST FAIL no hud")
+		return FALSE
+	var/list/bad = list()
+	for(var/plane in GLOB.sumiari_vision_plane_order)
+		var/atom/movable/screen/plane_master/master = body.hud_used.plane_masters["[plane]"]
+		if(!master)
+			bad += "[plane] missing"
+			continue
+		if(master.render_target != sumiari_world_render_target(plane))
+			bad += "[plane]=[master.render_target || "null"]"
+	var/atom/movable/screen/plane_master/lighting/lighting = body.hud_used.plane_masters["[LIGHTING_PLANE]"]
+	if(lighting?.render_target != "*lighting")
+		bad += "lighting=[lighting?.render_target]"
+	if(length(bad))
+		log_world("SUMIARI TEST FAIL captured planes [bad.Join(", ")]")
+		return FALSE
+	log_world("SUMIARI TEST planes PASS captured=[length(GLOB.sumiari_vision_plane_order)] lighting=offscreen")
+	return TRUE
+
+/proc/sumiari_sweep_planes_restored(mob/living/carbon/body)
+	if(!body?.hud_used)
+		return FALSE
+	for(var/plane in GLOB.sumiari_vision_plane_order)
+		var/atom/movable/screen/plane_master/master = body.hud_used.plane_masters["[plane]"]
+		if(!master)
+			continue
+		if(master.render_target == sumiari_world_render_target(plane))
+			log_world("SUMIARI TEST FAIL plane [plane] still captured")
+			return FALSE
+	var/atom/movable/screen/plane_master/lighting/lighting = body.hud_used.plane_masters["[LIGHTING_PLANE]"]
+	if(lighting && lighting.render_target != "lighting")
+		log_world("SUMIARI TEST FAIL lighting target=[lighting.render_target]")
+		return FALSE
+	return TRUE
+
+/proc/sumiari_sweep_relay(obj/item/organ/eyes/sumiari/eyes, prefix, plane)
+	for(var/atom/movable/screen/sumiari_relay/relay as anything in eyes?.screen_pieces)
+		if(relay.name == "sumiari [prefix] [plane]")
+			return relay
+
+/proc/sumiari_sweep_other_z(turf/here)
+	if(!isturf(here))
+		return
+	for(var/z in 1 to world.maxz)
+		if(z == here.z)
+			continue
+		var/turf/there = locate(here.x, here.y, z)
+		if(isturf(there))
+			return there
+
+/proc/sumiari_sweep_blindness(mob/living/carbon/human/body, obj/item/organ/eyes/sumiari/eyes)
+	body.become_blind("sumiari_sweep")
+	var/atom/movable/screen/fullscreen/blind_overlay = body.screens["blind"]
+	if(!blind_overlay || blind_overlay.plane <= SUMIARI_RELAY_PLANE || sumiari_plane_is_world(blind_overlay.plane))
+		log_world("SUMIARI TEST FAIL blind overlay plane=[blind_overlay?.plane]")
+		body.cure_blind("sumiari_sweep")
+		return FALSE
+	body.cure_blind("sumiari_sweep")
+	if(body.screens["blind"])
+		log_world("SUMIARI TEST FAIL blind overlay stayed after cure")
+		return FALSE
+	body.stat = UNCONSCIOUS
+	body.update_blindness()
+	var/atom/movable/screen/fullscreen/blackout = body.screens["blind"]
+	if(!istype(blackout, /atom/movable/screen/fullscreen/blackimageoverlay) || blackout.plane != FULLSCREEN_PLANE)
+		log_world("SUMIARI TEST FAIL unconscious overlay=[blackout?.type] plane=[blackout?.plane]")
+		body.stat = CONSCIOUS
+		body.update_blindness()
+		return FALSE
+	body.stat = CONSCIOUS
+	body.update_blindness()
+	var/obj/item/clothing/mask/rogue/blindfold/cloth = new
+	body.equip_to_slot(cloth, SLOT_WEAR_MASK)
+	if(!HAS_TRAIT_FROM(body, TRAIT_BLIND, EYES_COVERED))
+		log_world("SUMIARI TEST FAIL cloth blindfold did not blind")
+		body.dropItemToGround(cloth)
+		return FALSE
+	body.dropItemToGround(cloth)
+	if(HAS_TRAIT_FROM(body, TRAIT_BLIND, EYES_COVERED))
+		log_world("SUMIARI TEST FAIL cloth blindfold stayed")
+		return FALSE
+	var/obj/item/clothing/glasses/blindfold/lenses = new
+	body.equip_to_slot(lenses, SLOT_GLASSES)
+	if(!HAS_TRAIT(body, TRAIT_BLIND))
+		log_world("SUMIARI TEST FAIL glasses blindfold did not blind")
+		body.dropItemToGround(lenses)
+		return FALSE
+	body.dropItemToGround(lenses)
+	var/obj/item/clothing/mask/rogue/duelmask/mask = new
+	body.equip_to_slot(mask, SLOT_WEAR_MASK)
+	if(HAS_TRAIT(body, TRAIT_BLIND))
+		log_world("SUMIARI TEST FAIL duelmask blinded")
+		body.dropItemToGround(mask)
+		return FALSE
+	body.dropItemToGround(mask)
+	if(!eyes.vision_on)
+		log_world("SUMIARI TEST FAIL coverings released vision")
+		return FALSE
+	log_world("SUMIARI TEST coverings PASS blind plane=[FULLSCREEN_PLANE] relay=[SUMIARI_RELAY_PLANE]")
+	return TRUE
+
+/proc/sumiari_sweep_dispose(list/trash)
+	for(var/atom/thing as anything in trash)
+		if(QDELETED(thing))
+			continue
+		if(ishuman(thing))
+			var/mob/living/carbon/human/body = thing
+			var/obj/item/organ/eyes/held = body.getorganslot(ORGAN_SLOT_EYES)
+			if(istype(held, /obj/item/organ/eyes/sumiari))
+				var/obj/item/organ/eyes/sumiari/eyes = held
+				eyes.release_client_vision(body)
+			var/datum/hud/hud = body.hud_used
+			body.hud_used = null
+			if(hud)
+				qdel(hud)
+		qdel(thing)
+
 // Temporary: humen use these eyes so the vision can be played. Swap keeps eye color from character setup.
 /datum/species/human/northern/on_species_gain(mob/living/carbon/C, datum/species/old_species, datum/preferences/pref_load)
 	. = ..()
 	sumiari_grant_eyes(C)
 
+// Leaving humen drops the temporary eyes. Organ DNA would otherwise rebuild them on the next species.
+/datum/species/human/northern/on_species_loss(mob/living/carbon/human/C, datum/species/new_species, pref_load)
+	sumiari_release_borrowed_eyes(C, new_species)
+	return ..()
+
 /proc/sumiari_grant_eyes(mob/living/carbon/C)
 	if(!istype(C))
 		return
 	var/obj/item/organ/eyes/current = C.getorganslot(ORGAN_SLOT_EYES)
-	if(!current || istype(current, /obj/item/organ/eyes/sumiari))
+	if(!current)
+		return
+	if(istype(current, /obj/item/organ/eyes/sumiari))
+		sumiari_imprint_eye_dna(C, current)
 		return
 	var/obj/item/organ/eyes/sumiari/replacement = new
 	replacement.eye_color = current.eye_color
@@ -967,3 +1521,37 @@ var/global/sumiari_run_headless_test = FALSE
 	replacement.second_color = current.second_color
 	replacement.update_accessory_colors()
 	replacement.Insert(C, special = TRUE, drop_if_replaced = FALSE)
+	if(replacement.owner == C)
+		sumiari_imprint_eye_dna(C, replacement)
+
+/proc/sumiari_imprint_eye_dna(mob/living/carbon/C, obj/item/organ/eyes/eyes)
+	if(!C?.dna || !eyes)
+		return
+	if(!C.dna.organ_dna)
+		C.dna.organ_dna = list()
+	C.dna.organ_dna[ORGAN_SLOT_EYES] = eyes.create_organ_dna()
+
+// new_species lists its own eyes: drop our DNA so that list wins.
+// It lists none: write ordinary eyes, so the slot is not left empty and these eyes do not ride along.
+/proc/sumiari_release_borrowed_eyes(mob/living/carbon/C, datum/species/new_species)
+	if(!istype(C))
+		return
+	var/new_type = new_species?.organs?[ORGAN_SLOT_EYES]
+	if(new_type == /obj/item/organ/eyes/sumiari)
+		return
+	var/obj/item/organ/eyes/current = C.getorganslot(ORGAN_SLOT_EYES)
+	var/datum/organ_dna/eyes_dna = C.dna?.organ_dna?[ORGAN_SLOT_EYES]
+	var/borrowed = istype(current, /obj/item/organ/eyes/sumiari) || eyes_dna?.organ_type == /obj/item/organ/eyes/sumiari
+	if(!borrowed || !C.dna)
+		return
+	if(!C.dna.organ_dna)
+		C.dna.organ_dna = list()
+	if(new_type)
+		C.dna.organ_dna -= ORGAN_SLOT_EYES
+		return
+	if(eyes_dna)
+		eyes_dna.organ_type = /obj/item/organ/eyes
+		return
+	var/obj/item/organ/eyes/plain = new
+	C.dna.organ_dna[ORGAN_SLOT_EYES] = plain.create_organ_dna()
+	qdel(plain)
