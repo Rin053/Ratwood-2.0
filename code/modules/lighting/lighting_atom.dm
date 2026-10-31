@@ -44,10 +44,10 @@
 /atom/proc/update_light()
 	SHOULD_NOT_SLEEP(TRUE)
 
-	if(light_system != STATIC_LIGHT)
+	if(light_system != STATIC_LIGHT && !isitem(src))
 		CRASH("update_light() for [src] with following light_system value: [light_system]")
 
-	if (!light_power || !light_outer_range || !light_on) // We won't emit light anyways, destroy the light source.
+	if (!has_static_light() || !light_power || !light_outer_range || !light_on) // We won't emit light anyways, destroy the light source.
 		QDEL_NULL(light)
 	else
 		if (!ismovable(loc)) // We choose what atom should be the top atom of the light here.
@@ -61,6 +61,16 @@
 			light = new/datum/light_source(src, .)
 	// Sumiari eyes wash an emitter's own sprite. The marker draws only on a hidden plane.
 	sumiari_mark_light_source(!!light)
+
+/// Does this atom light its surroundings with a static light source?
+/atom/proc/has_static_light()
+	return light_system == STATIC_LIGHT
+
+/// A movable-light item resting on a turf (a dropped lamp or torch) lights the tiles like a static light.
+/// Its overlay cookie only draws while the viewer can see the item, so a reed in between would blank the whole pool.
+/// Held or carried, the cookie takes over again, see /datum/component/overlay_lighting.
+/obj/item/has_static_light()
+	return light_system == STATIC_LIGHT || isturf(loc)
 
 
 /atom/proc/set_light_range(new_inner_range, new_outer_range)

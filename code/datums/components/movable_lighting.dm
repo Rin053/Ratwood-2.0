@@ -91,6 +91,13 @@
 	RegisterSignal(parent, COMSIG_ATOM_SET_LIGHT_COLOR, PROC_REF(set_color))
 	RegisterSignal(parent, COMSIG_ATOM_SET_LIGHT_ON, PROC_REF(on_toggle))
 	RegisterSignal(parent, COMSIG_ATOM_SET_LIGHT_FLAGS, PROC_REF(on_light_flags_change))
+	RegisterSignals(parent, list(
+		COMSIG_ATOM_UPDATE_LIGHT_RANGE,
+		COMSIG_ATOM_UPDATE_LIGHT_POWER,
+		COMSIG_ATOM_UPDATE_LIGHT_COLOR,
+		COMSIG_ATOM_UPDATE_LIGHT_ON,
+		COMSIG_ATOM_UPDATE_LIGHT_CURVE,
+		), PROC_REF(update_static_light))
 	var/atom/movable/movable_parent = parent
 	if(movable_parent.light_flags & LIGHT_ATTACHED)
 		overlay_lighting_flags |= LIGHTING_ATTACHED
@@ -112,6 +119,11 @@
 		COMSIG_ATOM_SET_LIGHT_COLOR,
 		COMSIG_ATOM_SET_LIGHT_ON,
 		COMSIG_ATOM_SET_LIGHT_FLAGS,
+		COMSIG_ATOM_UPDATE_LIGHT_RANGE,
+		COMSIG_ATOM_UPDATE_LIGHT_POWER,
+		COMSIG_ATOM_UPDATE_LIGHT_COLOR,
+		COMSIG_ATOM_UPDATE_LIGHT_ON,
+		COMSIG_ATOM_UPDATE_LIGHT_CURVE,
 		))
 	if(overlay_lighting_flags & LIGHTING_ON)
 		turn_off()
@@ -135,7 +147,7 @@
 
 ///Populates the affected_turfs lazylist, adding to its contents the effects of being near the light.
 /datum/component/overlay_lighting/proc/get_new_turfs()
-	if(!current_holder)
+	if(!current_holder || static_light_holder(current_holder))
 		return
 	LAZYINITLIST(affected_turfs)
 	if(range <= 2) // lumcount_range is just range rounded up, so range <= 2 is basically lumcount_range < 3
@@ -159,6 +171,8 @@
 
 ///Adds the luminosity and source for the afected movable atoms to keep track of their visibility.
 /datum/component/overlay_lighting/proc/add_dynamic_lumi(atom/movable/affected_movable)
+	if(static_light_holder(affected_movable))
+		return
 	LAZYSET(affected_movable.affected_dynamic_lights, src, lumcount_range + 1)
 	affected_movable.vis_contents += visible_mask
 	// The parent's own sprite is the light. A holder (a mob with a torch) keeps its color: the cookie covers it.
@@ -171,7 +185,9 @@
 /datum/component/overlay_lighting/proc/remove_dynamic_lumi(atom/movable/affected_movable)
 	LAZYREMOVE(affected_movable.affected_dynamic_lights, src)
 	affected_movable.vis_contents -= visible_mask
-	affected_movable.sumiari_mark_light_source(FALSE)
+	// Only the parent's own sprite was marked. A holder may carry the marker of its own static light.
+	if(affected_movable == parent && !affected_movable.light)
+		affected_movable.sumiari_mark_light_source(FALSE)
 	affected_movable.update_dynamic_luminosity()
 
 
@@ -213,6 +229,21 @@
 	if(new_holder != parent && new_holder != parent_attached_to)
 		RegisterSignal(new_holder, COMSIG_QDELETING, PROC_REF(on_holder_qdel))
 		RegisterSignal(new_holder, COMSIG_MOVABLE_MOVED, PROC_REF(on_holder_moved))
+	update_static_light()
+
+
+///Is this holder the parent lighting its turf with a static light instead of the cookie? See /obj/item/has_static_light().
+/datum/component/overlay_lighting/proc/static_light_holder(atom/movable/holder)
+	return holder == parent && holder.has_static_light()
+
+
+///Creates, updates or removes the parent's static light. Its light source follows it between turfs by itself.
+/datum/component/overlay_lighting/proc/update_static_light()
+	SIGNAL_HANDLER
+	var/atom/movable/movable_parent = parent
+	if(!isitem(movable_parent) || QDELETED(movable_parent))
+		return
+	movable_parent.update_light()
 
 
 ///Used to determine the new valid current_holder from the parent's loc.
