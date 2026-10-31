@@ -1,5 +1,8 @@
 // Sumiari vision.
 // Pitch black is full color. Wherever a normal human sees light, that same image is an ink wash.
+// The wash keeps the sprite's brightness: Rec.709 luma, then a gentle slope that does not threshold.
+// A contrast crush turned dither into white specks on black. The glare overlay is off, because a
+// normal pool is already full-bright on the lighting plane and the old lift fogged that whole pool.
 // The wash is not a second light model. It is the vanilla lighting plane, used as a mask:
 // static lights keep their corner-smoothed gradient, movable lights keep the radial cookie,
 // sunlight stays in the capture, and fire flicker updates the mask on the same frame.
@@ -37,10 +40,10 @@
 // Glare eases in across the brightest end of that same line. Full brightness is exactly colorless.
 #define SUMIARI_GLARE_START 0.82
 #define SUMIARI_GLARE_FULL 1.0
-// Full-glare multiply on the ink image. Below 1 flattens contrast.
-#define SUMIARI_GLARE_SLOPE 0.72
-// Full-glare add. Lifts ink-black toward dark gray. Combined with the slope, paper-white blooms past 1.
-#define SUMIARI_GLARE_BIAS 0.26
+// Not applied. A slope under 1 and a positive bias lifted every fully lit pixel toward paper-white.
+#define SUMIARI_GLARE_SLOPE 1
+// Not applied. 0.26 was the white fog on light pools.
+#define SUMIARI_GLARE_BIAS 0
 
 // Vision-only flourishes. Each one is the ink wash, nothing else. 0 turns that flourish off.
 // Left off: each one is another fullscreen plate, and the view has to stay cheap and visible first.
@@ -53,16 +56,21 @@
 #define SUMIARI_MOON_TINT 0
 // How much of that sky color is added. Kept small so it reads as paper, not a blue filter.
 #define SUMIARI_MOON_TINT_STRENGTH 0.14
-// Sun glare eases off as the sun itself dims. A torch still hazes, only less so under the moon.
-#define SUMIARI_NIGHT_GLARE 1
-// Glare alpha at full brightness when the sun is down. 1 leaves the day curve untouched.
+// Off. The lighting-plane mask is already about 1 across a normal pool (a campfire interior is "fully lit"),
+// so a haze that starts at 0.82 covered the whole pool and turned it white. Turf debug still said glare 0,
+// because that number is lumcount, not the mask. The gray pool is the luma wash alone.
+#define SUMIARI_NIGHT_GLARE 0
+// Glare alpha at full brightness when the sun is down. Unused while the haze is off.
 #define SUMIARI_NIGHT_GLARE_SCALE 0.4
 
-// Ink-wash contrast. 1 is flat grayscale. 1.55 stretched the sprites' own dither into speckle,
-// so the wash stays just steep enough that black is ink and white is paper.
-#define SUMIARI_INK_CONTRAST 1.2
-// Luma value that stays put. Near the middle, so midtone grain is not crushed into ink-black.
-#define SUMIARI_INK_PIVOT 0.46
+// Rec.709 luma. A gray pixel keeps the brightness of the color pixel.
+#define SUMIARI_LUMA_R 0.2126
+#define SUMIARI_LUMA_G 0.7152
+#define SUMIARI_LUMA_B 0.0722
+// Gentle paper curve on that luma. Slope under 1 squeezes dither instead of stretching it into speckle.
+// The lift is (1 - slope) / 2, so a mid gray stays a mid gray. Nothing is forced to 0 or 1.
+#define SUMIARI_INK_SLOPE 0.96
+#define SUMIARI_INK_LIFT 0.02
 
 // Full strength, and the asterisk keeps it off the screen. Alpha 0 blanks the capture the mask reads.
 #define SUMIARI_LIGHTING_ALPHA LIGHTING_PLANE_ALPHA_VISIBLE
@@ -980,25 +988,26 @@ var/global/sumiari_test_without_client = FALSE
 	return sumiari_saturation_at(intensity) >= 0.999 && sumiari_glare_at(intensity) <= 0.001
 
 // Column-major 4x4 plus RGBA constants, matching color_matrix_identity().
-// glare_override forces the haze. The ink stack uses 0. The glare object uses 1.
-// The lighting-plane mask blends those, so a half-lit pixel is half color without a global fade.
+// Full ink is Rec.709 luma, then a gentle slope and lift. Brightness stays with the sprite.
+// glare_override is accepted so old callers still compile. It does not lift or crush:
+// that lift was the white fog, because a normal pool is already full-bright on the lighting plane.
+// The lighting-plane mask blends color and this gray, so a half-lit pixel is half color.
 /proc/sumiari_color_matrix(intensity, glare_override)
 	if(isnull(intensity))
 		intensity = 0
 	var/saturation = sumiari_saturation_at(intensity)
-	var/glare = isnull(glare_override) ? sumiari_glare_at(intensity) : CLAMP01(glare_override)
-	var/ink_add = SUMIARI_INK_PIVOT * (1 - SUMIARI_INK_CONTRAST)
-	var/slope = 1 + glare * (SUMIARI_GLARE_SLOPE - 1)
-	var/bias = glare * SUMIARI_GLARE_BIAS
-	var/scale = slope * SUMIARI_INK_CONTRAST
-	var/add = slope * ink_add + bias
+	// Read so the argument stays live. Brightness does not follow it.
+	if(glare_override > 1)
+		glare_override = 1
+	var/scale = SUMIARI_INK_SLOPE
+	var/add = SUMIARI_INK_LIFT
 	var/constant = (1 - saturation) * add
 	// A fully lit tile is exact grayscale. Each output row is identical, so a green or magenta
 	// sprite cannot leave one channel higher than the others.
 	if(saturation <= 0)
-		var/luma_r = scale * LUMA_R
-		var/luma_g = scale * LUMA_G
-		var/luma_b = scale * LUMA_B
+		var/luma_r = scale * SUMIARI_LUMA_R
+		var/luma_g = scale * SUMIARI_LUMA_G
+		var/luma_b = scale * SUMIARI_LUMA_B
 		return list(
 			luma_r, luma_r, luma_r, 0,
 			luma_g, luma_g, luma_g, 0,
@@ -1006,9 +1015,9 @@ var/global/sumiari_test_without_client = FALSE
 			0, 0, 0, 1,
 			add, add, add, 0)
 	var/ink = 1 - saturation
-	var/wr = ink * scale * LUMA_R
-	var/wg = ink * scale * LUMA_G
-	var/wb = ink * scale * LUMA_B
+	var/wr = ink * scale * SUMIARI_LUMA_R
+	var/wg = ink * scale * SUMIARI_LUMA_G
+	var/wb = ink * scale * SUMIARI_LUMA_B
 	// Same column order as color_matrix_saturation(): each input channel, then alpha, then constants.
 	return list(
 		wr + saturation, wr, wr, 0,
@@ -1084,12 +1093,20 @@ var/global/sumiari_run_headless_test = FALSE
 		return
 	var/list/red_dark = sumiari_apply_matrix(sumiari_color_matrix(0), 1, 0, 0)
 	var/list/red_noon = sumiari_apply_matrix(sumiari_color_matrix(1), 1, 0, 0)
-	var/list/black_noon = sumiari_apply_matrix(sumiari_color_matrix(1), 0, 0, 0)
-	var/list/white_noon = sumiari_apply_matrix(sumiari_color_matrix(1), 1, 1, 1)
+	var/list/black_noon = sumiari_apply_matrix(sumiari_color_matrix(1, 0), 0, 0, 0)
+	var/list/white_noon = sumiari_apply_matrix(sumiari_color_matrix(1, 0), 1, 1, 1)
+	var/list/green_noon = sumiari_apply_matrix(sumiari_color_matrix(1, 0), 0, 1, 0)
+	var/green_luma = SUMIARI_INK_SLOPE * SUMIARI_LUMA_G + SUMIARI_INK_LIFT
+	var/lo_luma = SUMIARI_LUMA_R * 0.12 + SUMIARI_LUMA_G * 0.18 + SUMIARI_LUMA_B * 0.08
+	var/hi_luma = SUMIARI_LUMA_R * 0.42 + SUMIARI_LUMA_G * 0.55 + SUMIARI_LUMA_B * 0.30
+	var/list/dither_lo = sumiari_apply_matrix(sumiari_color_matrix(1, 0), 0.12, 0.18, 0.08)
+	var/list/dither_hi = sumiari_apply_matrix(sumiari_color_matrix(1, 0), 0.42, 0.55, 0.30)
+	var/gap_in = hi_luma - lo_luma
+	var/gap_out = dither_hi[1] - dither_lo[1]
 	var/list/black_half = sumiari_apply_matrix(sumiari_color_matrix(0.5), 0, 0, 0)
 	var/half_sat = sumiari_saturation_at(SUMIARI_MONO_FULL * 0.5)
 	var/list/green_half = sumiari_apply_matrix(sumiari_color_matrix(SUMIARI_MONO_FULL * 0.5), 0, 1, 0)
-	log_world("SUMIARI TEST matrix dark_red=[red_dark[1]],[red_dark[2]],[red_dark[3]] noon_red=[red_noon[1]],[red_noon[2]],[red_noon[3]] noon_black=[black_noon[1]] noon_white=[white_noon[1]] half_black=[black_half[1]] sat0=[sumiari_saturation_at(0)] sat_half=[half_sat] sat_full=[sumiari_saturation_at(SUMIARI_MONO_FULL)]")
+	log_world("SUMIARI TEST matrix dark_red=[red_dark[1]],[red_dark[2]],[red_dark[3]] noon_red=[red_noon[1]],[red_noon[2]],[red_noon[3]] noon_black=[black_noon[1]] noon_white=[white_noon[1]] noon_green=[green_noon[1]] green_luma=[green_luma] dither_gap_in=[gap_in] dither_gap_out=[gap_out] half_black=[black_half[1]] sat0=[sumiari_saturation_at(0)] sat_half=[half_sat] sat_full=[sumiari_saturation_at(SUMIARI_MONO_FULL)]")
 	log_world("SUMIARI TEST channels red=[sumiari_channel_intensity(1, 0, 0)] white=[sumiari_channel_intensity(1, 1, 1)]")
 	if(abs(sumiari_saturation_at(0) - 1) > 0.001 || abs(half_sat - 0.5) > 0.001 || sumiari_saturation_at(SUMIARI_MONO_FULL) != 0 || abs(sumiari_saturation_at(SUMIARI_MONO_FULL * 0.25) - 0.75) > 0.001)
 		log_world("SUMIARI TEST FAIL saturation was not a straight line from full color to exactly zero")
@@ -1097,8 +1114,12 @@ var/global/sumiari_run_headless_test = FALSE
 		log_world("SUMIARI TEST FAIL darkness did not stay in color")
 	else if(abs(red_noon[1] - red_noon[2]) > 0.001 || abs(red_noon[2] - red_noon[3]) > 0.001)
 		log_world("SUMIARI TEST FAIL full light was not colorless")
-	else if(black_noon[1] <= 0.05 || white_noon[1] <= 1 || black_half[1] >= 0)
-		log_world("SUMIARI TEST FAIL ink or glare curve")
+	else if(abs(green_noon[1] - green_luma) > 0.02 || abs(green_noon[1] - green_noon[2]) > 0.001 || abs(green_noon[2] - green_noon[3]) > 0.001)
+		log_world("SUMIARI TEST FAIL ink did not keep Rec.709 luma green=[green_noon[1]],[green_noon[2]],[green_noon[3]] luma=[green_luma]")
+	else if(white_noon[1] > 1.001 || black_noon[1] < -0.001 || black_noon[1] > 0.08 || abs(black_half[1] - SUMIARI_INK_LIFT * 0.5) > 0.02)
+		log_world("SUMIARI TEST FAIL ink curve thresholded or bloomed white=[white_noon[1]] black=[black_noon[1]] half_black=[black_half[1]]")
+	else if(gap_out > gap_in * 1.02 || gap_out < gap_in * 0.9)
+		log_world("SUMIARI TEST FAIL ink stretched dither gap_in=[gap_in] gap_out=[gap_out]")
 	else if(abs((green_half[2] - green_half[1]) - 0.5) > 0.02)
 		log_world("SUMIARI TEST FAIL half darkness was not half color green=[green_half[1]],[green_half[2]],[green_half[3]]")
 	else if(abs(sumiari_channel_intensity(1, 0, 0) - sumiari_channel_intensity(1, 1, 1)) > 0.001)
@@ -1365,9 +1386,9 @@ var/global/sumiari_run_headless_test = FALSE
 	else
 		eyes.wash_mode = SUMIARI_WASH_LIVE
 	eyes.apply_wash_filters()
-	var/expect = "Lit sprites, including the thing that is glowing, turn colorless ink. Darkness keeps the sprite color. The HUD stays in color. No green or orange cast."
+	var/expect = "Lit sprites, including the thing that is glowing, turn gray at about their own brightness. The pool is not a white fog. Darkness keeps the sprite color. The HUD stays in color. No green or orange cast."
 	if(eyes.wash_mode == SUMIARI_WASH_INK)
-		expect = "Every world sprite in the view is the same colorless ink: blood-red floors, trees, the mob, fire rings, and the wisp. Darkness is ink too, not black and not the sprite's own color. The HUD, chat, and stat panel stay in color."
+		expect = "Every world sprite is a gray of its own brightness: grass stays as light as it was, shading stays shading, and textures do not turn into white specks on black. Darkness is that same gray, not a black void and not the sprite color. The HUD, chat, and stat panel stay in color."
 	else if(eyes.wash_mode == SUMIARI_WASH_COLOR)
 		expect = "Every world sprite keeps its own color, lit or not. No ink, and no green or orange light cast. The HUD stays in color."
 	var/line = "sumiari wash test: mode=[eyes.wash_mode] [expect] [sumiari_ink_debug(who, eyes)] [sumiari_plane_legend()]"
