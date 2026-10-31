@@ -137,9 +137,11 @@
 // Static lights barely reach full on the lighting plane. set_light leaves inner range 0 and the falloff
 // curve is cubed, so a range-5 campfire peaks at about 0.43 of its color even on its own tile, and
 // #da5e21 puts that at 0.37 on the brightest channel. That read as 63% color right beside the fire.
-// The static part of the mask is divided by this, then clamped: a tile next to a campfire is fully gray,
-// and the ramp down to color is still the vanilla falloff, only stretched. Darkness 0 stays 0.
-#define SUMIARI_LIGHT_FULL 0.3
+// The static part of the mask is divided by this, then clamped. 0.37 is the brightest a lone campfire
+// draws, so its own tile is fully gray and everything below is proportional to vanilla brightness:
+// half as bright as the fire is half color, true dark is full color. A lower value (0.3 before) clamped
+// most of a lit room to one flat gray plateau and pushed the half-gray line out past vanilla's half-light.
+#define SUMIARI_LIGHT_FULL 0.37
 #define SUMIARI_LIGHT_GAIN (1 / SUMIARI_LIGHT_FULL)
 // Every lit emitter on a turf draws its own sprite here through one shared vis_contents marker.
 // The plane master stores it under an asterisk target, so no one sees it. Sumiari read it into the mask
