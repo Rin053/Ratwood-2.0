@@ -3,9 +3,10 @@
 // The wash keeps the sprite's brightness: Rec.709 luma, then a gentle slope that does not threshold.
 // A contrast crush turned dither into white specks on black. The paper lift is not on that curve.
 // It is a second relay, and only in direct midday sun. The sunlight plane is white at dawn too.
-// The wash is not a second light model. It is the vanilla lighting plane, used as a mask:
-// static lights keep their corner-smoothed gradient, movable lights keep the radial cookie,
-// sunlight stays in the capture, and fire flicker updates the mask on the same frame.
+// The wash is not a second light model. It is the vanilla lighting plane, used as a mask,
+// plus the alpha of the movable-light plane. Static lights keep their corner-smoothed gradient.
+// A held torch, a dropped torch, a sconce, and anyone else's lantern keep the radial cookie.
+// Sunlight stays in the capture, and fire flicker updates the mask on the same frame.
 // dynamic_lumcount is a flat stamp and is not this mask.
 //
 // The camera-static relay of *sumiari_scene drew nothing on 516.1688. That plate had no atoms.
@@ -18,12 +19,14 @@
 // 1. World planes draw themselves, in color, with no light tint. Their render targets have no asterisk.
 // 2. Lighting plane 17 stays at alpha 255 and render_target "*lighting". The asterisk is the only hide.
 //    Alpha 0 blanks that capture. Movable-light plane 20 is "*O_LIGHT_VISUAL_PLANE" at alpha 255.
-// 3. Eight offscreen plates turn *lighting into *sumiari_mask. Each plate is a plane master that only
-//    stores the asterisk target, plus a child that draws the source. The child uses render_source, not a
-//    layer filter on a 32×32 icon: that filter resampled the whole view down to about one pixel per tile,
+//    That plane stays hidden, so a torch cookie does not tint the world. Its alpha is still a mask input.
+// 3. Offscreen plates turn *lighting and that cookie plane into *sumiari_mask. Each plate is a plane master
+//    that only stores the asterisk target, plus a child that draws the source. The child uses render_source,
+//    not a layer filter on a 32×32 icon: that filter resampled the whole view down to about one pixel per tile,
 //    and the alpha mask scaled it back up as hard tile steps. The child is the size of the view and sits
 //    at SCREEN_SOUTHWEST, so the corner gradient and the cookie falloff stay per pixel, and they flicker
-//    with the lighting plane. Color matrices and the max blend run on that full image.
+//    with the lighting plane. The cookie child copies alpha, which is the white cookie's soft falloff.
+//    The mask is the max of the static light and that alpha. Color matrices and the max blend run on that full image.
 // 4. Live ink is a screen relay on the camera-static plane, under the HUD. It stacks every world
 //    capture, runs the ink matrix, then masks with *sumiari_mask. Mask 0 leaves the relay transparent,
 //    so the color world shows through. Mask 1 covers it with ink. Filters on the above-lighting plane
@@ -82,14 +85,14 @@
 
 // Full strength, and the asterisk keeps it off the screen. Alpha 0 blanks the capture the mask reads.
 #define SUMIARI_LIGHTING_ALPHA LIGHTING_PLANE_ALPHA_VISIBLE
-// The mask reads this render target and nothing else. dynamic_lumcount is not an input.
+// Static lights. The movable-light plane is the other mask input. dynamic_lumcount is not an input.
 #define SUMIARI_LIGHTING_SOURCE "*lighting"
 // Asterisk plus O_LIGHTING_VISUAL_RENDER_TARGET. The define already includes quotes, so it cannot be nested in another string.
 #define SUMIARI_OLIGHT_SOURCE "*O_LIGHT_VISUAL_PLANE"
 #define SUMIARI_WASH_LIVE "live"
 #define SUMIARI_WASH_INK "ink"
 #define SUMIARI_WASH_COLOR "color"
-// 8 mask plates, each a master plus the child that draws the capture, plus the ink relay and the sun relay.
+// 9 mask plates, each a master plus the child that draws the capture, plus the ink relay and the sun relay.
 #define SUMIARI_PIECE_CAP 24
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 #define SUMIARI_SEE_IN_DARK 8
@@ -112,6 +115,7 @@
 #define SUMIARI_PLANE_LIGHT -55
 #define SUMIARI_PLANE_MASK -54
 #define SUMIARI_PLANE_GLARE -53
+#define SUMIARI_PLANE_COOKIE -52
 #define SUMIARI_PLANE_DARK -51
 #define SUMIARI_PLANE_MOON -50
 
@@ -123,6 +127,7 @@
 #define SUMIARI_TARGET_LIGHT "sumiari_light"
 #define SUMIARI_TARGET_MASK "sumiari_mask"
 #define SUMIARI_TARGET_GLARE "sumiari_glare"
+#define SUMIARI_TARGET_COOKIE "sumiari_cookie"
 #define SUMIARI_TARGET_DARK "sumiari_dark"
 #define SUMIARI_TARGET_MOON "sumiari_moon"
 
@@ -180,6 +185,8 @@ var/global/list/sumiari_active_eyes = list()
 var/global/sumiari_screen_live = 0
 // Headless sweep builds the composite with a hud and no client. Live play still requires a client.
 var/global/sumiari_test_without_client = FALSE
+// Darkest open gnoll turf from the map probe. The carried-light check stands a torch here.
+var/global/turf/sumiari_test_dark_turf
 
 /obj/item/organ/eyes/sumiari/Insert(mob/living/carbon/M, special = FALSE, drop_if_replaced = FALSE, initialising)
 	. = ..()
@@ -379,7 +386,8 @@ var/global/sumiari_test_without_client = FALSE
 	return mask_pixels_x == span[1] && mask_pixels_y == span[2] && mask_pixels_x > 0
 
 /obj/item/organ/eyes/sumiari/proc/build_mask_plates()
-	// mask = 1 - A * (1 - max(R, G, B)), taken from the lighting-plane render. Not from dynamic_lumcount.
+	// Static part is 1 - A * (1 - max(R, G, B)), from the lighting-plane render. Not from dynamic_lumcount.
+	// The mask then takes the brighter of that and the movable-light cookie.
 	var/list/span = sumiari_mask_span(owner?.client?.view)
 	mask_pixels_x = span[1]
 	mask_pixels_y = span[2]
@@ -400,7 +408,13 @@ var/global/sumiari_test_without_client = FALSE
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_UNLIT), blend_mode = BLEND_MULTIPLY),
 		filter(type = "color", color = sumiari_matrix_invert_gray()),
 	))
+	// Cookie RGB is the light color. The falloff is the icon alpha, and set_power keeps that alpha at 255.
+	// Copying alpha, not max(R, G, B), keeps a dim orange torch the same radius as the vanilla pool.
+	add_plate(SUMIARI_PLANE_COOKIE, SUMIARI_TARGET_COOKIE, SUMIARI_OLIGHT_SOURCE, sumiari_lighting_channel_filters(4))
+	// Max with the cookie. Add alone would wash a sconce twice, once for the fixture and once for its torch.
 	add_plate(SUMIARI_PLANE_MASK, SUMIARI_TARGET_MASK, sumiari_offscreen(SUMIARI_TARGET_LIGHT), list(
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_ADD),
 		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
 	))
 	// *SUNLIGHT_PLANE, not the lighting-plane light image. A campfire is full-bright on *lighting and black here.
@@ -445,7 +459,7 @@ var/global/sumiari_test_without_client = FALSE
 		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode)
 	return stacked
 
-// live draws that stack on the ink relay and masks it with the lighting plane.
+// live draws that stack on the ink relay and masks it with *sumiari_mask.
 // ink paints the ink matrix onto every world plane master and does not consult the mask.
 // color leaves the masters as the backdrop built them. Both relays are hidden in those two modes.
 /obj/item/organ/eyes/sumiari/proc/apply_wash_filters()
@@ -878,13 +892,15 @@ var/global/sumiari_test_without_client = FALSE
 	var/sun_mask = sumiari_sun_mask(T)
 	var/sun = sun_mask * sun_strength
 	var/dynamic = T.dynamic_lumcount
-	var/movable = sumiari_movable_brightness(T)
+	var/list/emitters = sumiari_emitters_near(T, 6)
+	var/movable = sumiari_movable_from(emitters, T)
 	if(!T.has_dynamic_lighting())
 		.["intensity"] = 1
 		.["sun"] = sun
 		.["sun_mask"] = sun_mask
 		.["sun_strength"] = sun_strength
 		.["dynamic"] = dynamic
+		.["movable"] = movable
 		.["text"] = "sumiari light: [T.x],[T.y],[T.z] static_full area=[T.loc] intensity=1 sun=[sun] dyn=[dynamic] movable=[movable]"
 		return
 	var/lamps = 0
@@ -924,11 +940,13 @@ var/global/sumiari_test_without_client = FALSE
 		sky = sumiari_sky_name(T.outdoor_effect.state)
 		sun_overlay_lum = T.outdoor_effect.sunlight_overlay?.luminosity
 	var/list/nearby = list()
-	for(var/atom/source in range(4, T))
-		if(!source.light_on || source.light_outer_range <= 0 || source.light_power <= 0)
-			continue
-		nearby += "[source.name]@[source.x],[source.y] power=[source.light_power] range=[source.light_outer_range]"
-		if(length(nearby) >= 6)
+	for(var/atom/source as anything in emitters)
+		var/turf/origin = get_turf(source)
+		var/ox = origin ? origin.x : 0
+		var/oy = origin ? origin.y : 0
+		var/kind = (source.light_system == MOVABLE_LIGHT) ? "movable" : "static"
+		nearby += "[source.name]@[ox],[oy] power=[source.light_power] range=[source.light_outer_range] [kind]"
+		if(length(nearby) >= 8)
 			break
 	.["intensity"] = intensity
 	.["lamps"] = lamps
@@ -937,6 +955,7 @@ var/global/sumiari_test_without_client = FALSE
 	.["sun_mask"] = sun_mask
 	.["sun_strength"] = sun_strength
 	.["dynamic"] = dynamic
+	.["movable"] = movable
 	.["text"] = "sumiari light: [T.x],[T.y],[T.z] area=[T.loc] intensity=[intensity] lamps=[lamps] raw_peak=[raw_peak] sun=[sun] sun_mask=[sun_mask] sun_strength=[sun_strength] sun_state=[sky] sun_overlay_lum=[sun_overlay_lum] falloff=[falloff] movable=[movable] dyn=[dynamic] get_lumcount=[T.get_lumcount()] luminosity=[T.luminosity] overlay=[overlay] softly_lit=[T.is_softly_lit() ? 1 : 0] sun_color=[SSoutdoor_effects?.picked_color] tod=[SSoutdoor_effects?.current_step_datum?.type] corners=\[[corner_text.Join(" | ")]\] lights=\[[nearby.Join(" ; ")]\]"
 
 /proc/sumiari_turf_intensity(turf/T)
@@ -990,23 +1009,48 @@ var/global/sumiari_test_without_client = FALSE
 		falloff *= sumiari_hex_strength(source.light_color)
 	return falloff
 
+// An emitter counts once. Hands, a mob's contents, and one level inside an object (a torch in a sconce).
+// range() only sees atoms sitting on the turf, so a torch in a hand was missing from lights= and from intensity.
+/proc/sumiari_note_emitter(list/found, list/seen, atom/source)
+	if(!source || seen[source])
+		return
+	seen[source] = TRUE
+	if(source.light_power <= 0 || source.light_outer_range <= 0 || !source.light_on)
+		return
+	found += source
+
+/proc/sumiari_emitters_near(turf/T, span = 6)
+	var/list/found = list()
+	var/list/seen = list()
+	if(!isturf(T))
+		return found
+	for(var/atom/movable/source in range(span, T))
+		sumiari_note_emitter(found, seen, source)
+		if(ismob(source))
+			var/mob/holder = source
+			for(var/obj/item/held in holder.held_items)
+				sumiari_note_emitter(found, seen, held)
+			for(var/atom/movable/carried in holder.contents)
+				sumiari_note_emitter(found, seen, carried)
+			continue
+		if(!isobj(source))
+			continue
+		for(var/atom/movable/nested in source.contents)
+			sumiari_note_emitter(found, seen, nested)
+	return found
+
+/proc/sumiari_movable_from(list/emitters, turf/T)
+	var/total = 0
+	for(var/atom/source as anything in emitters)
+		if(source.light_system != MOVABLE_LIGHT)
+			continue
+		total += sumiari_point_falloff(T, source)
+	return total
+
 /proc/sumiari_movable_brightness(turf/T)
 	if(!isturf(T))
 		return 0
-	var/total = 0
-	var/list/seen = list()
-	for(var/atom/movable/source in range(6, T))
-		if(source.light_system == MOVABLE_LIGHT && source.light_on)
-			seen[source] = TRUE
-			total += sumiari_point_falloff(T, source)
-		if(!ismob(source))
-			continue
-		for(var/obj/item/item in source.contents)
-			if(seen[item] || item.light_system != MOVABLE_LIGHT || !item.light_on)
-				continue
-			seen[item] = TRUE
-			total += sumiari_point_falloff(T, item)
-	return total
+	return sumiari_movable_from(sumiari_emitters_near(T, 6), T)
 
 /proc/sumiari_saturation_at(intensity)
 	if(isnull(intensity))
@@ -1384,6 +1428,7 @@ var/global/sumiari_run_headless_test = FALSE
 		log_world("SUMIARI TEST FAIL sunny east intensity=[sunny_value]")
 	else if(sunny)
 		log_world("SUMIARI TEST sunny east PASS intensity=[sunny_value]")
+	sumiari_test_dark_turf = darkest
 	sumiari_probe_torch_falloff(darkest)
 
 // Drop a torch on the darkest cavern tile and record the fade one step at a time.
@@ -1401,6 +1446,96 @@ var/global/sumiari_run_headless_test = FALSE
 		var/list/sample = sumiari_light_sample(step_turf)
 		log_world("SUMIARI TEST torch_step_[step] sat=[sumiari_saturation_at(sample["intensity"])] intensity=[sample["intensity"]] movable=[sample["text"]]")
 	qdel(torch)
+
+// A lit torch in a hand, on the floor, and in a sconce must raise intensity and show up in lights=.
+// This checks the debug numbers. The picture is the cookie plate, which the composite check wires up.
+/proc/sumiari_probe_carried_lights(turf/origin)
+	if(!isturf(origin))
+		log_world("SUMIARI TEST FAIL carried lights had no dark turf")
+		return FALSE
+	var/before = sumiari_turf_intensity(origin)
+	if(!sumiari_probe_held_torch(origin, before))
+		return FALSE
+	if(!sumiari_probe_dropped_torch(origin, before))
+		return FALSE
+	if(!sumiari_probe_sconce(origin, before))
+		return FALSE
+	log_world("SUMIARI TEST carried lights PASS before=[before]")
+	return TRUE
+
+/proc/sumiari_emitter_entry(list/sample, name)
+	var/text = sample ? sample["text"] : ""
+	var/at = findtext(text, "[name]@")
+	if(!at)
+		return
+	return copytext(text, at, min(length(text) + 1, at + 96))
+
+/proc/sumiari_probe_torch_counts(turf/origin, atom/torch, label, before)
+	var/near = sumiari_point_falloff(origin, torch)
+	var/turf/edge = locate(origin.x + 4, origin.y, origin.z)
+	var/far = isturf(edge) ? sumiari_point_falloff(edge, torch) : 0
+	var/list/sample = sumiari_light_sample(origin)
+	var/entry = sumiari_emitter_entry(sample, torch.name)
+	if(near < 0.35 || far >= near)
+		log_world("SUMIARI TEST FAIL [label] torch falloff near=[near] far=[far]")
+		return FALSE
+	if(sample["movable"] < near - 0.02)
+		log_world("SUMIARI TEST FAIL [label] torch movable=[sample["movable"]] near=[near] before=[before] [sample["text"]]")
+		return FALSE
+	if(!entry || !findtext(entry, "movable"))
+		log_world("SUMIARI TEST FAIL [label] torch missing from lights= [sample["text"]]")
+		return FALSE
+	log_world("SUMIARI TEST [label] torch PASS movable=[sample["movable"]] near=[near] far=[far] before=[before]")
+	return TRUE
+
+/proc/sumiari_probe_held_torch(turf/origin, before)
+	var/mob/living/carbon/human/holder = new(origin)
+	var/obj/item/flashlight/flare/torch/torch = new(origin)
+	torch.on = TRUE
+	torch.update_brightness()
+	if(!holder.put_in_hands(torch, FALSE, TRUE, TRUE))
+		holder.put_in_hand(torch, 1, TRUE)
+	var/held = (torch.loc == holder) && (torch in holder.held_items) && torch.light_on
+	var/ok = FALSE
+	if(!held)
+		log_world("SUMIARI TEST FAIL held torch loc=[torch.loc] light_on=[torch.light_on] on=[torch.on]")
+	else
+		ok = sumiari_probe_torch_counts(origin, torch, "held", before)
+	qdel(holder)
+	if(!QDELETED(torch))
+		qdel(torch)
+	return ok
+
+/proc/sumiari_probe_dropped_torch(turf/origin, before)
+	var/obj/item/flashlight/flare/torch/torch = new(origin)
+	torch.on = TRUE
+	torch.update_brightness()
+	var/ok = FALSE
+	if(torch.loc != origin || !torch.light_on)
+		log_world("SUMIARI TEST FAIL dropped torch loc=[torch.loc] light_on=[torch.light_on]")
+	else
+		ok = sumiari_probe_torch_counts(origin, torch, "dropped", before)
+	qdel(torch)
+	return ok
+
+/proc/sumiari_probe_sconce(turf/origin, before)
+	var/obj/machinery/light/rogue/torchholder/sconce = new(origin)
+	var/obj/item/flashlight/flare/torch/inner = sconce.torchy
+	var/ok = FALSE
+	if(!inner || inner.loc != sconce || !inner.light_on)
+		log_world("SUMIARI TEST FAIL sconce torch loc=[inner?.loc] light_on=[inner?.light_on]")
+	else if(!sumiari_probe_torch_counts(origin, inner, "sconce", before))
+		ok = FALSE
+	else
+		var/list/sample = sumiari_light_sample(origin)
+		var/entry = sumiari_emitter_entry(sample, sconce.name)
+		if(!entry || !findtext(entry, "static"))
+			log_world("SUMIARI TEST FAIL sconce missing from lights= [sample["text"]]")
+		else
+			log_world("SUMIARI TEST sconce fixture PASS [entry]")
+			ok = TRUE
+	qdel(sconce)
+	return ok
 
 /client/proc/sumiari_vision_debug()
 	set category = "Debug"
@@ -1450,7 +1585,7 @@ var/global/sumiari_run_headless_test = FALSE
 	else
 		eyes.wash_mode = SUMIARI_WASH_LIVE
 	eyes.apply_wash_filters()
-	var/expect = "Lit sprites, including the thing that is glowing, turn gray at about their own brightness. A campfire or wisp pool is that gray, not full color, and not a white fog. Darkness keeps the sprite color. Dawn, dusk, night, and a border sky stay at that same brightness. Direct midday sun adds only a slight lift. The HUD stays in color. No green or orange cast."
+	var/expect = "Lit sprites, including the thing that is glowing, turn gray at about their own brightness. A campfire, wisp, held torch, dropped torch, or wall sconce pool is that gray, not full color, and not a white fog. The light itself goes gray. Darkness keeps the sprite color. Dawn, dusk, night, and a border sky stay at that same brightness. Direct midday sun adds only a slight lift. The HUD stays in color. No green or orange cast."
 	if(eyes.wash_mode == SUMIARI_WASH_INK)
 		expect = "Every world sprite is a gray of its own brightness: grass stays as light as it was, shading stays shading, and textures do not turn into white specks on black. Darkness is that same gray, not a black void and not the sprite color. The HUD, chat, and stat panel stay in color."
 	else if(eyes.wash_mode == SUMIARI_WASH_COLOR)
@@ -1461,7 +1596,7 @@ var/global/sumiari_run_headless_test = FALSE
 
 // Which object carries which picture. The wash test prints this so it can be checked against the screen.
 /proc/sumiari_plane_legend()
-	return "planes: world color is the map planes themselves (sumiari_w*, no asterisk, drawn). Lighting plane [LIGHTING_PLANE] is [SUMIARI_LIGHTING_SOURCE] alpha 255, not drawn, and is the only ink-mask input. Movable-light plane [O_LIGHTING_VISUAL_PLANE] is [SUMIARI_OLIGHT_SOURCE] alpha 255, not drawn; it punches that capture and does not tint the world. Mask plates [SUMIARI_PLANE_RED] to [SUMIARI_PLANE_MASK] copy that capture at view resolution (render_source, SCREEN_SOUTHWEST, no 32×32 resample) into [sumiari_offscreen(SUMIARI_TARGET_MASK)]. [sumiari_offscreen(SUMIARI_TARGET_GLARE)] copies [SUNLIGHTING_RENDER_TARGET], not the lighting plane. Live ink is the sumiari ink relay on plane [SUMIARI_RELAY_PLANE]: every world capture, the ink matrix, then [sumiari_offscreen(SUMIARI_TARGET_MASK)]. Sun haze is the sumiari sun relay above it, masked by [sumiari_offscreen(SUMIARI_TARGET_GLARE)]. Force ink is the ink matrix on every world plane master and hides both relays. HUD is plane [HUD_PLANE]."
+	return "planes: world color is the map planes themselves (sumiari_w*, no asterisk, drawn). Lighting plane [LIGHTING_PLANE] is [SUMIARI_LIGHTING_SOURCE] alpha 255, not drawn. Movable-light plane [O_LIGHTING_VISUAL_PLANE] is [SUMIARI_OLIGHT_SOURCE] alpha 255, not drawn, so a torch cookie does not tint the world. The mask is the max of the lighting capture and that cookie's alpha ([sumiari_offscreen(SUMIARI_TARGET_COOKIE)]), copied at view resolution (render_source, SCREEN_SOUTHWEST, no 32×32 resample) into [sumiari_offscreen(SUMIARI_TARGET_MASK)]. [sumiari_offscreen(SUMIARI_TARGET_GLARE)] copies [SUNLIGHTING_RENDER_TARGET], not the lighting plane. Live ink is the sumiari ink relay on plane [SUMIARI_RELAY_PLANE]: every world capture, the ink matrix, then [sumiari_offscreen(SUMIARI_TARGET_MASK)]. Sun haze is the sumiari sun relay above it, masked by [sumiari_offscreen(SUMIARI_TARGET_GLARE)]. Force ink is the ink matrix on every world plane master and hides both relays. HUD is plane [HUD_PLANE]."
 
 // in_screen, plane, every world layer, and the mask. world_matrices counts ink matrices on the plane masters.
 // Live mode keeps that count at 0: the matrix sits on the relay, and the layer list is the thing to read.
@@ -1652,6 +1787,8 @@ var/global/sumiari_run_headless_test = FALSE
 	for(var/obj/item/flashlight/flare/torch/torch as anything in lights)
 		qdel(torch)
 		trash -= torch
+	if(!sumiari_probe_carried_lights(sumiari_test_dark_turf))
+		failed = TRUE
 	if(!sumiari_sweep_blindness(body, eyes))
 		failed = TRUE
 	if(eyes.vision_on && sumiari_screen_live == pieces)
@@ -1865,6 +2002,35 @@ var/global/sumiari_run_headless_test = FALSE
 	if(red_sample && length(red_sample.filters))
 		if(sumiari_filter_kind(red_sample.filters[1]) == "layer")
 			bad += "mask resamples through a layer filter"
+	var/atom/movable/screen/sumiari_plate/cookie_plate = sumiari_find_piece(eyes, SUMIARI_TARGET_COOKIE)
+	var/atom/movable/screen/sumiari_sampler/cookie_sample = sumiari_find_piece(eyes, "[SUMIARI_TARGET_COOKIE] sample")
+	if(!cookie_plate || cookie_plate.render_target != sumiari_offscreen(SUMIARI_TARGET_COOKIE))
+		bad += "cookie plate=[cookie_plate?.render_target || "none"]"
+	else if(cookie_plate.plane >= OPENSPACE_PLANE)
+		bad += "cookie plate plane [cookie_plate.plane] can cover the map"
+	if(!cookie_sample || cookie_sample.render_source != SUMIARI_OLIGHT_SOURCE)
+		bad += "cookie source=[cookie_sample?.render_source || "none"]"
+	if(cookie_sample && cookie_sample.screen_loc != "SCREEN_SOUTHWEST")
+		bad += "cookie anchor=[cookie_sample.screen_loc || "none"]"
+	if(!cookie_sample || cookie_sample.sumiari_pixels_x != span[1] || cookie_sample.sumiari_pixels_y != span[2])
+		bad += "cookie canvas=[cookie_sample?.sumiari_pixels_x]x[cookie_sample?.sumiari_pixels_y]"
+	if(cookie_sample && length(cookie_sample.filters))
+		if(sumiari_filter_kind(cookie_sample.filters[1]) == "layer")
+			bad += "cookie resamples through a layer filter"
+	var/atom/movable/screen/sumiari_sampler/mask_sample = sumiari_find_piece(eyes, "[SUMIARI_TARGET_MASK] sample")
+	var/cookie_sub = FALSE
+	var/cookie_add = FALSE
+	if(mask_sample?.filters)
+		for(var/sample in mask_sample.filters)
+			if(sumiari_filter_field(list(sample), 1, "render_source") != sumiari_offscreen(SUMIARI_TARGET_COOKIE))
+				continue
+			var/mode = sumiari_filter_field(list(sample), 1, "blend_mode")
+			if(mode == BLEND_SUBTRACT)
+				cookie_sub = TRUE
+			else if(mode == BLEND_ADD)
+				cookie_add = TRUE
+	if(!cookie_sub || !cookie_add)
+		bad += "mask ignores movable lights"
 	var/atom/movable/screen/sumiari_sampler/sun_sample = sumiari_find_piece(eyes, "[SUMIARI_TARGET_GLARE] sample")
 	if(!sun_sample || sun_sample.render_source != SUNLIGHTING_RENDER_TARGET)
 		bad += "sun mask source=[sun_sample?.render_source || "none"]"
