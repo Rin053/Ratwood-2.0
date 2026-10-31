@@ -110,10 +110,8 @@ GLOBAL_VAR(restart_counter)
 	GLOB.obfs_x = rand(-2500, 2500)
 	GLOB.obfs_y = rand(-2500, 2500)
 
+	sumiari_note_test_request(params)
 	Master.Initialize(10, FALSE, TRUE)
-
-	if(sumiari_test_requested())
-		addtimer(CALLBACK(GLOBAL_PROC, GLOBAL_PROC_REF(sumiari_headless_check)), 5 SECONDS)
 
 	#ifdef UNIT_TESTS
 	HandleTestRun()

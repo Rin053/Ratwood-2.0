@@ -84,6 +84,7 @@ GLOBAL_LIST_INIT(sumiari_vision_planes, list(
 		clear_vision_filters(M)
 		M.see_in_dark = initial(M.see_in_dark)
 		M.see_invisible = initial(M.see_invisible)
+		M.lighting_alpha = initial(M.lighting_alpha)
 	return ..()
 
 /obj/item/organ/eyes/sumiari/Destroy()
@@ -321,15 +322,36 @@ GLOBAL_LIST_INIT(sumiari_vision_planes, list(
 	var/shown = sumiari.displayed_intensity
 	if(isnull(shown))
 		shown = raw
-	return "sumiari vision: mob=[C] raw_intensity=[raw] shown_intensity=[shown] saturation=[sumiari_saturation_at(shown)] glare=[sumiari_glare_at(shown)] see_in_dark=[C.see_in_dark] see_invisible=[C.see_invisible] lighting_alpha=[C.lighting_alpha]"
+	return "sumiari vision: mob=[C] client=[C.client ? "yes" : "no"] raw_intensity=[raw] shown_intensity=[shown] saturation=[sumiari_saturation_at(shown)] glare=[sumiari_glare_at(shown)] organ_see_in_dark=[sumiari.see_in_dark] organ_see_invisible=[sumiari.see_invisible] organ_lighting_alpha=[sumiari.lighting_alpha] mob_see_in_dark=[C.see_in_dark] mob_see_invisible=[C.see_invisible] mob_lighting_alpha=[C.lighting_alpha]"
 
-/proc/sumiari_test_requested()
-	if(islist(world.params) && world.params["sumiari_test"])
-		return TRUE
-	return findtext("[world.params]", "sumiari_test")
+var/global/sumiari_run_headless_test = FALSE
+
+// DreamDaemon -params arrives as world/New's argument. world.params is not set yet, and the timer
+// subsystem does not exist until the master controller finishes initializing (that proc does not wait).
+/proc/sumiari_note_test_request(startup_params)
+	if(islist(startup_params) && startup_params["sumiari_test"])
+		sumiari_run_headless_test = TRUE
+		return
+	if(findtext("[startup_params]", "sumiari_test"))
+		sumiari_run_headless_test = TRUE
+
+/proc/sumiari_schedule_headless_test()
+	if(islist(world.params))
+		for(var/key in world.params)
+			if(findtext("[key]=[world.params[key]]", "sumiari_test"))
+				sumiari_run_headless_test = TRUE
+				break
+	else if(findtext("[world.params]", "sumiari_test"))
+		sumiari_run_headless_test = TRUE
+	if(!sumiari_run_headless_test)
+		return
+	// Called at the end of subsystem init, before the world sleeps with nobody logged in.
+	// A timer would never fire in that sleep, so the check runs here.
+	log_world("SUMIARI TEST scheduled")
+	sumiari_headless_check()
 
 /proc/sumiari_headless_check(attempt = 0)
-	if((!SSlighting?.initialized || !SSatoms?.initialized) && attempt < 12)
+	if((!SSlighting?.initialized || !SSatoms?.initialized) && attempt < 36)
 		log_world("SUMIARI TEST waiting for init attempt=[attempt]")
 		addtimer(CALLBACK(GLOBAL_PROC, GLOBAL_PROC_REF(sumiari_headless_check), attempt + 1), 5 SECONDS)
 		return
@@ -340,6 +362,29 @@ GLOBAL_LIST_INIT(sumiari_vision_planes, list(
 	var/list/black_ink = sumiari_apply_matrix(sumiari_color_matrix(SUMIARI_MONO_FULL), 0, 0, 0)
 	log_world("SUMIARI TEST matrix dark_red=[red_dark[1]],[red_dark[2]],[red_dark[3]] noon_red=[red_noon[1]],[red_noon[2]],[red_noon[3]] noon_black=[black_noon[1]] noon_white=[white_noon[1]] ink_black=[black_ink[1]]")
 	log_world("SUMIARI TEST channels red=[sumiari_channel_intensity(1, 0, 0)] white=[sumiari_channel_intensity(1, 1, 1)]")
+	if(abs(red_dark[1] - 1) > 0.02 || abs(red_dark[2]) > 0.02 || abs(red_dark[3]) > 0.02)
+		log_world("SUMIARI TEST FAIL darkness did not stay in color")
+	else if(abs(red_noon[1] - red_noon[2]) > 0.02 || abs(red_noon[2] - red_noon[3]) > 0.02)
+		log_world("SUMIARI TEST FAIL full light was not colorless")
+	else if(black_noon[1] <= 0.05 || white_noon[1] <= 1 || black_ink[1] >= 0)
+		log_world("SUMIARI TEST FAIL ink or glare curve")
+	else if(abs(sumiari_channel_intensity(1, 0, 0) - sumiari_channel_intensity(1, 1, 1)) > 0.001)
+		log_world("SUMIARI TEST FAIL red light did not match white light")
+	else
+		log_world("SUMIARI TEST matrix PASS")
+	var/min_intensity = 1
+	var/max_intensity = 0
+	var/sampled = 0
+	for(var/turf/scan in world)
+		if(scan.z != 1)
+			continue
+		sampled++
+		if(sampled % 6)
+			continue
+		var/value = sumiari_turf_intensity(scan)
+		min_intensity = min(min_intensity, value)
+		max_intensity = max(max_intensity, value)
+	log_world("SUMIARI TEST map z1 samples=[round(sampled / 6)] min_intensity=[min_intensity] max_intensity=[max_intensity]")
 	var/turf/T = locate(20, 20, 1)
 	if(!isturf(T))
 		log_world("SUMIARI TEST FAIL no turf")
@@ -348,6 +393,10 @@ GLOBAL_LIST_INIT(sumiari_vision_planes, list(
 	human.set_species(/datum/species/human/northern)
 	log_world("SUMIARI TEST [sumiari_vision_report(human)]")
 	var/obj/item/organ/eyes/eyes = human.getorganslot(ORGAN_SLOT_EYES)
+	if(!istype(eyes, /obj/item/organ/eyes/sumiari) || eyes.lighting_alpha != SUMIARI_LIGHTING_ALPHA || eyes.see_invisible < SUMIARI_SEE_INVISIBLE || eyes.see_in_dark < SUMIARI_SEE_IN_DARK)
+		log_world("SUMIARI TEST FAIL organ sight")
+	else
+		log_world("SUMIARI TEST organ sight PASS")
 	if(eyes)
 		eyes.Remove(human)
 	log_world("SUMIARI TEST after_remove eyes=[human.getorganslot(ORGAN_SLOT_EYES)?.type || "none"] see_in_dark=[human.see_in_dark] see_invisible=[human.see_invisible] lighting_alpha=[human.lighting_alpha]")
