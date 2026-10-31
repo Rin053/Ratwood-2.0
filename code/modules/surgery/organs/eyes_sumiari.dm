@@ -948,6 +948,7 @@ var/global/turf/sumiari_test_dark_turf
 		nearby += "[source.name]@[ox],[oy] power=[source.light_power] range=[source.light_outer_range] [kind]"
 		if(length(nearby) >= 8)
 			break
+	var/hands = sumiari_hands_near(T)
 	.["intensity"] = intensity
 	.["lamps"] = lamps
 	.["raw_peak"] = raw_peak
@@ -956,7 +957,7 @@ var/global/turf/sumiari_test_dark_turf
 	.["sun_strength"] = sun_strength
 	.["dynamic"] = dynamic
 	.["movable"] = movable
-	.["text"] = "sumiari light: [T.x],[T.y],[T.z] area=[T.loc] intensity=[intensity] lamps=[lamps] raw_peak=[raw_peak] sun=[sun] sun_mask=[sun_mask] sun_strength=[sun_strength] sun_state=[sky] sun_overlay_lum=[sun_overlay_lum] falloff=[falloff] movable=[movable] dyn=[dynamic] get_lumcount=[T.get_lumcount()] luminosity=[T.luminosity] overlay=[overlay] softly_lit=[T.is_softly_lit() ? 1 : 0] sun_color=[SSoutdoor_effects?.picked_color] tod=[SSoutdoor_effects?.current_step_datum?.type] corners=\[[corner_text.Join(" | ")]\] lights=\[[nearby.Join(" ; ")]\]"
+	.["text"] = "sumiari light: [T.x],[T.y],[T.z] area=[T.loc] intensity=[intensity] lamps=[lamps] raw_peak=[raw_peak] sun=[sun] sun_mask=[sun_mask] sun_strength=[sun_strength] sun_state=[sky] sun_overlay_lum=[sun_overlay_lum] falloff=[falloff] movable=[movable] dyn=[dynamic] get_lumcount=[T.get_lumcount()] luminosity=[T.luminosity] overlay=[overlay] softly_lit=[T.is_softly_lit() ? 1 : 0] sun_color=[SSoutdoor_effects?.picked_color] tod=[SSoutdoor_effects?.current_step_datum?.type] corners=\[[corner_text.Join(" | ")]\] lights=\[[nearby.Join(" ; ")]\] hands=\[[hands]\]"
 
 /proc/sumiari_turf_intensity(turf/T)
 	return sumiari_light_sample(T)["intensity"]
@@ -1537,6 +1538,155 @@ var/global/sumiari_run_headless_test = FALSE
 	qdel(sconce)
 	return ok
 
+// Held items that are off never reach lights=. The live client logged on=1 at fire_act and then a turf with no torch.
+/proc/sumiari_hands_near(turf/T)
+	var/list/lines = list()
+	if(!isturf(T))
+		return "none"
+	for(var/mob/living/holder in range(6, T))
+		for(var/obj/item/I in holder.held_items)
+			var/lit = "na"
+			if(istype(I, /obj/item/flashlight))
+				var/obj/item/flashlight/flare_item = I
+				lit = "[flare_item.on]"
+			var/datum/component/overlay_lighting/light = I.GetComponent(/datum/component/overlay_lighting)
+			var/obj/effect/overlay/light_visible/mask = light?.visible_mask
+			var/cookie = "none"
+			if(light?.current_holder && mask && (mask in light.current_holder.vis_contents))
+				cookie = "[mask.plane]"
+			lines += "[I.name] on=[lit] light_on=[I.light_on] power=[I.light_power] range=[I.light_outer_range] cookie=[cookie]"
+			if(length(lines) >= 6)
+				return lines.Join(" ; ")
+	if(!length(lines))
+		return "empty"
+	return lines.Join(" ; ")
+
+// The local autospawn hook does new(mob), put_in_hands, then fire_act, before the mind transfer.
+/proc/sumiari_hook_torch_line(obj/item/flashlight/flare/torch/torch, mob/living/holder, label)
+	var/datum/component/overlay_lighting/light = torch?.GetComponent(/datum/component/overlay_lighting)
+	var/atom/movable/owner = light?.current_holder
+	var/obj/effect/overlay/light_visible/mask = light?.visible_mask
+	var/in_vis = FALSE
+	if(owner && mask && (mask in owner.vis_contents))
+		in_vis = TRUE
+	var/in_hands = FALSE
+	if(holder && torch && (torch in holder.held_items))
+		in_hands = TRUE
+	var/in_contents = FALSE
+	if(holder && torch && (torch in holder.contents))
+		in_contents = TRUE
+	var/turf/T = get_turf(torch)
+	var/movable = "none"
+	var/listed = "none"
+	if(isturf(T))
+		var/list/sample = sumiari_light_sample(T)
+		movable = sample["movable"]
+		listed = sumiari_emitter_entry(sample, torch?.name) || "missing"
+	log_world("SUMIARI HOOK [label]: on=[torch?.on] light_on=[torch?.light_on] power=[torch?.light_power] range=[torch?.light_outer_range] system=[torch?.light_system] loc=[torch?.loc] in_hands=[in_hands] in_contents=[in_contents] light_owner=[owner] ([owner?.type]) cookie_plane=[mask?.plane] cookie_alpha=[mask?.alpha] cookie_in_vis=[in_vis] dyn=[T?.dynamic_lumcount] movable=[movable] lights=[listed]")
+
+/proc/sumiari_hook_place_line(turf/T, label)
+	var/outdoor = "none"
+	var/proof = "none"
+	var/sky = "none"
+	if(T?.outdoor_effect)
+		outdoor = "yes"
+		proof = "[T.outdoor_effect.weatherproof]"
+		sky = sumiari_sky_name(T.outdoor_effect.state)
+	var/rain = (SSParticleWeather?.runningWeather?.target_trait == PARTICLEWEATHER_RAIN)
+	log_world("SUMIARI HOOK [label] place: [T?.x],[T?.y],[T?.z] type=[T?.type] water=[istype(T, /turf/open/water)] turf_proof=[T?.weatherproof] outdoor=[outdoor] outdoor_proof=[proof] sky=[sky] rain=[rain] weather=[SSParticleWeather?.runningWeather?.type || "none"]")
+
+// Same sequence as the local hook, minus the client. Clothes, an unlit satchel torch, an unlit floor torch, then new(mob) / put_in_hands / fire_act / after_creation.
+/proc/sumiari_hook_spawn(turf/spot)
+	var/mob/living/carbon/human/species/human/northern/holder = new(spot)
+	holder.real_name = "Sumiari Tester"
+	holder.name = holder.real_name
+	holder.equip_to_slot_or_del(new /obj/item/clothing/suit/roguetown/shirt/undershirt(holder), SLOT_SHIRT, TRUE)
+	holder.equip_to_slot_or_del(new /obj/item/clothing/under/roguetown/tights(holder), SLOT_PANTS, TRUE)
+	holder.equip_to_slot_or_del(new /obj/item/clothing/shoes/roguetown/simpleshoes(holder), SLOT_SHOES, TRUE)
+	var/obj/item/storage/backpack/rogue/satchel/bag = new(holder)
+	if(holder.equip_to_slot_or_del(bag, SLOT_BACK_L, TRUE))
+		new /obj/item/flashlight/flare/torch(bag)
+	var/turf/floor_spot = locate(spot.x, spot.y + 1, spot.z)
+	new /obj/item/flashlight/flare/torch(isturf(floor_spot) ? floor_spot : spot)
+	var/obj/item/flashlight/flare/torch/held = new(holder)
+	sumiari_hook_torch_line(held, holder, "after_new")
+	var/placed = holder.put_in_hands(held)
+	sumiari_hook_torch_line(held, holder, "after_hands placed=[placed]")
+	var/lit = held.fire_act()
+	log_world("SUMIARI HOOK fire_act returned [lit] on=[held.on] loc=[held.loc]")
+	sumiari_hook_torch_line(held, holder, "after_fire_act")
+	holder.after_creation()
+	sumiari_hook_torch_line(held, holder, "after_creation")
+	return held
+
+/proc/sumiari_hook_torch_ok(obj/item/flashlight/held, mob/living/holder)
+	if(QDELETED(held) || QDELETED(holder))
+		return FALSE
+	if(!held.on || !held.light_on || held.light_power <= 0 || held.light_outer_range <= 0)
+		return FALSE
+	if(!(held in holder.held_items))
+		return FALSE
+	var/datum/component/overlay_lighting/light = held.GetComponent(/datum/component/overlay_lighting)
+	var/atom/movable/owner = light?.current_holder
+	var/obj/effect/overlay/light_visible/mask = light?.visible_mask
+	if(owner != holder || !mask || mask.plane != O_LIGHTING_VISUAL_PLANE || !(mask in holder.vis_contents))
+		return FALSE
+	var/turf/T = get_turf(held)
+	if(!isturf(T))
+		return FALSE
+	var/list/sample = sumiari_light_sample(T)
+	var/entry = sumiari_emitter_entry(sample, held.name)
+	if(!entry || !findtext(entry, "movable") || sample["movable"] < 0.35)
+		return FALSE
+	return TRUE
+
+// 71,42,9 is bloody water. Life calls check_drowning, which extinguishes a normal torch. A lamptern is not extinguishable, so it keeps emitting.
+/proc/sumiari_probe_hook_torch(turf/origin)
+	var/turf/spot = locate(71, 42, 9)
+	if(!isturf(spot))
+		spot = origin
+	if(!isturf(spot))
+		log_world("SUMIARI HOOK FAIL no turf")
+		return FALSE
+	sumiari_hook_place_line(spot, "sync")
+	var/obj/item/flashlight/flare/torch/held = sumiari_hook_spawn(spot)
+	var/mob/living/holder = held?.loc
+	if(!isliving(holder) || !sumiari_hook_torch_ok(held, holder))
+		log_world("SUMIARI TEST FAIL hook fire_act torch was not emitting in hand")
+		if(isliving(holder))
+			qdel(holder)
+		if(!QDELETED(held))
+			qdel(held)
+		return FALSE
+	log_world("SUMIARI TEST hook fire_act PASS owner=mob cookie_plane=[O_LIGHTING_VISUAL_PLANE]")
+	holder.check_drowning()
+	sumiari_hook_torch_line(held, holder, "after_drowning")
+	if(held.on || held.light_on)
+		log_world("SUMIARI TEST FAIL water left the regular torch lit on=[held.on] light_on=[held.light_on]")
+		qdel(holder)
+		return FALSE
+	log_world("SUMIARI TEST hook water PASS regular torch snuffed, same as a Life tick on this tile")
+	qdel(held)
+	var/obj/item/flashlight/flare/torch/lantern/lamp = new(holder)
+	var/placed = holder.put_in_hands(lamp)
+	var/lit = lamp.fire_act()
+	log_world("SUMIARI HOOK lantern fire_act returned [lit] placed=[placed] on=[lamp.on] loc=[lamp.loc]")
+	holder.check_drowning()
+	for(var/tick in 1 to 15)
+		if(QDELETED(lamp))
+			break
+		lamp.process()
+	sumiari_hook_torch_line(lamp, holder, "lantern_after_drowning")
+	var/lamp_ok = sumiari_hook_torch_ok(lamp, holder)
+	qdel(holder)
+	if(!QDELETED(lamp))
+		qdel(lamp)
+	if(!lamp_ok)
+		log_world("SUMIARI TEST FAIL lantern did not keep emitting after drowning")
+		return FALSE
+	log_world("SUMIARI TEST hook lantern PASS still emitting after drowning and 15 process ticks")
+	return TRUE
+
 /client/proc/sumiari_vision_debug()
 	set category = "Debug"
 	set name = "Sumiari Vision Debug"
@@ -1788,6 +1938,8 @@ var/global/sumiari_run_headless_test = FALSE
 		qdel(torch)
 		trash -= torch
 	if(!sumiari_probe_carried_lights(sumiari_test_dark_turf))
+		failed = TRUE
+	if(!sumiari_probe_hook_torch(sumiari_test_dark_turf))
 		failed = TRUE
 	if(!sumiari_sweep_blindness(body, eyes))
 		failed = TRUE
