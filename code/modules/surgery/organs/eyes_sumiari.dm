@@ -81,21 +81,32 @@
 // so the edge of a campfire's glow fades to plain night instead of silvering the warm light.
 #define SUMIARI_MOON_LAMP_GAIN 3
 // Vivid moonlight. Moonlight is not light to these eyes: a moonlit pixel is not grayed at all. Instead the open
-// night sky is painted richer than a human ever sees it by day: deep saturated hues, a gentle glow lift so dark
-// colors read luminous instead of muddy, and a faint silver sheen on top. 0 falls back to the plain silver tint.
+// night sky is painted richer than a human ever sees it by day: deep saturated hues shifted toward crimson,
+// emerald, sapphire, and warm umber at the same brightness, with a faint silver sheen on top. 0 falls back to the plain silver tint.
 // The vivid relay sits UNDER the ink relay, so lamps, fires, candles, magic lights, and light-source sprites still
 // gray their pixels in proportion to their own wash, over the vivid color, exactly as they gray plain color.
 // The mask is only sky * strength: a roofed room or cave is black on the sky plane and keeps plain color.
 #define SUMIARI_MOON_VIVID 1
 // Saturation around Rec.709 luma. 1 is normal color. Above about 1.9 strong reds and greens clip into neon.
 #define SUMIARI_MOON_SATURATION 1.75
-// Glow: exposure gain on the boosted color. Night sprites are dark (open forest at midnight is about 6% luma),
-// so a gain lifts them into a luminous range and keeps their hue ratios. A flat lift alone grays them into haze.
-#define SUMIARI_MOON_GLOW_GAIN 1.7
-// Small constant lift (0-1) on every channel, so the deepest shadows read as night blue-black, not mud.
-#define SUMIARI_MOON_GLOW_LIFT 0.035
-// Faint silver sheen: this fraction of the pixel is the cool silver ink (SILVER_R/G/B and SILVER_LIFT above).
-#define SUMIARI_MOON_SHEEN 0.14
+// Faint silver sheen: this fraction of the pixel is the cool silver ink (SILVER_R/G/B above). It is a tint,
+// not a lift: the moonlit layer keeps the plain image's brightness, only the colors are richer.
+#define SUMIARI_MOON_SHEEN 0.12
+// Hue shifts. Colors pop by moving hue, not by brightening. Each push below is a raw nudge on one input channel's
+// row of the color matrix. The sum is projected (sumiari_moon_hue_matrix) so every row keeps its Rec.709 luma
+// (a pushed channel is paid for by the others) and every column sums to 0 (gray stays gray). A linear matrix
+// moves opposite hues the opposite way, so red-to-crimson and teal-to-sapphire pull against each other: reds
+// mostly lose their orange cast and deepen, rather than turning pink.
+// Master strength, 0 turns all hue shifts off.
+#define SUMIARI_MOON_HUE_SHIFT 1
+// Reds lean crimson: red input pushes a little blue.
+#define SUMIARI_MOON_HUE_CRIMSON 0.1
+// Browns, wood, orange, and reds lean warm umber: red input pushes more red (less yellow).
+#define SUMIARI_MOON_HUE_UMBER 0.6
+// Greens lean emerald: green input pushes blue.
+#define SUMIARI_MOON_HUE_EMERALD 0.5
+// Blues and teals lean sapphire: blue input pushes green (violet-blue toward sapphire's 216 degrees).
+#define SUMIARI_MOON_HUE_SAPPHIRE 0.2
 // Peak alpha of the vivid layer on open sky at night. 1 means a moonlit pixel is fully the vivid color.
 #define SUMIARI_MOON_VIVID_STRENGTH 1
 // Lamp fade for the vivid layer: vivid alpha is strength * (sky - fade * lamp wash), and an emitter's own sprite
@@ -949,21 +960,49 @@ var/global/turf/sumiari_test_dark_turf
 	return sumiari_moon_silver_matrix()
 #endif
 
-// Vivid moonlit color: gain * ((1 - sheen) * (luma + saturation * (color - luma)) + sheen * cool silver ink),
-// plus the glow lift. Column-major like color_matrix_identity(): input channel rows, then constants.
-/proc/sumiari_moon_vivid_matrix(saturation = SUMIARI_MOON_SATURATION, sheen = SUMIARI_MOON_SHEEN, gain = SUMIARI_MOON_GLOW_GAIN, lift = SUMIARI_MOON_GLOW_LIFT)
+// Vivid moonlit color: (1 - sheen) * (luma + saturation * (color - luma) + hue shifts) + sheen * cool silver ink.
+// Saturation around luma and the projected hue shifts both keep luma, so brightness stays near the plain image.
+// Column-major like color_matrix_identity(): input channel rows, then constants.
+/proc/sumiari_moon_vivid_matrix(saturation = SUMIARI_MOON_SATURATION, sheen = SUMIARI_MOON_SHEEN, hue_shift = SUMIARI_MOON_HUE_SHIFT)
 	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
 	var/list/tint = list(SUMIARI_MOON_SILVER_R, SUMIARI_MOON_SILVER_G, SUMIARI_MOON_SILVER_B)
+	var/list/hue = sumiari_moon_hue_matrix(hue_shift)
 	var/list/vivid = color_matrix_identity()
 	vivid = vivid.Copy()
 	for(var/input in 1 to 3)
 		for(var/output in 1 to 3)
 			var/boosted = luma[input] * (1 - saturation) + (input == output ? saturation : 0)
+			boosted += hue[(input - 1) * 3 + output]
 			var/silver = SUMIARI_INK_SLOPE * luma[input] * tint[output]
-			vivid[(input - 1) * 4 + output] = gain * ((1 - sheen) * boosted + sheen * silver)
+			vivid[(input - 1) * 4 + output] = (1 - sheen) * boosted + sheen * silver
 	for(var/output in 1 to 3)
-		vivid[16 + output] = lift + sheen * (SUMIARI_INK_LIFT + SUMIARI_MOON_SILVER_LIFT) * tint[output]
+		vivid[16 + output] = 0
 	return vivid
+
+// The hue pushes as a 3x3 offset (row = input channel, flat index (input - 1) * 3 + output), projected onto
+// matrices whose rows have zero luma and whose columns sum to zero. Alternating the two projections converges
+// to the projection onto both. Built once per filter rebuild, never per tile.
+/proc/sumiari_moon_hue_matrix(strength = SUMIARI_MOON_HUE_SHIFT)
+	var/list/hue = list(0, 0, 0, 0, 0, 0, 0, 0, 0)
+	if(!strength)
+		return hue
+	hue[3] += SUMIARI_MOON_HUE_CRIMSON * strength
+	hue[1] += SUMIARI_MOON_HUE_UMBER * strength
+	hue[6] += SUMIARI_MOON_HUE_EMERALD * strength
+	hue[8] += SUMIARI_MOON_HUE_SAPPHIRE * strength
+	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
+	var/luma_sq = luma[1] * luma[1] + luma[2] * luma[2] + luma[3] * luma[3]
+	for(var/pass in 1 to 60)
+		for(var/output in 1 to 3)
+			var/mean = (hue[output] + hue[3 + output] + hue[6 + output]) / 3
+			for(var/input in 1 to 3)
+				hue[(input - 1) * 3 + output] -= mean
+		for(var/input in 1 to 3)
+			var/base = (input - 1) * 3
+			var/row_luma = (hue[base + 1] * luma[1] + hue[base + 2] * luma[2] + hue[base + 3] * luma[3]) / luma_sq
+			for(var/output in 1 to 3)
+				hue[base + output] -= row_luma * luma[output]
+	return hue
 
 // The ink curve, with each output channel scaled toward cool silver. A gray sprite turns faintly blue-white.
 /proc/sumiari_moon_silver_matrix()
@@ -2580,7 +2619,10 @@ var/global/sumiari_run_headless_test = FALSE
 	// A muted green has to come out more saturated (wider channel spread) and a gray has to stay a cool gray.
 	var/list/vivid = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.3, 0.5, 0.3)
 	var/list/vivid_gray = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.5, 0.5, 0.5)
-	if(!(vivid[2] - vivid[1] > 0.2) || !(vivid_gray[3] > vivid_gray[1]) || vivid_gray[2] <= 0.5 || vivid_gray[2] >= 1)
+	// Same brightness: luma in == luma out (within the sheen's slope) for a color and for gray. Hue: orange leans red.
+	var/vivid_luma = vivid[1] * SUMIARI_LUMA_R + vivid[2] * SUMIARI_LUMA_G + vivid[3] * SUMIARI_LUMA_B
+	var/list/orange = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.6, 0.3, 0.1)
+	if(!(vivid[2] - vivid[1] > 0.2) || !(vivid_gray[3] > vivid_gray[1]) || abs(vivid_gray[2] - 0.5) > 0.03 || abs(vivid_luma - 0.4431) > 0.03 || !(orange[2] / orange[1] < 0.3 / 0.6))
 		log_world("SUMIARI TEST FAIL moon vivid matrix green=[vivid[1]],[vivid[2]],[vivid[3]] gray=[vivid_gray[1]],[vivid_gray[2]],[vivid_gray[3]]")
 		return FALSE
 	if(length(eyes.moon_plate.filters) != 4 || sumiari_filter_field(eyes.moon_plate.filters, 3, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE))
@@ -2603,7 +2645,7 @@ var/global/sumiari_run_headless_test = FALSE
 	if(sumiari_moon_strength(FALSE) != 0 || sumiari_moon_strength(TRUE) != night_strength)
 		log_world("SUMIARI TEST FAIL moon strength day=[sumiari_moon_strength(FALSE)] night=[sumiari_moon_strength(TRUE)]")
 		return FALSE
-	log_world("SUMIARI TEST moon PASS silver=[gray[1]],[gray[2]],[gray[3]] strength=[night_strength] vivid=[SUMIARI_MOON_VIVID] saturation=[SUMIARI_MOON_SATURATION] sheen=[SUMIARI_MOON_SHEEN] live=[sumiari_moon_strength()]")
+	log_world("SUMIARI TEST moon PASS silver=[gray[1]],[gray[2]],[gray[3]] strength=[night_strength] vivid=[SUMIARI_MOON_VIVID] saturation=[SUMIARI_MOON_SATURATION] sheen=[SUMIARI_MOON_SHEEN] hue=[SUMIARI_MOON_HUE_SHIFT] luma=[vivid_luma] live=[sumiari_moon_strength()]")
 	return TRUE
 
 /proc/sumiari_sweep_other_z(turf/here)
