@@ -91,7 +91,7 @@
 #define SUMIARI_MOON_SATURATION 1.75
 // Faint silver sheen: this fraction of the pixel is the cool silver ink (SILVER_R/G/B above). It is a tint,
 // not a lift: the moonlit layer keeps the plain image's brightness, only the colors are richer.
-#define SUMIARI_MOON_SHEEN 0.12
+#define SUMIARI_MOON_SHEEN 0.16
 // Hue shifts. Colors pop by moving hue, not by brightening. Each push below is a raw nudge on one input channel's
 // row of the color matrix. The sum is projected (sumiari_moon_hue_matrix) so every row keeps its Rec.709 luma
 // (a pushed channel is paid for by the others) and every column sums to 0 (gray stays gray). A linear matrix
@@ -137,13 +137,13 @@
 #define SUMIARI_NIGHT_PLANT_GLOW 1
 #define SUMIARI_PLANT_GLOW_THRESHOLD "#ff22ff"
 #define SUMIARI_PLANT_GLOW_SIZE 2
-#define SUMIARI_PLANT_GLOW_ALPHA 70
+#define SUMIARI_PLANT_GLOW_ALPHA 90
 // 3) Soft bloom on bright spots: pale stone, bone, water edges, and moonlit cloth get a gentle halo.
 #define SUMIARI_NIGHT_BLOOM 1
 #define SUMIARI_BLOOM_THRESHOLD "#7a7a86"
 #define SUMIARI_BLOOM_SIZE 3
 #define SUMIARI_BLOOM_OFFSET 1
-#define SUMIARI_BLOOM_ALPHA 80
+#define SUMIARI_BLOOM_ALPHA 100
 // Extra: the two blooms breathe, slowly (one breath per SUMIARI_BREATH_PERIOD) between their alpha and this fraction of it.
 #define SUMIARI_NIGHT_BREATH 1
 #define SUMIARI_BREATH_PERIOD (9 SECONDS)
@@ -158,9 +158,9 @@
 // 5) Moon-cast shadows: the moon matrix adds a blue-violet that is strongest on black and gone at white
 //    (k * violet * (1 - luma)). The violet is luma-balanced, so the shadows change hue, not brightness.
 #define SUMIARI_NIGHT_SHADOWS 1
-#define SUMIARI_SHADOW_VIOLET 0.03
-#define SUMIARI_SHADOW_R 0.4
-#define SUMIARI_SHADOW_G 0.15
+#define SUMIARI_SHADOW_VIOLET 0.09
+#define SUMIARI_SHADOW_R 0.35
+#define SUMIARI_SHADOW_G 0.12
 #define SUMIARI_SHADOW_B 1
 // 6) Night-bloom flora: kneestingers (glowshrooms) and glowing mushroom clusters wear a slow Noc halo that only
 //    these eyes see at night, breathing between Noc's violet and the moon's silver-teal. The plant's own sprite
@@ -192,6 +192,20 @@
 // takes it to 0. So a flame, and the rim right around a lamp, under the ink gray is plain color, not boosted
 // (the gain would otherwise turn a half-washed flame edge orange). 1 fades vivid exactly as the gray rises.
 #define SUMIARI_MOON_VIVID_LAMP_FADE 2
+
+// Moon spares non-fire light. At night, on open moonlit sky, a light that is not a flame (glowshroom, glowing moss,
+// wisp, condensed-light orb, spell light) and the tiles it lights show the vivid moon instead of the lamp gray.
+// Flames (sumiari_light_is_fire) stay gray under the moon or not, and away from the moon every light stays gray.
+// How: a Sumiari-only client image of plain white tiles on the hidden SUMIARI_SPARE_PLANE covers each non-fire
+// emitter's open-sky tiles that no flame reaches. The ink mask subtracts it (no gray there) and the moon mask adds
+// it (full vivid there). No screen piece: the plane master is a stock HUD plane master with an asterisk target.
+#define SUMIARI_MOON_SPARES_NONFIRE 1
+#define SUMIARI_SPARE_PLANE -46
+#define SUMIARI_SPARE_RENDER_TARGET "*sumiari_moon_spare"
+// Emitters looked for within this many tiles of the Sumiari, at most this many spared, each out to this radius.
+#define SUMIARI_SPARE_SCAN 9
+#define SUMIARI_SPARE_MAX_EMITTERS 16
+#define SUMIARI_SPARE_RANGE_MAX 7
 
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
@@ -360,6 +374,10 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/sense_timer
 	// Night beauty: the client the images were shown to, live glints (image -> expiry), and flora halos (plant -> image).
 	var/client/beauty_client
+	// Moon spares non-fire light: the client the spare images were shown to, emitter -> image, emitter -> tile key.
+	var/client/spare_client
+	var/list/spare_images
+	var/list/spare_keys
 	var/beauty_timer
 	var/list/glint_images
 	var/list/glint_spots
@@ -630,6 +648,10 @@ var/global/turf/sumiari_test_dark_turf
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_ADD),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
+#if SUMIARI_MOON_SPARES_NONFIRE
+		// No lamp gray where the moon spares a non-fire light.
+		filter(type = "layer", render_source = SUMIARI_SPARE_RENDER_TARGET, blend_mode = BLEND_SUBTRACT),
+#endif
 		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
 	))
 	// *SUNLIGHT_PLANE, not the lighting-plane light image. A campfire is full-bright on *lighting and black here.
@@ -1069,12 +1091,16 @@ var/global/turf/sumiari_test_dark_turf
 // (fade is SUMIARI_MOON_VIVID_LAMP_FADE, and the emitter sprites are subtracted at full strength).
 /proc/sumiari_moon_mask_filters(night_override)
 #if SUMIARI_MOON_VIVID
-	return list(
+	. = list(
 		filter(type = "color", color = sumiari_matrix_sky_scaled(1 / SUMIARI_MOON_VIVID_LAMP_FADE)),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
-		filter(type = "color", color = sumiari_matrix_moon_alpha(sumiari_moon_strength(night_override) * SUMIARI_MOON_VIVID_LAMP_FADE)),
 	)
+#if SUMIARI_MOON_SPARES_NONFIRE
+	// Spared tiles (non-fire light on open moonlit sky) go back to full vivid.
+	. += filter(type = "layer", render_source = SUMIARI_SPARE_RENDER_TARGET, blend_mode = BLEND_ADD)
+#endif
+	. += filter(type = "color", color = sumiari_matrix_moon_alpha(sumiari_moon_strength(night_override) * SUMIARI_MOON_VIVID_LAMP_FADE))
 #else
 	return list(
 		filter(type = "color", color = sumiari_matrix_sky_scaled(1 / SUMIARI_MOON_LAMP_GAIN)),
@@ -2287,6 +2313,8 @@ var/global/sumiari_run_headless_test = FALSE
 		failed = TRUE
 	if(!sumiari_sweep_beauty(eyes))
 		failed = TRUE
+	if(!sumiari_sweep_nonfire(eyes))
+		failed = TRUE
 #endif
 #if SUMIARI_INK_VIGNETTE
 	var/found_vignette = FALSE
@@ -2780,7 +2808,7 @@ var/global/sumiari_run_headless_test = FALSE
 	if(!(vivid[2] - vivid[1] > 0.2) || !(vivid_gray[3] > vivid_gray[1]) || abs(vivid_gray[2] - 0.5) > 0.03 || abs(vivid_luma - 0.4431) > 0.03 || !(orange[2] / orange[1] < 0.3 / 0.6))
 		log_world("SUMIARI TEST FAIL moon vivid matrix green=[vivid[1]],[vivid[2]],[vivid[3]] gray=[vivid_gray[1]],[vivid_gray[2]],[vivid_gray[3]]")
 		return FALSE
-	if(length(eyes.moon_plate.filters) != 4 || sumiari_filter_field(eyes.moon_plate.filters, 3, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE))
+	if(length(eyes.moon_plate.filters) != 4 + SUMIARI_MOON_SPARES_NONFIRE || sumiari_filter_field(eyes.moon_plate.filters, 3, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE))
 		log_world("SUMIARI TEST FAIL moon vivid mask filters=[length(eyes.moon_plate.filters)]")
 		return FALSE
 #else
@@ -3413,6 +3441,7 @@ var/global/list/sumiari_night_flora = list()
 		deltimer(beauty_timer)
 		beauty_timer = null
 	clear_beauty()
+	clear_spare()
 
 /obj/item/organ/eyes/sumiari/proc/clear_beauty()
 	for(var/image/glint as anything in glint_images)
@@ -3430,6 +3459,7 @@ var/global/list/sumiari_night_flora = list()
 	if(QDELETED(src) || !vision_on)
 		stop_night_beauty()
 		return
+	spare_tick()
 	if(beauty_client && beauty_client != owner?.client)
 		clear_beauty()
 	if(!sumiari_night_beauty_enabled || sense_blocked() || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
@@ -3532,7 +3562,7 @@ var/global/list/sumiari_night_flora = list()
 	var/list/white = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 1, 1, 1)
 	var/list/violet = sumiari_shadow_violet()
 	var/violet_luma = violet[1] * SUMIARI_LUMA_R + violet[2] * SUMIARI_LUMA_G + violet[3] * SUMIARI_LUMA_B
-	if(SUMIARI_SHADOW_VIOLET * violet_luma > 0.02)
+	if(SUMIARI_SHADOW_VIOLET * violet_luma > 0.025)
 		bad += "violet lift=[SUMIARI_SHADOW_VIOLET * violet_luma]"
 #if SUMIARI_NIGHT_SHADOWS
 	// Black leans blue-violet, white is untouched by the shadow term (only the sheen tints it).
@@ -3611,3 +3641,207 @@ var/global/list/sumiari_night_flora = list()
 	cutout.MapColors(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 255, 0, 0, 0, 0)
 	cutouts[key] = cutout
 	return cutout
+
+
+// ---------------------------------------------------------------------------------------------
+// Moon spares non-fire light. See SUMIARI_MOON_SPARES_NONFIRE at the top.
+
+// Flames. Any subtype counts. Add a path here to keep a new flame gray under the moon.
+GLOBAL_LIST_INIT(sumiari_fire_light_types, typecacheof(list(
+	/obj/machinery/light/rogue,			// campfire, fireplace, brazier, standing fire, sconce, candles, wall/skull candles, hearth, oven, forge, smelter, chandelier, cauldron, lantern post
+	/obj/machinery/light/roguestreet,	// oil street lamps
+	/obj/item/flashlight/flare,			// torches, flares, lanterns, lampterns (bronze, void)
+	/obj/item/candle,
+	/obj/item/lighter,
+	/obj/item/clothing/mask/cigarette,
+	/obj/structure/fluff/statue/gargoyle/candles,
+	/obj/structure/fluff/statue/gargoyle/moss/candles,
+	/obj/structure/life_candle,
+	/obj/effect/hotspot,
+)))
+
+// Checked first: subtypes of a flame path that are not flames.
+GLOBAL_LIST_INIT(sumiari_nonfire_light_types, typecacheof(list(
+	/obj/item/flashlight/flare/light,	// condensed light (the Light spell orb), a flare subtype
+)))
+
+// Flame or not. Exceptions, then the flame paths, then anything actually burning. Everything else is not a flame.
+/proc/sumiari_light_is_fire(atom/source)
+	if(!source)
+		return FALSE
+	if(is_type_in_typecache(source, GLOB.sumiari_nonfire_light_types))
+		return FALSE
+	if(is_type_in_typecache(source, GLOB.sumiari_fire_light_types))
+		return TRUE
+	if(isobj(source))
+		var/obj/thing = source
+		if(thing.resistance_flags & ON_FIRE)
+			return TRUE
+	if(isliving(source))
+		var/mob/living/burning = source
+		if(burning.on_fire)
+			return TRUE
+	return FALSE
+
+// Open moonlit sky, the same tiles the moon mask calls sky (open or its border), never roofed or underground.
+/proc/sumiari_spare_turf_open(turf/T)
+	return T?.outdoor_effect && T.outdoor_effect.state != SKY_BLOCKED
+
+// Really lighting right now: lighting_atom and overlay_lighting put the shared marker on an emitter only while it is lit.
+// light_on alone is TRUE on an unlit condensed-light orb.
+/proc/sumiari_spare_emits(atom/movable/source)
+	return istype(source) && GLOB.sumiari_light_marker && (GLOB.sumiari_light_marker in source.vis_contents)
+
+/atom/movable/screen/plane_master/sumiari_moon_spare
+	name = "sumiari moon spare plane master"
+	plane = SUMIARI_SPARE_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_SPARE_RENDER_TARGET
+
+// Runtime switch for the moon sparing non-fire light (the define decides whether it exists). View Variables can flip it.
+var/global/sumiari_moon_spares_enabled = TRUE
+
+/obj/item/organ/eyes/sumiari/proc/clear_spare()
+	for(var/emitter in spare_images)
+		spare_client?.images -= spare_images[emitter]
+	spare_images = null
+	spare_keys = null
+	spare_client = null
+
+// Once per beauty tick: which open-sky tiles around each nearby non-fire light no flame reaches.
+/obj/item/organ/eyes/sumiari/proc/spare_tick()
+#if SUMIARI_MOON_SPARES_NONFIRE
+	if(spare_client && spare_client != owner?.client)
+		clear_spare()
+	var/turf/center = get_turf(owner)
+	if(!sumiari_moon_spares_enabled || !owner?.client || !center || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
+		clear_spare()
+		return
+	spare_client = owner.client
+	var/list/fires = list()
+	var/list/calm = list()
+	for(var/atom/source as anything in sumiari_emitters_near(center, SUMIARI_SPARE_SCAN))
+		if(!get_turf(source))
+			continue
+		if(sumiari_light_is_fire(source))
+			fires += source
+		else if(length(calm) < SUMIARI_SPARE_MAX_EMITTERS && sumiari_spare_emits(source))
+			calm += source
+	var/list/fire_lit = sumiari_spare_fire_tiles(fires)
+	var/list/keep = list()
+	for(var/atom/source as anything in calm)
+		var/turf/origin = get_turf(source)
+		var/range = clamp(CEILING(source.light_outer_range, 1), 1, SUMIARI_SPARE_RANGE_MAX)
+		var/list/tiles = list()
+		var/list/key_parts = list("[origin.x],[origin.y],[origin.z]")
+		for(var/dx in -range to range)
+			for(var/dy in -range to range)
+				if((dx * dx) + (dy * dy) > range * range)
+					continue
+				var/turf/T = locate(origin.x + dx, origin.y + dy, origin.z)
+				if(!sumiari_spare_turf_open(T) || fire_lit[T])
+					continue
+				tiles += list(list(dx, dy))
+				key_parts += "[dx]:[dy]"
+		if(!length(tiles))
+			continue
+		keep[source] = TRUE
+		var/key = key_parts.Join(";")
+		if(spare_keys?[source] == key)
+			continue
+		if(spare_images?[source])
+			spare_client.images -= spare_images[source]
+		var/image/spare = sumiari_spare_image(origin, tiles)
+		LAZYSET(spare_images, source, spare)
+		LAZYSET(spare_keys, source, key)
+		spare_client.images += spare
+	for(var/source in spare_images)
+		if(!keep[source])
+			spare_client.images -= spare_images[source]
+			spare_images -= source
+			spare_keys -= source
+#endif
+
+// Tiles a flame can light: within its range (plus half a tile) and in its view, so a wall candle behind a wall
+// does not keep the open sky outside gray. One view() per flame per tick.
+/proc/sumiari_spare_fire_tiles(list/fires)
+	var/list/lit = list()
+	for(var/atom/fire as anything in fires)
+		var/turf/F = get_turf(fire)
+		if(!F)
+			continue
+		var/reach = fire.light_outer_range + 0.5
+		for(var/turf/T in view(CEILING(reach, 1), F))
+			var/dx = F.x - T.x
+			var/dy = F.y - T.y
+			if((dx * dx) + (dy * dy) <= reach * reach)
+				lit[T] = TRUE
+	return lit
+
+// One image per emitter: plain white tiles on the hidden spare plane.
+/proc/sumiari_spare_image(turf/origin, list/tiles)
+	var/image/spare = image(null, origin)
+	spare.plane = SUMIARI_SPARE_PLANE
+	spare.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
+	spare.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	var/list/squares = list()
+	for(var/list/offset as anything in tiles)
+		var/image/square = image('icons/effects/alphacolors.dmi', null, "white")
+		square.color = "#ffffff"
+		square.pixel_x = offset[1] * world.icon_size
+		square.pixel_y = offset[2] * world.icon_size
+		squares += square
+	spare.overlays = squares
+	return spare
+
+// Classification, plumbing, and one live spare image.
+/proc/sumiari_sweep_nonfire(obj/item/organ/eyes/sumiari/eyes)
+	var/list/bad = list()
+#if SUMIARI_MOON_SPARES_NONFIRE
+	var/list/fire_paths = list(/obj/machinery/light/rogue/campfire, /obj/machinery/light/rogue/candle, /obj/machinery/light/rogue/torchholder,
+		/obj/machinery/light/rogue/firebowl, /obj/machinery/light/rogue/oven, /obj/machinery/light/roguestreet, /obj/item/flashlight/flare/torch,
+		/obj/item/flashlight/flare/torch/lantern, /obj/item/flashlight/flare/torch/lantern/bronzelamptern, /obj/item/candle)
+	var/list/calm_paths = list(/obj/structure/glowshroom, /obj/effect/wisp, /obj/item/flashlight/flare/light)
+	for(var/path in fire_paths)
+		if(!is_type_in_typecache(path, GLOB.sumiari_fire_light_types) || is_type_in_typecache(path, GLOB.sumiari_nonfire_light_types))
+			bad += "fire [path]"
+	for(var/path in calm_paths)
+		if(is_type_in_typecache(path, GLOB.sumiari_fire_light_types) && !is_type_in_typecache(path, GLOB.sumiari_nonfire_light_types))
+			bad += "calm [path]"
+	var/atom/movable/screen/plane_master/spare_master = eyes.owner?.hud_used?.plane_masters["[SUMIARI_SPARE_PLANE]"]
+	if(!spare_master || spare_master.render_target != SUMIARI_SPARE_RENDER_TARGET)
+		bad += "spare plane master"
+	var/list/moon_filters = sumiari_moon_mask_filters(TRUE)
+	if(sumiari_filter_field(moon_filters, 4, "render_source") != SUMIARI_SPARE_RENDER_TARGET || sumiari_filter_field(moon_filters, 4, "blend_mode") != BLEND_ADD)
+		bad += "moon mask has no spare add"
+	var/atom/movable/screen/sumiari_sampler/mask = null
+	for(var/atom/movable/screen/sumiari_sampler/sampler in eyes.screen_pieces)
+		if(sampler.name == "[SUMIARI_TARGET_MASK] sample")
+			mask = sampler
+	if(!mask || sumiari_filter_field(mask.filters, length(mask.filters) - 1, "render_source") != SUMIARI_SPARE_RENDER_TARGET || sumiari_filter_field(mask.filters, length(mask.filters) - 1, "blend_mode") != BLEND_SUBTRACT)
+		bad += "ink mask has no spare subtract"
+	var/turf/origin = get_turf(eyes.owner)
+	var/image/spare = sumiari_spare_image(origin, list(list(0, 0), list(1, 0)))
+	if(spare.plane != SUMIARI_SPARE_PLANE || length(spare.overlays) != 2)
+		bad += "spare image plane=[spare.plane] tiles=[length(spare.overlays)]"
+	// A flame within reach blocks a tile, one out of reach does not.
+	var/obj/machinery/light/rogue/campfire/fire = new(origin)
+	var/list/fires = list(fire)
+	var/turf/near = locate(origin.x + 1, origin.y, origin.z)
+	var/turf/far = locate(origin.x + fire.brightness + 4, origin.y, origin.z)
+	var/list/fire_lit = sumiari_spare_fire_tiles(fires)
+	if(near && !near.opacity && !fire_lit[near])
+		bad += "near flame not blocking"
+	if(far && fire.light_outer_range < 4 && fire_lit[far])
+		bad += "far flame blocking range=[fire.light_outer_range]"
+	qdel(fire)
+	if(length(eyes.screen_pieces) > SUMIARI_PIECE_CAP)
+		bad += "pieces=[length(eyes.screen_pieces)]"
+#endif
+	if(length(bad))
+		log_world("SUMIARI TEST FAIL nonfire [bad.Join(" ")]")
+		return FALSE
+	log_world("SUMIARI TEST nonfire PASS spares=[SUMIARI_MOON_SPARES_NONFIRE] fire_types=[length(GLOB.sumiari_fire_light_types)] calm_overrides=[length(GLOB.sumiari_nonfire_light_types)]")
+	return TRUE
