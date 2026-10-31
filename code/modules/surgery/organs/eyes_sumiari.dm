@@ -60,6 +60,7 @@
 #define SUMIARI_INK_VIGNETTE 0
 // Edge strength, 0 to 1. The icon is drawn once from this value.
 #define SUMIARI_INK_VIGNETTE_ALPHA 0.22
+// Moonlight layer (SUMIARI_MOON_VIVID below picks vivid color, the default; 0 is the older silver tint).
 // Moonlight tint. At night, open sky reads as a faint cool silver, so moonlight looks different from
 // firelight. Firelight stays neutral ink gray. Vanilla night has no moon in the lighting model (the
 // midnight sun color is #000000), so "moonlit" means a pixel the sky plane calls open or border sky.
@@ -79,6 +80,28 @@
 // How fast lamp and fire light push the silver out. At 3, a pixel at a third of full lamp wash or more gets none,
 // so the edge of a campfire's glow fades to plain night instead of silvering the warm light.
 #define SUMIARI_MOON_LAMP_GAIN 3
+// Vivid moonlight. Moonlight is not light to these eyes: a moonlit pixel is not grayed at all. Instead the open
+// night sky is painted richer than a human ever sees it by day: deep saturated hues, a gentle glow lift so dark
+// colors read luminous instead of muddy, and a faint silver sheen on top. 0 falls back to the plain silver tint.
+// The vivid relay sits UNDER the ink relay, so lamps, fires, candles, magic lights, and light-source sprites still
+// gray their pixels in proportion to their own wash, over the vivid color, exactly as they gray plain color.
+// The mask is only sky * strength: a roofed room or cave is black on the sky plane and keeps plain color.
+#define SUMIARI_MOON_VIVID 1
+// Saturation around Rec.709 luma. 1 is normal color. Above about 1.9 strong reds and greens clip into neon.
+#define SUMIARI_MOON_SATURATION 1.75
+// Glow: exposure gain on the boosted color. Night sprites are dark (open forest at midnight is about 6% luma),
+// so a gain lifts them into a luminous range and keeps their hue ratios. A flat lift alone grays them into haze.
+#define SUMIARI_MOON_GLOW_GAIN 1.7
+// Small constant lift (0-1) on every channel, so the deepest shadows read as night blue-black, not mud.
+#define SUMIARI_MOON_GLOW_LIFT 0.035
+// Faint silver sheen: this fraction of the pixel is the cool silver ink (SILVER_R/G/B and SILVER_LIFT above).
+#define SUMIARI_MOON_SHEEN 0.14
+// Peak alpha of the vivid layer on open sky at night. 1 means a moonlit pixel is fully the vivid color.
+#define SUMIARI_MOON_VIVID_STRENGTH 1
+// Lamp fade for the vivid layer: vivid alpha is strength * (sky - fade * lamp wash), and an emitter's own sprite
+// takes it to 0. So a flame, and the rim right around a lamp, under the ink gray is plain color, not boosted
+// (the gain would otherwise turn a half-washed flame edge orange). 1 fades vivid exactly as the gray rises.
+#define SUMIARI_MOON_VIVID_LAMP_FADE 2
 
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
@@ -591,7 +614,7 @@ var/global/turf/sumiari_test_dark_turf
 		sun.alpha = 255
 	if(moon)
 		var/list/moon_filters = world_stack_filters()
-		moon_filters += filter(type = "color", color = sumiari_moon_silver_matrix())
+		moon_filters += filter(type = "color", color = sumiari_moon_layer_matrix())
 		moon_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON))
 		moon.filters = moon_filters
 		moon.alpha = 255
@@ -611,7 +634,12 @@ var/global/turf/sumiari_test_dark_turf
 	var/atom/movable/screen/sumiari_relay/moon = new
 	moon.name = "sumiari moon"
 	moon.plane = SUMIARI_RELAY_PLANE
+#if SUMIARI_MOON_VIVID
+	// Under the ink relay: artificial light still grays a moonlit pixel by its own wash.
+	moon.layer = SUMIARI_RELAY_LAYER_BASE - 1
+#else
 	moon.layer = SUMIARI_RELAY_LAYER_BASE + 2
+#endif
 	moon.alpha = 0
 	moon.blockscharging = FALSE
 	screen_pieces += moon
@@ -880,15 +908,30 @@ var/global/turf/sumiari_test_dark_turf
 		night = istype(SSoutdoor_effects?.current_step_datum, /datum/time_of_day/midnight)
 	if(!night)
 		return 0
+#if SUMIARI_MOON_VIVID
+	return SUMIARI_MOON_VIVID_STRENGTH
+#else
 	return SUMIARI_MOON_TINT_STRENGTH
+#endif
 
 // Sky gray (R of the sky plane, alpha forced 1) over the lamp gain, minus the lamp wash, then strength times gain into alpha.
+// Vivid: the ink relay above already grays lamp light, so the subtract only keeps the gain off flames and lamp rims
+// (fade is SUMIARI_MOON_VIVID_LAMP_FADE, and the emitter sprites are subtracted at full strength).
 /proc/sumiari_moon_mask_filters(night_override)
+#if SUMIARI_MOON_VIVID
+	return list(
+		filter(type = "color", color = sumiari_matrix_sky_scaled(1 / SUMIARI_MOON_VIVID_LAMP_FADE)),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_SUBTRACT),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
+		filter(type = "color", color = sumiari_matrix_moon_alpha(sumiari_moon_strength(night_override) * SUMIARI_MOON_VIVID_LAMP_FADE)),
+	)
+#else
 	return list(
 		filter(type = "color", color = sumiari_matrix_sky_scaled(1 / SUMIARI_MOON_LAMP_GAIN)),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_SUBTRACT),
 		filter(type = "color", color = sumiari_matrix_moon_alpha(sumiari_moon_strength(night_override) * SUMIARI_MOON_LAMP_GAIN)),
 	)
+#endif
 
 // Sky R copied to gray and scaled, alpha forced to 1. Scaling the sky down before the lamp subtract and the
 // strength back up after it gives strength * (sky - gain * lamp) without a second lamp copy.
@@ -898,6 +941,29 @@ var/global/turf/sumiari_test_dark_turf
 // White RGB, alpha = strength * gray. At strength 0 the whole plate is transparent and the relay draws nothing.
 /proc/sumiari_matrix_moon_alpha(strength)
 	return list(0, 0, 0, strength, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0)
+
+/proc/sumiari_moon_layer_matrix()
+#if SUMIARI_MOON_VIVID
+	return sumiari_moon_vivid_matrix()
+#else
+	return sumiari_moon_silver_matrix()
+#endif
+
+// Vivid moonlit color: gain * ((1 - sheen) * (luma + saturation * (color - luma)) + sheen * cool silver ink),
+// plus the glow lift. Column-major like color_matrix_identity(): input channel rows, then constants.
+/proc/sumiari_moon_vivid_matrix(saturation = SUMIARI_MOON_SATURATION, sheen = SUMIARI_MOON_SHEEN, gain = SUMIARI_MOON_GLOW_GAIN, lift = SUMIARI_MOON_GLOW_LIFT)
+	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
+	var/list/tint = list(SUMIARI_MOON_SILVER_R, SUMIARI_MOON_SILVER_G, SUMIARI_MOON_SILVER_B)
+	var/list/vivid = color_matrix_identity()
+	vivid = vivid.Copy()
+	for(var/input in 1 to 3)
+		for(var/output in 1 to 3)
+			var/boosted = luma[input] * (1 - saturation) + (input == output ? saturation : 0)
+			var/silver = SUMIARI_INK_SLOPE * luma[input] * tint[output]
+			vivid[(input - 1) * 4 + output] = gain * ((1 - sheen) * boosted + sheen * silver)
+	for(var/output in 1 to 3)
+		vivid[16 + output] = lift + sheen * (SUMIARI_INK_LIFT + SUMIARI_MOON_SILVER_LIFT) * tint[output]
+	return vivid
 
 // The ink curve, with each output channel scaled toward cool silver. A gray sprite turns faintly blue-white.
 /proc/sumiari_moon_silver_matrix()
@@ -2506,9 +2572,25 @@ var/global/sumiari_run_headless_test = FALSE
 	if(!moon || !eyes.moon_plate)
 		log_world("SUMIARI TEST FAIL moon tint relay=[moon ? "yes" : "no"] plate=[eyes.moon_plate ? "yes" : "no"]")
 		return FALSE
+#if SUMIARI_MOON_VIVID
+	var/atom/movable/screen/sumiari_relay/ink_relay = sumiari_find_piece(eyes, "sumiari ink")
+	if(moon.plane != SUMIARI_RELAY_PLANE || moon.plane >= HUD_PLANE || !ink_relay || moon.layer >= ink_relay.layer)
+		log_world("SUMIARI TEST FAIL moon vivid relay plane=[moon.plane] layer=[moon.layer] ink=[ink_relay?.layer]")
+		return FALSE
+	// A muted green has to come out more saturated (wider channel spread) and a gray has to stay a cool gray.
+	var/list/vivid = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.3, 0.5, 0.3)
+	var/list/vivid_gray = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.5, 0.5, 0.5)
+	if(!(vivid[2] - vivid[1] > 0.2) || !(vivid_gray[3] > vivid_gray[1]) || vivid_gray[2] <= 0.5 || vivid_gray[2] >= 1)
+		log_world("SUMIARI TEST FAIL moon vivid matrix green=[vivid[1]],[vivid[2]],[vivid[3]] gray=[vivid_gray[1]],[vivid_gray[2]],[vivid_gray[3]]")
+		return FALSE
+	if(length(eyes.moon_plate.filters) != 4 || sumiari_filter_field(eyes.moon_plate.filters, 3, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE))
+		log_world("SUMIARI TEST FAIL moon vivid mask filters=[length(eyes.moon_plate.filters)]")
+		return FALSE
+#else
 	if(moon.plane != SUMIARI_RELAY_PLANE || moon.plane >= HUD_PLANE || moon.layer <= SUMIARI_RELAY_LAYER_BASE)
 		log_world("SUMIARI TEST FAIL moon relay plane=[moon.plane] layer=[moon.layer]")
 		return FALSE
+#endif
 	if(eyes.wash_mode == SUMIARI_WASH_LIVE && sumiari_filter_field(moon.filters, length(moon.filters), "render_source") != sumiari_offscreen(SUMIARI_TARGET_MOON))
 		log_world("SUMIARI TEST FAIL moon relay mask missing")
 		return FALSE
@@ -2517,10 +2599,11 @@ var/global/sumiari_run_headless_test = FALSE
 	if(!(gray[3] > gray[2] && gray[2] > gray[1]))
 		log_world("SUMIARI TEST FAIL moon silver is not cool [gray[1]],[gray[2]],[gray[3]]")
 		return FALSE
-	if(sumiari_moon_strength(FALSE) != 0 || sumiari_moon_strength(TRUE) != SUMIARI_MOON_TINT_STRENGTH)
+	var/night_strength = SUMIARI_MOON_VIVID ? SUMIARI_MOON_VIVID_STRENGTH : SUMIARI_MOON_TINT_STRENGTH
+	if(sumiari_moon_strength(FALSE) != 0 || sumiari_moon_strength(TRUE) != night_strength)
 		log_world("SUMIARI TEST FAIL moon strength day=[sumiari_moon_strength(FALSE)] night=[sumiari_moon_strength(TRUE)]")
 		return FALSE
-	log_world("SUMIARI TEST moon PASS silver=[gray[1]],[gray[2]],[gray[3]] strength=[SUMIARI_MOON_TINT_STRENGTH] live=[sumiari_moon_strength()]")
+	log_world("SUMIARI TEST moon PASS silver=[gray[1]],[gray[2]],[gray[3]] strength=[night_strength] vivid=[SUMIARI_MOON_VIVID] saturation=[SUMIARI_MOON_SATURATION] sheen=[SUMIARI_MOON_SHEEN] live=[sumiari_moon_strength()]")
 	return TRUE
 
 /proc/sumiari_sweep_other_z(turf/here)
