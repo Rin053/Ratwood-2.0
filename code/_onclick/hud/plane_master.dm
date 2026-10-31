@@ -53,6 +53,7 @@
 
 /atom/movable/screen/plane_master/openspace/backdrop(mob/mymob)
 	filters = list()
+	apply_sumiari_sight(mymob)
 //	filters += GAUSSIAN_BLUR(3)
 //	filters += filter(type = "drop_shadow", color = "#04080FAA", size = -10)
 //	filters += filter(type = "drop_shadow", color = "#04080FAA", size = -15)
@@ -66,6 +67,7 @@
 /atom/movable/screen/plane_master/osreal/backdrop(mob/mymob)
 	filters = list()
 	filters += GAUSSIAN_BLUR(1)
+	apply_sumiari_sight(mymob)
 
 /atom/movable/screen/plane_master/proc/outline(_size, _color)
 	filters += filter(type = "outline", size = _size, color = _color)
@@ -85,6 +87,7 @@
 	if(istype(mymob) && mymob.eye_blurry)
 		filters += GAUSSIAN_BLUR(CLAMP(mymob.eye_blurry*0.1,0.6,3))
 	apply_vampire_sight(mymob)
+	apply_sumiari_sight(mymob)
 
 /atom/movable/screen/plane_master/game_world
 	name = "game world plane master"
@@ -106,6 +109,7 @@
 			if(L.has_status_effect(/datum/status_effect/debuff/vampbite))
 				add_filter("druqks_color", 2, color_matrix_filter(list(0,0,1,0, 0,1,0,0, 1,0,0,0, 0,0,0,1, 0,0,0,0)))
 	apply_vampire_sight(mymob)
+	apply_sumiari_sight(mymob)
 
 /atom/movable/screen/plane_master/lighting
 	name = "lighting plane master"
@@ -172,6 +176,7 @@
 				add_filter("druqks_color", 2, color_matrix_filter(list(0,0,1,0, 0,1,0,0, 1,0,0,0, 0,0,0,1, 0,0,0,0)))
 	filters += filter(type = "alpha", render_source = FIELD_OF_VISION_BLOCKER_RENDER_TARGET, flags = MASK_INVERSE)
 	apply_vampire_sight(mymob)
+	apply_sumiari_sight(mymob)
 
 /atom/movable/screen/plane_master/game_world_above
 	name = "above game world plane master"
@@ -190,6 +195,7 @@
 			if(L.has_status_effect(/datum/status_effect/buff/druqks))
 				add_filter("druqks_color", 2, color_matrix_filter(list(0,0,1,0, 0,1,0,0, 1,0,0,0, 0,0,0,1, 0,0,0,0)))
 	apply_vampire_sight(mymob)
+	apply_sumiari_sight(mymob)
 
 /atom/movable/screen/plane_master/game_world_below
 	name = "lowest game world plane master"
@@ -278,6 +284,7 @@
 					F1 = filters[filters.len-1]
 					animate(F1, size=50, radius=480, time=10, loop=-1, flags=ANIMATION_PARALLEL)
 	apply_vampire_sight(mymob)
+	apply_sumiari_sight(mymob)
 
 
 /atom/movable/screen/plane_master/game_world_walls
@@ -303,6 +310,7 @@
 					F1 = filters[filters.len-1]
 					animate(F1, size=50, radius=480, time=10, loop=-1, flags=ANIMATION_PARALLEL)
 	apply_vampire_sight(mymob)
+	apply_sumiari_sight(mymob)
 
 //Contains all weather overlays
 /atom/movable/screen/plane_master/weather_overlay
@@ -361,3 +369,12 @@
 	blend_mode = BLEND_MULTIPLY
 	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	render_target = SUNLIGHTING_RENDER_TARGET
+
+// Glow sprites (torch flames, lamp halos) draw here, above the lighting multiply.
+// A plane master is required so the ink-wash filter can reach them. BLEND_DEFAULT matches an unmastered plane.
+/atom/movable/screen/plane_master/above_lighting
+	name = "above lighting plane master"
+	plane = ABOVE_LIGHTING_PLANE
+	blend_mode = BLEND_DEFAULT
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	appearance_flags = PLANE_MASTER

@@ -45,6 +45,19 @@
 		OFFSET_BREASTS_F = list(0,-1), \
 		)
 	inherent_traits = list(TRAIT_HUMEN_INGENUITY)
+	// TEMPORARY test default. Revert by deleting this organs list (or setting EYES back to /obj/item/organ/eyes)
+	// and deleting /datum/species/human/northern/on_species_gain in eyes_sumiari.dm.
+	organs = list(
+		ORGAN_SLOT_BRAIN = /obj/item/organ/brain,
+		ORGAN_SLOT_HEART = /obj/item/organ/heart,
+		ORGAN_SLOT_LUNGS = /obj/item/organ/lungs,
+		ORGAN_SLOT_EYES = /obj/item/organ/eyes/sumiari,
+		ORGAN_SLOT_EARS = /obj/item/organ/ears,
+		ORGAN_SLOT_TONGUE = /obj/item/organ/tongue,
+		ORGAN_SLOT_LIVER = /obj/item/organ/liver,
+		ORGAN_SLOT_STOMACH = /obj/item/organ/stomach,
+		ORGAN_SLOT_APPENDIX = /obj/item/organ/appendix,
+		)
 	race_bonus = list(STAT_INTELLIGENCE = 1, STAT_WILLPOWER = 1)
 	enflamed_icon = "widefire"
 	customizers = list(

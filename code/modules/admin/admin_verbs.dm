@@ -89,6 +89,7 @@ GLOBAL_PROTECT(admin_verbs_admin)
 	/client/proc/admin_ghost,			/*allows us to ghost/reenter body at will*/
 	/client/proc/hearallasghost,
 	/client/proc/toggle_view_range,		/*changes how far we can see*/
+	/client/proc/sumiari_vision_debug,	/*logs Sumiari light, saturation, and glare for a mob*/
 	/client/proc/getserverlogs,		/*for accessing server logs*/
 	/client/proc/getcurrentlogs,		/*for accessing server logs for the current round*/
 	/client/proc/cmd_admin_subtle_message,	/*send an message to somebody as a 'voice in their head'*/
@@ -223,6 +224,7 @@ GLOBAL_PROTECT(admin_verbs_debug)
 	/client/proc/dump_memory_stats,
 	/client/proc/outfit_manager,
 	/client/proc/debug_huds,
+	/client/proc/sumiari_vision_debug,
 	/client/proc/map_template_load,
 	/client/proc/map_template_upload,
 	/client/proc/jump_to_ruin,
