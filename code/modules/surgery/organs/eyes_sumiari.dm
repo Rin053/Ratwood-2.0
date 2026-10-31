@@ -14,8 +14,12 @@
 // 1. World planes draw themselves, in color, with no light tint. Their render targets have no asterisk.
 // 2. Lighting plane 17 stays at alpha 255 and render_target "*lighting". The asterisk is the only hide.
 //    Alpha 0 blanks that capture. Movable-light plane 20 is "*O_LIGHT_VISUAL_PLANE" at alpha 255.
-// 3. Eight offscreen plates turn *lighting into *sumiari_mask. The filters sit on a child of each plate,
-//    so the asterisk capture has pixels. The plate master only stores the target.
+// 3. Eight offscreen plates turn *lighting into *sumiari_mask. Each plate is a plane master that only
+//    stores the asterisk target, plus a child that draws the source. The child uses render_source, not a
+//    layer filter on a 32×32 icon: that filter resampled the whole view down to about one pixel per tile,
+//    and the alpha mask scaled it back up as hard tile steps. The child is the size of the view and sits
+//    at SCREEN_SOUTHWEST, so the corner gradient and the cookie falloff stay per pixel, and they flicker
+//    with the lighting plane. Color matrices and the max blend run on that full image.
 // 4. Live ink is a filter list on the above-lighting plane master (plane 21, above every world plane
 //    and under the HUD). It stacks those world captures, runs the ink matrix, then masks with
 //    *sumiari_mask. Mask 0 leaves that plane transparent, so the color world underneath shows through.
@@ -54,10 +58,11 @@
 // Glare alpha at full brightness when the sun is down. 1 leaves the day curve untouched.
 #define SUMIARI_NIGHT_GLARE_SCALE 0.4
 
-// Ink-wash contrast. 1 is flat grayscale. Higher crushes shadows and lifts highlights.
-#define SUMIARI_INK_CONTRAST 1.55
-// Luma value that stays put. Below the midpoint so shadows fall into ink and highlights reach paper.
-#define SUMIARI_INK_PIVOT 0.36
+// Ink-wash contrast. 1 is flat grayscale. 1.55 stretched the sprites' own dither into speckle,
+// so the wash stays just steep enough that black is ink and white is paper.
+#define SUMIARI_INK_CONTRAST 1.2
+// Luma value that stays put. Near the middle, so midtone grain is not crushed into ink-black.
+#define SUMIARI_INK_PIVOT 0.46
 
 // Full strength, and the asterisk keeps it off the screen. Alpha 0 blanks the capture the mask reads.
 #define SUMIARI_LIGHTING_ALPHA LIGHTING_PLANE_ALPHA_VISIBLE
@@ -147,8 +152,11 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/vision_on = FALSE
 	var/list/saved_render_targets
 	var/list/screen_pieces
-	// The glare plate's filter is rebuilt when the sun moves, so night haze can ease without a new composite.
-	var/atom/movable/screen/sumiari_plate/glare_plate
+	// The glare sampler's color matrix is rebuilt when the sun moves, so night haze can ease without a new composite.
+	var/atom/movable/screen/sumiari_sampler/glare_plate
+	// Pixel size of the mask canvas. A view change rebuilds it so the sample stays one pixel per screen pixel.
+	var/mask_pixels_x = 0
+	var/mask_pixels_y = 0
 	// live uses the lighting mask. ink forces that mask to 1. color forces it to 0.
 	var/wash_mode = SUMIARI_WASH_LIVE
 
@@ -205,13 +213,16 @@ var/global/sumiari_test_without_client = FALSE
 		return
 	if(!owner.client && !sumiari_test_without_client)
 		return
-	if(vision_on && length(screen_pieces))
+	if(vision_on && length(screen_pieces) && mask_canvas_matches())
 		sumiari_active_eyes[src] = TRUE
 		present_screen_pieces()
 		hold_lighting_capture()
 		capture_world_planes()
 		apply_wash_filters()
 		return
+	// The view grew or shrank. The old canvas would resample the lighting plane, which is the tile step.
+	if(vision_on && length(screen_pieces))
+		clear_screen_pieces()
 	vision_on = TRUE
 	sumiari_active_eyes[src] = TRUE
 	if(!saved_render_targets)
@@ -321,7 +332,10 @@ var/global/sumiari_test_without_client = FALSE
 	apply_wash_filters()
 
 // The asterisk capture stores atoms on the plane, not filters on the master. The child is that atom.
-/obj/item/organ/eyes/sumiari/proc/add_plate(plane, target_name, list/plate_filters)
+// source_name is the child's render_source, so the sample is the plane's own pixels. The filters only
+// recolor or blend. A layer filter of the source onto a small icon is what made the tile steps.
+/obj/item/organ/eyes/sumiari/proc/add_plate(plane, target_name, source_name, list/plate_filters)
+	var/list/span = sumiari_mask_span(owner?.client?.view)
 	var/atom/movable/screen/sumiari_plate/plate = new
 	plate.plane = plane
 	plate.name = target_name
@@ -330,6 +344,12 @@ var/global/sumiari_test_without_client = FALSE
 	var/atom/movable/screen/sumiari_sampler/sampler = new
 	sampler.plane = plane
 	sampler.name = "[target_name] sample"
+	sampler.render_source = source_name
+	sampler.icon = sumiari_mask_canvas(owner?.client?.view)
+	sampler.icon_state = ""
+	sampler.screen_loc = "SCREEN_SOUTHWEST"
+	sampler.sumiari_pixels_x = span[1]
+	sampler.sumiari_pixels_y = span[2]
 	sampler.filters = plate_filters
 	sampler.blockscharging = FALSE
 	if(target_name == SUMIARI_TARGET_GLARE)
@@ -338,15 +358,21 @@ var/global/sumiari_test_without_client = FALSE
 	screen_pieces += sampler
 	return sampler
 
+/obj/item/organ/eyes/sumiari/proc/mask_canvas_matches()
+	var/list/span = sumiari_mask_span(owner?.client?.view)
+	return mask_pixels_x == span[1] && mask_pixels_y == span[2] && mask_pixels_x > 0
+
 /obj/item/organ/eyes/sumiari/proc/build_mask_plates()
 	// mask = 1 - A * (1 - max(R, G, B)), taken from the lighting-plane render. Not from dynamic_lumcount.
-	add_plate(SUMIARI_PLANE_RED, SUMIARI_TARGET_RED, sumiari_lighting_channel_filters(1))
-	add_plate(SUMIARI_PLANE_GREEN, SUMIARI_TARGET_GREEN, sumiari_lighting_channel_filters(2))
-	add_plate(SUMIARI_PLANE_BLUE, SUMIARI_TARGET_BLUE, sumiari_lighting_channel_filters(3))
-	add_plate(SUMIARI_PLANE_ALPHA, SUMIARI_TARGET_ALPHA, sumiari_lighting_channel_filters(4))
-	// Subtract-then-add is max, because subtract clamps at 0. The last matrix stores 1 - max.
-	add_plate(SUMIARI_PLANE_UNLIT, SUMIARI_TARGET_UNLIT, list(
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_GREEN), blend_mode = BLEND_OVERLAY),
+	var/list/span = sumiari_mask_span(owner?.client?.view)
+	mask_pixels_x = span[1]
+	mask_pixels_y = span[2]
+	add_plate(SUMIARI_PLANE_RED, SUMIARI_TARGET_RED, SUMIARI_LIGHTING_SOURCE, sumiari_lighting_channel_filters(1))
+	add_plate(SUMIARI_PLANE_GREEN, SUMIARI_TARGET_GREEN, SUMIARI_LIGHTING_SOURCE, sumiari_lighting_channel_filters(2))
+	add_plate(SUMIARI_PLANE_BLUE, SUMIARI_TARGET_BLUE, SUMIARI_LIGHTING_SOURCE, sumiari_lighting_channel_filters(3))
+	add_plate(SUMIARI_PLANE_ALPHA, SUMIARI_TARGET_ALPHA, SUMIARI_LIGHTING_SOURCE, sumiari_lighting_channel_filters(4))
+	// Green is the full-resolution base. Subtract-then-add is max, because subtract clamps at 0.
+	add_plate(SUMIARI_PLANE_UNLIT, SUMIARI_TARGET_UNLIT, sumiari_offscreen(SUMIARI_TARGET_GREEN), list(
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_RED), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_RED), blend_mode = BLEND_ADD),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_BLUE), blend_mode = BLEND_SUBTRACT),
@@ -354,17 +380,14 @@ var/global/sumiari_test_without_client = FALSE
 		filter(type = "color", color = sumiari_matrix_force_alpha()),
 		filter(type = "color", color = sumiari_matrix_invert_gray()),
 	))
-	add_plate(SUMIARI_PLANE_LIGHT, SUMIARI_TARGET_LIGHT, list(
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_ALPHA), blend_mode = BLEND_OVERLAY),
+	add_plate(SUMIARI_PLANE_LIGHT, SUMIARI_TARGET_LIGHT, sumiari_offscreen(SUMIARI_TARGET_ALPHA), list(
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_UNLIT), blend_mode = BLEND_MULTIPLY),
 		filter(type = "color", color = sumiari_matrix_invert_gray()),
 	))
-	add_plate(SUMIARI_PLANE_MASK, SUMIARI_TARGET_MASK, list(
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_OVERLAY),
+	add_plate(SUMIARI_PLANE_MASK, SUMIARI_TARGET_MASK, sumiari_offscreen(SUMIARI_TARGET_LIGHT), list(
 		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
 	))
-	add_plate(SUMIARI_PLANE_GLARE, SUMIARI_TARGET_GLARE, list(
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_OVERLAY),
+	add_plate(SUMIARI_PLANE_GLARE, SUMIARI_TARGET_GLARE, sumiari_offscreen(SUMIARI_TARGET_LIGHT), list(
 		filter(type = "color", color = sumiari_matrix_glare_to_alpha()),
 	))
 
@@ -432,15 +455,13 @@ var/global/sumiari_test_without_client = FALSE
 // Ink edge, and a trace of the sky's own color, both limited to pixels the lighting plane still calls dark.
 /obj/item/organ/eyes/sumiari/proc/build_flourishes()
 #if SUMIARI_INK_VIGNETTE || SUMIARI_MOON_TINT
-	add_plate(SUMIARI_PLANE_DARK, SUMIARI_TARGET_DARK, list(
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_OVERLAY),
+	add_plate(SUMIARI_PLANE_DARK, SUMIARI_TARGET_DARK, sumiari_offscreen(SUMIARI_TARGET_LIGHT), list(
 		filter(type = "color", color = sumiari_matrix_invert_gray()),
 		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
 	))
 #endif
 #if SUMIARI_MOON_TINT
-	add_plate(SUMIARI_PLANE_MOON, SUMIARI_TARGET_MOON, list(
-		filter(type = "layer", render_source = SUNLIGHTING_RENDER_TARGET, blend_mode = BLEND_OVERLAY),
+	add_plate(SUMIARI_PLANE_MOON, SUMIARI_TARGET_MOON, SUNLIGHTING_RENDER_TARGET, list(
 		filter(type = "color", color = sumiari_matrix_moon_tint()),
 	))
 	var/atom/movable/screen/sumiari_relay/moon = new
@@ -466,7 +487,6 @@ var/global/sumiari_test_without_client = FALSE
 	if(!vision_on || !glare_plate)
 		return
 	glare_plate.filters = list(
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_OVERLAY),
 		filter(type = "color", color = sumiari_matrix_glare_to_alpha()),
 	)
 
@@ -539,13 +559,14 @@ var/global/sumiari_test_without_client = FALSE
 		target.filters = list(filter_entry)
 
 // One offscreen step. The master only holds the asterisk target. The sampler child is what the capture stores.
+// CENTER, same as the lighting plane master, so this buffer shares that plane's origin.
 /atom/movable/screen/sumiari_plate
 	icon = 'icons/mob/screen_gen.dmi'
-	icon_state = ""
+	icon_state = "blank"
 	appearance_flags = PLANE_MASTER | NO_CLIENT_COLOR | PASS_MOUSE | KEEP_TOGETHER
 	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	blend_mode = BLEND_DEFAULT
-	screen_loc = "CENTER-2:-16,CENTER"
+	screen_loc = "CENTER"
 	blockscharging = FALSE
 
 /atom/movable/screen/sumiari_plate/Initialize(mapload)
@@ -557,14 +578,18 @@ var/global/sumiari_test_without_client = FALSE
 	return ..()
 
 // Drawn into the plate's asterisk capture. Not a plane master, so it cannot replace the plate.
+// render_source replaces this icon. The icon is still the size of the view: a 32×32 stand-in is what
+// resampled *lighting down to one pixel a tile. SCREEN_SOUTHWEST is the 516 anchor, bottom-left to bottom-left.
 /atom/movable/screen/sumiari_sampler
 	icon = 'icons/mob/screen_gen.dmi'
-	icon_state = ""
+	icon_state = "blank"
 	appearance_flags = NO_CLIENT_COLOR | PASS_MOUSE | KEEP_TOGETHER
 	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	blend_mode = BLEND_DEFAULT
-	screen_loc = "CENTER-2:-16,CENTER"
+	screen_loc = "SCREEN_SOUTHWEST"
 	blockscharging = FALSE
+	var/sumiari_pixels_x = 0
+	var/sumiari_pixels_y = 0
 
 /atom/movable/screen/sumiari_sampler/Initialize(mapload)
 	. = ..()
@@ -636,9 +661,28 @@ var/global/sumiari_test_without_client = FALSE
 /proc/sumiari_light_mask(red, green, blue, alpha)
 	return 1 - alpha * (1 - max(red, green, blue))
 
+// Pixel size of the current view. The mask canvas matches this so the lighting plane is not resampled.
+/proc/sumiari_mask_span(view)
+	return view_to_pixels(view || world.view)
+
+// One transparent icon per view size. Shared. The sampler's render_source is the real image.
+/proc/sumiari_mask_canvas(view)
+	var/static/list/cache
+	if(!cache)
+		cache = list()
+	var/list/span = sumiari_mask_span(view)
+	var/key = "[span[1]]x[span[2]]"
+	var/icon/cached = cache[key]
+	if(cached)
+		return cached
+	var/icon/canvas = icon('icons/mob/screen_gen.dmi', "blank")
+	canvas.Scale(span[1], span[2])
+	cache[key] = canvas
+	return canvas
+
+// Color matrix only. The lighting plane arrives through the sampler's render_source, at the plane's own resolution.
 /proc/sumiari_lighting_channel_filters(channel)
 	return list(
-		filter(type = "layer", render_source = SUMIARI_LIGHTING_SOURCE, blend_mode = BLEND_OVERLAY),
 		filter(type = "color", color = sumiari_matrix_channel(channel)),
 	)
 
@@ -1005,7 +1049,7 @@ var/global/sumiari_test_without_client = FALSE
 		else if(!sumiari_target_hidden(lighting.render_target))
 			darkness = "VISIBLE"
 	var/view_text = sumiari_view_coverage(C)
-	return "sumiari vision: mob=[C] client=[C.client ? "yes" : "no"] wash=[sumiari.wash_mode] mask=[SUMIARI_LIGHTING_SOURCE] (dyn is not the mask) darkness=[darkness] composite=[verdict] pieces=[length(sumiari.screen_pieces)] cap=[SUMIARI_PIECE_CAP] [view_text] [sumiari_ink_debug(C, sumiari)] turf_intensity=[raw] turf_saturation=[sumiari_saturation_at(raw)] turf_glare=[sumiari_glare_at(raw)] organ_see_in_dark=[sumiari.see_in_dark] organ_see_invisible=[sumiari.see_invisible] organ_lighting_alpha=[sumiari.lighting_alpha] mob_see_in_dark=[C.see_in_dark] mob_see_invisible=[C.see_invisible] mob_lighting_alpha=[C.lighting_alpha] lighting_plane_alpha=[plane_alpha] | [sample["text"]]"
+	return "sumiari vision: mob=[C] client=[C.client ? "yes" : "no"] wash=[sumiari.wash_mode] mask=[SUMIARI_LIGHTING_SOURCE] (dyn is not the mask) canvas=[sumiari.mask_pixels_x]x[sumiari.mask_pixels_y] darkness=[darkness] composite=[verdict] pieces=[length(sumiari.screen_pieces)] cap=[SUMIARI_PIECE_CAP] [view_text] [sumiari_ink_debug(C, sumiari)] turf_intensity=[raw] turf_saturation=[sumiari_saturation_at(raw)] turf_glare=[sumiari_glare_at(raw)] organ_see_in_dark=[sumiari.see_in_dark] organ_see_invisible=[sumiari.see_invisible] organ_lighting_alpha=[sumiari.lighting_alpha] mob_see_in_dark=[C.see_in_dark] mob_see_invisible=[C.see_invisible] mob_lighting_alpha=[C.lighting_alpha] lighting_plane_alpha=[plane_alpha] | [sample["text"]]"
 
 var/global/sumiari_run_headless_test = FALSE
 
@@ -1332,7 +1376,7 @@ var/global/sumiari_run_headless_test = FALSE
 
 // Which object carries which picture. The wash test prints this so it can be checked against the screen.
 /proc/sumiari_plane_legend()
-	return "planes: world color is the map planes themselves (sumiari_w*, no asterisk, drawn). Lighting plane [LIGHTING_PLANE] is [SUMIARI_LIGHTING_SOURCE] alpha 255, not drawn, and is the only mask input. Movable-light plane [O_LIGHTING_VISUAL_PLANE] is [SUMIARI_OLIGHT_SOURCE] alpha 255, not drawn; it punches that capture and does not tint the world. Mask plates [SUMIARI_PLANE_RED] to [SUMIARI_PLANE_GLARE] build [sumiari_offscreen(SUMIARI_TARGET_MASK)] on a child of each plate. Live ink is filters on plane [SUMIARI_INK_PLANE]: those world captures, the ink matrix, then [sumiari_offscreen(SUMIARI_TARGET_MASK)]. Force ink is the ink matrix on every world plane master and does not sample a relay. HUD is plane [HUD_PLANE]."
+	return "planes: world color is the map planes themselves (sumiari_w*, no asterisk, drawn). Lighting plane [LIGHTING_PLANE] is [SUMIARI_LIGHTING_SOURCE] alpha 255, not drawn, and is the only mask input. Movable-light plane [O_LIGHTING_VISUAL_PLANE] is [SUMIARI_OLIGHT_SOURCE] alpha 255, not drawn; it punches that capture and does not tint the world. Mask plates [SUMIARI_PLANE_RED] to [SUMIARI_PLANE_GLARE] copy that capture at view resolution (render_source, SCREEN_SOUTHWEST, no 32×32 resample) into [sumiari_offscreen(SUMIARI_TARGET_MASK)]. Live ink is filters on plane [SUMIARI_INK_PLANE]: those world captures, the ink matrix, then [sumiari_offscreen(SUMIARI_TARGET_MASK)]. Force ink is the ink matrix on every world plane master and does not sample a relay. HUD is plane [HUD_PLANE]."
 
 // in_screen, plane, render_source, alpha, and whether that plane's master exists. One block for the live stack, one for the force-ink matrix.
 /proc/sumiari_ink_debug(mob/living/carbon/C, obj/item/organ/eyes/sumiari/eyes)
@@ -1646,7 +1690,7 @@ var/global/sumiari_run_headless_test = FALSE
 		return FALSE
 	var/atom/movable/screen/plane_master/lighting/lighting = body.hud_used.plane_masters["[LIGHTING_PLANE]"]
 	var/atom/movable/screen/plane_master/cookie = body.hud_used.plane_masters["[O_LIGHTING_VISUAL_PLANE]"]
-	log_world("SUMIARI TEST darkness PASS plane_alpha=[lighting.alpha] target=[lighting.render_target] olight=[cookie?.render_target] world_hidden=0 pieces=[length(eyes.screen_pieces)] mask=[SUMIARI_LIGHTING_SOURCE] dyn_not_used=1")
+	log_world("SUMIARI TEST darkness PASS plane_alpha=[lighting.alpha] target=[lighting.render_target] olight=[cookie?.render_target] world_hidden=0 pieces=[length(eyes.screen_pieces)] mask=[SUMIARI_LIGHTING_SOURCE] canvas=[eyes.mask_pixels_x]x[eyes.mask_pixels_y] dyn_not_used=1")
 	return TRUE
 
 // Null when the lighting capture is full and hidden, the world is still drawn, and the color cookies are not.
@@ -1702,9 +1746,17 @@ var/global/sumiari_run_headless_test = FALSE
 		bad += "mask filters on the plate master"
 	if(!red_sample || (red_sample.appearance_flags & PLANE_MASTER))
 		bad += "mask sampler missing"
-	var/mask_source = sumiari_filter_field(red_sample?.filters, 1, "render_source")
-	if(mask_source != SUMIARI_LIGHTING_SOURCE)
-		bad += "mask_source=[mask_source || "none"]"
+	// The lighting plane is the atom's render_source. A layer filter here would resample it onto the icon.
+	if(red_sample && red_sample.render_source != SUMIARI_LIGHTING_SOURCE)
+		bad += "mask_source=[red_sample.render_source || "none"]"
+	if(red_sample && red_sample.screen_loc != "SCREEN_SOUTHWEST")
+		bad += "mask anchor=[red_sample.screen_loc || "none"]"
+	var/list/span = sumiari_mask_span(body?.client?.view)
+	if(!red_sample || red_sample.sumiari_pixels_x != span[1] || red_sample.sumiari_pixels_y != span[2])
+		bad += "mask canvas=[red_sample?.sumiari_pixels_x]x[red_sample?.sumiari_pixels_y] view=[span[1]]x[span[2]]"
+	if(red_sample && length(red_sample.filters))
+		if(sumiari_filter_kind(red_sample.filters[1]) == "layer")
+			bad += "mask resamples through a layer filter"
 	var/atom/movable/screen/plane_master/ink_master = body.hud_used.plane_masters["[SUMIARI_INK_PLANE]"]
 	if(!ink_master)
 		bad += "no ink plane"
