@@ -5,17 +5,23 @@
 // sunlight stays in the capture, and fire flicker updates the mask on the same frame.
 // dynamic_lumcount is a flat stamp and is not this mask.
 //
+// The camera-static relay of *sumiari_scene drew nothing on 516.1688. That plate had no atoms.
+// An asterisk render_target stores the plane's atoms, not the filters hung on its master, and the
+// asterisk keeps the filtered draw off the screen. Sampling it stays blank even when the mask is forced.
+// Color matrices on the world plane masters do desaturate on that client, so the wash lives there.
+//
 // Composite, bottom to top:
 // 1. World planes draw themselves, in color, with no light tint. Their render targets have no asterisk.
 // 2. Lighting plane 17 stays at alpha 255 and render_target "*lighting". The asterisk is the only hide.
-//    Alpha 0 blanks that capture, which is why the wash was missing. Sunlight already uses this same pattern.
-// 3. Movable-light plane 20 is "*O_LIGHT_VISUAL_PLANE" at alpha 255. It still punches the lighting capture,
-//    and it is not drawn, so a green wisp cannot tint the world.
-// 4. Eight offscreen plates turn *lighting into one alpha mask: max channel, times the lighting alpha, inverted.
-// 5. One scene plate stacks the world-plane captures, in the same order and blend modes a human already uses.
-// 6. One ink relay and one glare relay, on the camera-static plane, draw that scene through the mask.
-//    Darkness is mask 0, so those relays add nothing and the color world remains. Light is colorless ink.
-// Plates sit under the map. Only the two relays are above it, and both are masked.
+//    Alpha 0 blanks that capture. Movable-light plane 20 is "*O_LIGHT_VISUAL_PLANE" at alpha 255.
+// 3. Eight offscreen plates turn *lighting into *sumiari_mask. The filters sit on a child of each plate,
+//    so the asterisk capture has pixels. The plate master only stores the target.
+// 4. Live ink is a filter list on the above-lighting plane master (plane 21, above every world plane
+//    and under the HUD). It stacks those world captures, runs the ink matrix, then masks with
+//    *sumiari_mask. Mask 0 leaves that plane transparent, so the color world underneath shows through.
+//    Mask 1 covers it with ink. This is not a relay of an empty plate.
+// 5. Force ink does not use that stack. Each world plane master gets the ink color matrix directly.
+//    Force color takes those filters back off.
 //
 // Reusable as /obj/item/organ/eyes/sumiari. Humen wear these by default until the Sumiari race exists.
 // Revert the human default in code/modules/mob/living/carbon/human/species_types/roguetown/human/humen.dm.
@@ -62,16 +68,17 @@
 #define SUMIARI_WASH_LIVE "live"
 #define SUMIARI_WASH_INK "ink"
 #define SUMIARI_WASH_COLOR "color"
-// 8 lighting plates + 1 world scene + ink relay + glare relay. Flourishes are off, so this is the budget.
-#define SUMIARI_PIECE_CAP 12
+// 8 mask plates, each a master plus the child that actually draws the capture, plus one glare object.
+#define SUMIARI_PIECE_CAP 24
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 #define SUMIARI_SEE_IN_DARK 8
 // Darkness-sneak raises invisibility to SEE_INVISIBLE_LIVING + skill*0.55 + 1 (about 29 at legendary).
 // 35 sees that concealment and stays under SEE_INVISIBLE_OBSERVER (60), so ghosts stay hidden.
 #define SUMIARI_SEE_INVISIBLE (SEE_INVISIBLE_LIVING + 10)
 
-// Relays share the camera-static plane, which is above byond lighting and below fullscreen and the HUD.
-// 516 requires an integer plane. Layers start above CAMERA_STATIC_LAYER so a static overlay cannot cover the world.
+// Live ink is a filter on this plane master. It is above the map and the hidden lighting planes, under fullscreen and the HUD.
+#define SUMIARI_INK_PLANE ABOVE_LIGHTING_PLANE
+// Glare is a screen object one plane higher, so its mask cannot punch the ink filter under it.
 #define SUMIARI_RELAY_PLANE CAMERA_STATIC_PLANE
 #define SUMIARI_RELAY_LAYER_BASE 40
 
@@ -84,7 +91,6 @@
 #define SUMIARI_PLANE_LIGHT -55
 #define SUMIARI_PLANE_MASK -54
 #define SUMIARI_PLANE_GLARE -53
-#define SUMIARI_PLANE_SCENE -52
 #define SUMIARI_PLANE_DARK -51
 #define SUMIARI_PLANE_MOON -50
 
@@ -96,7 +102,6 @@
 #define SUMIARI_TARGET_LIGHT "sumiari_light"
 #define SUMIARI_TARGET_MASK "sumiari_mask"
 #define SUMIARI_TARGET_GLARE "sumiari_glare"
-#define SUMIARI_TARGET_SCENE "sumiari_scene"
 #define SUMIARI_TARGET_DARK "sumiari_dark"
 #define SUMIARI_TARGET_MOON "sumiari_moon"
 
@@ -193,6 +198,7 @@ var/global/sumiari_test_without_client = FALSE
 		return
 	hold_lighting_capture()
 	capture_world_planes()
+	apply_wash_filters()
 
 /obj/item/organ/eyes/sumiari/proc/attach_client_vision()
 	if(!owner?.hud_used)
@@ -204,6 +210,7 @@ var/global/sumiari_test_without_client = FALSE
 		present_screen_pieces()
 		hold_lighting_capture()
 		capture_world_planes()
+		apply_wash_filters()
 		return
 	vision_on = TRUE
 	sumiari_active_eyes[src] = TRUE
@@ -219,6 +226,7 @@ var/global/sumiari_test_without_client = FALSE
 	vision_on = FALSE
 	wash_mode = SUMIARI_WASH_LIVE
 	glare_plate = null
+	clear_master_wash(M)
 	clear_screen_pieces(M)
 	restore_render_targets(M)
 	saved_render_targets = null
@@ -308,22 +316,27 @@ var/global/sumiari_test_without_client = FALSE
 		QDEL_LIST(screen_pieces)
 	screen_pieces = list()
 	build_mask_plates()
-	build_scene_plate()
-	build_wash_relays()
+	build_glare_object()
 	build_flourishes()
+	apply_wash_filters()
 
-// One plate per step. Filters live on the plane master, the same way the lighting plane carries its own masks.
+// The asterisk capture stores atoms on the plane, not filters on the master. The child is that atom.
 /obj/item/organ/eyes/sumiari/proc/add_plate(plane, target_name, list/plate_filters)
 	var/atom/movable/screen/sumiari_plate/plate = new
 	plate.plane = plane
 	plate.name = target_name
 	plate.render_target = sumiari_offscreen(target_name)
-	plate.filters = plate_filters
 	plate.blockscharging = FALSE
+	var/atom/movable/screen/sumiari_sampler/sampler = new
+	sampler.plane = plane
+	sampler.name = "[target_name] sample"
+	sampler.filters = plate_filters
+	sampler.blockscharging = FALSE
 	if(target_name == SUMIARI_TARGET_GLARE)
-		glare_plate = plate
+		glare_plate = sampler
 	screen_pieces += plate
-	return plate
+	screen_pieces += sampler
+	return sampler
 
 /obj/item/organ/eyes/sumiari/proc/build_mask_plates()
 	// mask = 1 - A * (1 - max(R, G, B)), taken from the lighting-plane render. Not from dynamic_lumcount.
@@ -355,64 +368,66 @@ var/global/sumiari_test_without_client = FALSE
 		filter(type = "color", color = sumiari_matrix_glare_to_alpha()),
 	))
 
-// Every world plane, in draw order, stacked once. The real planes are still on screen underneath.
-/obj/item/organ/eyes/sumiari/proc/build_scene_plate()
-	var/list/layers = list()
+// Glare sits above the ink plane. Alpha 0 until live mode turns it on.
+/obj/item/organ/eyes/sumiari/proc/build_glare_object()
+#if SUMIARI_NIGHT_GLARE
+	var/atom/movable/screen/sumiari_relay/glare = new
+	glare.name = "sumiari glare"
+	glare.plane = SUMIARI_RELAY_PLANE
+	glare.layer = SUMIARI_RELAY_LAYER_BASE + 1
+	glare.alpha = 0
+	glare.blockscharging = FALSE
+	screen_pieces += glare
+#endif
+
+// Drop wash filters from the world plane masters. Backdrop filters (occlusion, blur, sight blockers) stay.
+/obj/item/organ/eyes/sumiari/proc/clear_master_wash(mob/living/carbon/M)
+	var/mob/living/carbon/who = M || owner
+	if(!who?.hud_used)
+		return
 	for(var/plane in GLOB.sumiari_vision_plane_order)
-		var/atom/movable/screen/plane_master/master = owner?.hud_used?.plane_masters["[plane]"]
+		sumiari_strip_master_wash(who.hud_used.plane_masters["[plane]"])
+
+// live stacks the world onto the above-lighting master and masks it.
+// ink paints the ink matrix onto every world plane master and does not consult the mask.
+// color leaves the masters as the backdrop built them.
+/obj/item/organ/eyes/sumiari/proc/apply_wash_filters()
+	if(!owner?.hud_used)
+		return
+	for(var/plane in GLOB.sumiari_vision_plane_order)
+		var/atom/movable/screen/plane_master/master = owner.hud_used.plane_masters["[plane]"]
+		sumiari_strip_master_wash(master)
 		if(!master)
 			continue
-		layers += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = master.blend_mode)
-	add_plate(SUMIARI_PLANE_SCENE, SUMIARI_TARGET_SCENE, layers)
-
-// Color world stays where it was drawn. These two relays lay the ink, and the glare, only where the mask says light.
-/obj/item/organ/eyes/sumiari/proc/build_wash_relays()
-	var/atom/movable/screen/sumiari_relay/ink_relay = new
-	ink_relay.name = "sumiari ink"
-	ink_relay.layer = SUMIARI_RELAY_LAYER_BASE
-	ink_relay.blockscharging = FALSE
-	var/atom/movable/screen/sumiari_relay/glare_relay = new
-	glare_relay.name = "sumiari glare"
-	glare_relay.layer = SUMIARI_RELAY_LAYER_BASE + 1
-	glare_relay.blockscharging = FALSE
-	screen_pieces += ink_relay
-	screen_pieces += glare_relay
-	apply_wash_filters()
-
-// live: ink where *lighting is bright. ink: the mask is 1, so the whole scene is ink. color: the relays add nothing.
-/obj/item/organ/eyes/sumiari/proc/apply_wash_filters()
-	var/atom/movable/screen/sumiari_relay/ink = sumiari_find_piece(src, "sumiari ink")
+		if(wash_mode == SUMIARI_WASH_INK)
+			sumiari_add_filter(master, filter(type = "color", color = sumiari_color_matrix(SUMIARI_MONO_FULL, 0)))
+			continue
+		if(wash_mode != SUMIARI_WASH_LIVE || master.plane != SUMIARI_INK_PLANE)
+			continue
+		for(var/stacked in GLOB.sumiari_vision_plane_order)
+			var/atom/movable/screen/plane_master/source = owner.hud_used.plane_masters["[stacked]"]
+			if(!source)
+				continue
+			sumiari_add_filter(master, filter(type = "layer", render_source = sumiari_world_render_source(stacked), blend_mode = source.blend_mode))
+		sumiari_add_filter(master, filter(type = "color", color = sumiari_color_matrix(SUMIARI_MONO_FULL, 0)))
+		sumiari_add_filter(master, filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MASK)))
 	var/atom/movable/screen/sumiari_relay/glare = sumiari_find_piece(src, "sumiari glare")
-	if(!ink)
+	if(!glare)
 		return
-	var/scene = sumiari_offscreen(SUMIARI_TARGET_SCENE)
-	switch(wash_mode)
-		if(SUMIARI_WASH_INK)
-			ink.alpha = 255
-			ink.filters = list(
-				filter(type = "layer", render_source = scene, blend_mode = BLEND_OVERLAY),
-				filter(type = "color", color = sumiari_color_matrix(SUMIARI_MONO_FULL, 0)),
-			)
-			if(glare)
-				glare.alpha = 0
-		if(SUMIARI_WASH_COLOR)
-			ink.alpha = 0
-			if(glare)
-				glare.alpha = 0
-		else
-			ink.alpha = 255
-			ink.filters = list(
-				filter(type = "layer", render_source = scene, blend_mode = BLEND_OVERLAY),
-				filter(type = "color", color = sumiari_color_matrix(SUMIARI_MONO_FULL, 0)),
-				filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MASK)),
-			)
-			if(glare)
-				glare.alpha = 255
-				glare.filters = list(
-					filter(type = "layer", render_source = scene, blend_mode = BLEND_OVERLAY),
-					filter(type = "color", color = sumiari_color_matrix(SUMIARI_MONO_FULL, 1)),
-					filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_GLARE)),
-				)
+	if(wash_mode != SUMIARI_WASH_LIVE)
+		glare.alpha = 0
+		glare.filters = null
+		return
+	var/list/glare_filters = list()
+	for(var/stacked in GLOB.sumiari_vision_plane_order)
+		var/atom/movable/screen/plane_master/source = owner.hud_used.plane_masters["[stacked]"]
+		if(!source)
+			continue
+		glare_filters += filter(type = "layer", render_source = sumiari_world_render_source(stacked), blend_mode = source.blend_mode)
+	glare_filters += filter(type = "color", color = sumiari_color_matrix(SUMIARI_MONO_FULL, 1))
+	glare_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_GLARE))
+	glare.alpha = 255
+	glare.filters = glare_filters
 
 // Ink edge, and a trace of the sky's own color, both limited to pixels the lighting plane still calls dark.
 /obj/item/organ/eyes/sumiari/proc/build_flourishes()
@@ -467,10 +482,63 @@ var/global/sumiari_test_without_client = FALSE
 			render_target = null
 		return
 	eyes.attach_client_vision()
+	if(!eyes.vision_on)
+		return
 	eyes.capture_world_plane(src)
+	eyes.apply_wash_filters()
 
-// One offscreen step. The icon is the sunlight fullscreen size so a layer filter covers the view, not a 32x32 tile.
-// The asterisk target keeps it out of the composite. The plane is also under the map, so the world covers it if the asterisk is ignored.
+// Reading a filter var it does not have is a runtime, and that runtime was aborting the strip.
+// Blur and drop-shadow stay on the plane masters. Only layer, alpha, and color are ours to inspect.
+/proc/sumiari_filter_kind(sample)
+	if(!sample)
+		return
+	return sample:type
+
+/proc/sumiari_is_wash_filter(sample)
+	var/kind = sumiari_filter_kind(sample)
+	if(kind == "layer" || kind == "alpha")
+		var/source = sample:render_source
+		if(source == sumiari_offscreen(SUMIARI_TARGET_MASK) || source == sumiari_offscreen(SUMIARI_TARGET_GLARE))
+			return TRUE
+		for(var/plane in GLOB.sumiari_vision_plane_order)
+			if(source == sumiari_world_render_source(plane))
+				return TRUE
+		return FALSE
+	if(kind == "color")
+		return sumiari_filter_is_full_ink(sample)
+	return FALSE
+
+/proc/sumiari_filter_is_full_ink(sample)
+	if(sumiari_filter_kind(sample) != "color")
+		return FALSE
+	var/color = sample:color
+	if(!islist(color) || length(color) < 17)
+		return FALSE
+	var/list/ink = sumiari_color_matrix(SUMIARI_MONO_FULL, 0)
+	return abs(color[1] - ink[1]) < 0.001 && abs(color[2] - ink[2]) < 0.001 && abs(color[5] - ink[5]) < 0.001 && abs(color[17] - ink[17]) < 0.001
+
+/proc/sumiari_strip_master_wash(atom/movable/screen/plane_master/master)
+	if(!master?.filters)
+		return
+	var/list/kept = list()
+	for(var/sample in master.filters)
+		if(sumiari_is_wash_filter(sample))
+			continue
+		kept += sample
+	if(length(kept))
+		master.filters = kept
+	else
+		master.filters = null
+
+/proc/sumiari_add_filter(atom/movable/target, filter_entry)
+	if(!target)
+		return
+	if(target.filters)
+		target.filters += filter_entry
+	else
+		target.filters = list(filter_entry)
+
+// One offscreen step. The master only holds the asterisk target. The sampler child is what the capture stores.
 /atom/movable/screen/sumiari_plate
 	icon = 'icons/mob/screen_gen.dmi'
 	icon_state = ""
@@ -485,6 +553,24 @@ var/global/sumiari_test_without_client = FALSE
 	sumiari_screen_live++
 
 /atom/movable/screen/sumiari_plate/Destroy()
+	sumiari_screen_live--
+	return ..()
+
+// Drawn into the plate's asterisk capture. Not a plane master, so it cannot replace the plate.
+/atom/movable/screen/sumiari_sampler
+	icon = 'icons/mob/screen_gen.dmi'
+	icon_state = ""
+	appearance_flags = NO_CLIENT_COLOR | PASS_MOUSE | KEEP_TOGETHER
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	blend_mode = BLEND_DEFAULT
+	screen_loc = "CENTER-2:-16,CENTER"
+	blockscharging = FALSE
+
+/atom/movable/screen/sumiari_sampler/Initialize(mapload)
+	. = ..()
+	sumiari_screen_live++
+
+/atom/movable/screen/sumiari_sampler/Destroy()
 	sumiari_screen_live--
 	return ..()
 
@@ -850,7 +936,7 @@ var/global/sumiari_test_without_client = FALSE
 	return sumiari_saturation_at(intensity) >= 0.999 && sumiari_glare_at(intensity) <= 0.001
 
 // Column-major 4x4 plus RGBA constants, matching color_matrix_identity().
-// glare_override forces the haze. The relays use 0 for the ink copy and 1 for the glare copy.
+// glare_override forces the haze. The ink stack uses 0. The glare object uses 1.
 // The lighting-plane mask blends those, so a half-lit pixel is half color without a global fade.
 /proc/sumiari_color_matrix(intensity, glare_override)
 	if(isnull(intensity))
@@ -919,7 +1005,7 @@ var/global/sumiari_test_without_client = FALSE
 		else if(!sumiari_target_hidden(lighting.render_target))
 			darkness = "VISIBLE"
 	var/view_text = sumiari_view_coverage(C)
-	return "sumiari vision: mob=[C] client=[C.client ? "yes" : "no"] wash=[sumiari.wash_mode] mask=[SUMIARI_LIGHTING_SOURCE] (dyn is not the mask) darkness=[darkness] composite=[verdict] pieces=[length(sumiari.screen_pieces)] cap=[SUMIARI_PIECE_CAP] [view_text] turf_intensity=[raw] turf_saturation=[sumiari_saturation_at(raw)] turf_glare=[sumiari_glare_at(raw)] organ_see_in_dark=[sumiari.see_in_dark] organ_see_invisible=[sumiari.see_invisible] organ_lighting_alpha=[sumiari.lighting_alpha] mob_see_in_dark=[C.see_in_dark] mob_see_invisible=[C.see_invisible] mob_lighting_alpha=[C.lighting_alpha] lighting_plane_alpha=[plane_alpha] | [sample["text"]]"
+	return "sumiari vision: mob=[C] client=[C.client ? "yes" : "no"] wash=[sumiari.wash_mode] mask=[SUMIARI_LIGHTING_SOURCE] (dyn is not the mask) darkness=[darkness] composite=[verdict] pieces=[length(sumiari.screen_pieces)] cap=[SUMIARI_PIECE_CAP] [view_text] [sumiari_ink_debug(C, sumiari)] turf_intensity=[raw] turf_saturation=[sumiari_saturation_at(raw)] turf_glare=[sumiari_glare_at(raw)] organ_see_in_dark=[sumiari.see_in_dark] organ_see_invisible=[sumiari.see_invisible] organ_lighting_alpha=[sumiari.lighting_alpha] mob_see_in_dark=[C.see_in_dark] mob_see_invisible=[C.see_invisible] mob_lighting_alpha=[C.lighting_alpha] lighting_plane_alpha=[plane_alpha] | [sample["text"]]"
 
 var/global/sumiari_run_headless_test = FALSE
 
@@ -1224,7 +1310,7 @@ var/global/sumiari_run_headless_test = FALSE
 		return
 	var/live = "Live mask (ink only where the lighting plane is bright)"
 	var/forced_ink = "Force ink (mask = 1, whole view is ink)"
-	var/forced_color = "Force color (mask = 0, relays add nothing)"
+	var/forced_color = "Force color (mask = 0, world planes stay in color)"
 	var/choice = input(src, "Which wash?", "Sumiari Wash Test") as null|anything in list(live, forced_ink, forced_color)
 	if(!choice)
 		return
@@ -1235,18 +1321,77 @@ var/global/sumiari_run_headless_test = FALSE
 	else
 		eyes.wash_mode = SUMIARI_WASH_LIVE
 	eyes.apply_wash_filters()
-	var/expect = "Ink only inside the light. Darkness keeps the sprite color. No green or orange cast."
+	var/expect = "Lit sprites, including the thing that is glowing, turn colorless ink. Darkness keeps the sprite color. The HUD stays in color. No green or orange cast."
 	if(eyes.wash_mode == SUMIARI_WASH_INK)
-		expect = "The whole view, including the dark, should be ink. If it stays in color, the ink relay is not drawing the scene."
+		expect = "Every world sprite in the view is the same colorless ink: blood-red floors, trees, the mob, fire rings, and the wisp. Darkness is ink too, not black and not the sprite's own color. The HUD, chat, and stat panel stay in color."
 	else if(eyes.wash_mode == SUMIARI_WASH_COLOR)
-		expect = "The whole view should be the sprites' own colors. No ink, and no green or orange light cast. A tint here means a color plane is still being drawn."
-	var/line = "sumiari wash test: mode=[eyes.wash_mode] [expect] [sumiari_plane_legend()]"
+		expect = "Every world sprite keeps its own color, lit or not. No ink, and no green or orange light cast. The HUD stays in color."
+	var/line = "sumiari wash test: mode=[eyes.wash_mode] [expect] [sumiari_ink_debug(who, eyes)] [sumiari_plane_legend()]"
 	log_world(line)
 	to_chat(src, line)
 
 // Which object carries which picture. The wash test prints this so it can be checked against the screen.
 /proc/sumiari_plane_legend()
-	return "planes: world color is the map planes themselves (sumiari_w*, no asterisk, drawn). Lighting plane [LIGHTING_PLANE] is [SUMIARI_LIGHTING_SOURCE] alpha 255, not drawn, and is the only mask input. Movable-light plane [O_LIGHTING_VISUAL_PLANE] is [SUMIARI_OLIGHT_SOURCE] alpha 255, not drawn; it punches that capture and does not tint the world. Mask plates [SUMIARI_PLANE_RED] to [SUMIARI_PLANE_GLARE] build [sumiari_offscreen(SUMIARI_TARGET_MASK)]. Scene plate [SUMIARI_PLANE_SCENE] is [sumiari_offscreen(SUMIARI_TARGET_SCENE)]. Ink relay is plane [SUMIARI_RELAY_PLANE] layer [SUMIARI_RELAY_LAYER_BASE], the scene through the ink matrix and that mask. Glare relay is the next layer, same scene, bright end only. HUD is plane [HUD_PLANE]."
+	return "planes: world color is the map planes themselves (sumiari_w*, no asterisk, drawn). Lighting plane [LIGHTING_PLANE] is [SUMIARI_LIGHTING_SOURCE] alpha 255, not drawn, and is the only mask input. Movable-light plane [O_LIGHTING_VISUAL_PLANE] is [SUMIARI_OLIGHT_SOURCE] alpha 255, not drawn; it punches that capture and does not tint the world. Mask plates [SUMIARI_PLANE_RED] to [SUMIARI_PLANE_GLARE] build [sumiari_offscreen(SUMIARI_TARGET_MASK)] on a child of each plate. Live ink is filters on plane [SUMIARI_INK_PLANE]: those world captures, the ink matrix, then [sumiari_offscreen(SUMIARI_TARGET_MASK)]. Force ink is the ink matrix on every world plane master and does not sample a relay. HUD is plane [HUD_PLANE]."
+
+// in_screen, plane, render_source, alpha, and whether that plane's master exists. One block for the live stack, one for the force-ink matrix.
+/proc/sumiari_ink_debug(mob/living/carbon/C, obj/item/organ/eyes/sumiari/eyes)
+	var/ink_plane = C?.hud_used?.plane_masters?["[SUMIARI_INK_PLANE]"]
+	var/floor_plane = C?.hud_used?.plane_masters?["[FLOOR_PLANE]"]
+	var/matrices = 0
+	var/planes = 0
+	for(var/plane in GLOB.sumiari_vision_plane_order)
+		planes++
+		if(sumiari_master_has_ink_matrix(C?.hud_used?.plane_masters?["[plane]"]))
+			matrices++
+	return "ink_filter live=[sumiari_carrier_debug(C, ink_plane, "above")] force=[sumiari_carrier_debug(C, floor_plane, "floor")] world_matrices=[matrices]/[planes] glare=[sumiari_carrier_debug(C, sumiari_find_piece(eyes, "sumiari glare"), "glare")]"
+
+/proc/sumiari_carrier_debug(mob/living/carbon/C, atom/movable/screen/thing, label)
+	var/in_screen = "no"
+	if(C?.client && thing && (thing in C.client.screen))
+		in_screen = "yes"
+	var/source = "none"
+	var/mask = "none"
+	var/kind = "none"
+	if(thing?.filters)
+		for(var/sample in thing.filters)
+			var/listed = list(sample)
+			var/render_source = sumiari_filter_field(listed, 1, "render_source")
+			if(sumiari_filter_is_full_ink(sample))
+				kind = (kind == "layer") ? "layer+color" : "color"
+				if(source == "none")
+					source = "matrix"
+			if(!render_source)
+				continue
+			if(render_source == sumiari_offscreen(SUMIARI_TARGET_MASK) || render_source == sumiari_offscreen(SUMIARI_TARGET_GLARE))
+				mask = render_source
+				continue
+			for(var/plane in GLOB.sumiari_vision_plane_order)
+				if(render_source != sumiari_world_render_source(plane))
+					continue
+				kind = (kind == "color") ? "layer+color" : "layer"
+				if(source == "none" || source == "matrix")
+					source = render_source
+				break
+	var/master = C?.hud_used?.plane_masters?["[thing?.plane]"]
+	return "[label]{in_screen=[in_screen] plane=[isnull(thing?.plane) ? "none" : thing.plane] alpha=[isnull(thing?.alpha) ? "none" : thing.alpha] master=[master ? "yes" : "no"] kind=[kind] source=[source] mask=[mask]}"
+
+/proc/sumiari_master_has_ink_matrix(atom/movable/screen/plane_master/master)
+	if(!master?.filters)
+		return FALSE
+	for(var/sample in master.filters)
+		if(sumiari_filter_is_full_ink(sample))
+			return TRUE
+	return FALSE
+
+/proc/sumiari_master_layer_source(atom/movable/screen/plane_master/master)
+	if(!master?.filters)
+		return
+	for(var/sample in master.filters)
+		var/render_source = sumiari_filter_field(list(sample), 1, "render_source")
+		for(var/plane in GLOB.sumiari_vision_plane_order)
+			if(render_source == sumiari_world_render_source(plane))
+				return render_source
 
 // see_in_dark against the client view. A 15x15 view has radius 7, so 8 covers every tile. Walls still block.
 /proc/sumiari_view_coverage(mob/living/carbon/C)
@@ -1363,7 +1508,7 @@ var/global/sumiari_run_headless_test = FALSE
 		log_world("SUMIARI TEST FAIL blindness tore the composite down")
 		failed = TRUE
 	body.death(FALSE, TRUE)
-	var/atom/movable/screen/sumiari_relay/color_sample = sumiari_find_piece(eyes, "sumiari ink")
+	var/atom/movable/screen/plane_master/color_sample = body.hud_used.plane_masters["[SUMIARI_INK_PLANE]"]
 	var/colour_reaches = color_sample && !(color_sample.appearance_flags & NO_CLIENT_COLOR)
 	if(body.stat != DEAD || !istype(body.getorganslot(ORGAN_SLOT_EYES), /obj/item/organ/eyes/sumiari) || !eyes.vision_on)
 		log_world("SUMIARI TEST FAIL death stat=[body.stat] eyes=[body.getorganslot(ORGAN_SLOT_EYES)?.type] vision_on=[eyes.vision_on]")
@@ -1372,7 +1517,7 @@ var/global/sumiari_run_headless_test = FALSE
 		log_world("SUMIARI TEST FAIL death monochrome cannot reach the wash")
 		failed = TRUE
 	else
-		log_world("SUMIARI TEST death PASS eyes kept, composite kept, relays take client colour")
+		log_world("SUMIARI TEST death PASS eyes kept, composite kept, wash plane takes client colour")
 	body.revive(TRUE, TRUE)
 	var/still_mono = FALSE
 	for(var/datum/client_colour/monochrome/mono in body.client_colours)
@@ -1548,41 +1693,75 @@ var/global/sumiari_run_headless_test = FALSE
 	if(length(eyes.screen_pieces) > SUMIARI_PIECE_CAP)
 		bad += "pieces=[length(eyes.screen_pieces)] over cap [SUMIARI_PIECE_CAP]"
 	var/atom/movable/screen/sumiari_plate/red = sumiari_find_piece(eyes, SUMIARI_TARGET_RED)
-	var/mask_source = sumiari_filter_field(red?.filters, 1, "render_source")
+	var/atom/movable/screen/sumiari_sampler/red_sample = sumiari_find_piece(eyes, "[SUMIARI_TARGET_RED] sample")
+	if(!red || red.render_target != sumiari_offscreen(SUMIARI_TARGET_RED))
+		bad += "mask plate=[red?.render_target || "none"]"
+	else if(red.plane >= OPENSPACE_PLANE)
+		bad += "mask plate plane [red.plane] can cover the map"
+	if(length(red?.filters))
+		bad += "mask filters on the plate master"
+	if(!red_sample || (red_sample.appearance_flags & PLANE_MASTER))
+		bad += "mask sampler missing"
+	var/mask_source = sumiari_filter_field(red_sample?.filters, 1, "render_source")
 	if(mask_source != SUMIARI_LIGHTING_SOURCE)
 		bad += "mask_source=[mask_source || "none"]"
-	var/atom/movable/screen/sumiari_plate/scene = sumiari_find_piece(eyes, SUMIARI_TARGET_SCENE)
-	if(!scene || scene.render_target != sumiari_offscreen(SUMIARI_TARGET_SCENE))
-		bad += "scene=[scene?.render_target || "none"]"
-	else if(scene.plane >= OPENSPACE_PLANE)
-		bad += "scene plane [scene.plane] can cover the map"
-	var/atom/movable/screen/sumiari_relay/ink = sumiari_find_piece(eyes, "sumiari ink")
+	var/atom/movable/screen/plane_master/ink_master = body.hud_used.plane_masters["[SUMIARI_INK_PLANE]"]
+	if(!ink_master)
+		bad += "no ink plane"
+	else if(ink_master.appearance_flags & NO_CLIENT_COLOR)
+		bad += "ink plane blocks client colour"
+	var/matrix_planes = 0
+	var/present = 0
+	var/stacked = 0
+	for(var/plane in GLOB.sumiari_vision_plane_order)
+		var/atom/movable/screen/plane_master/master = body.hud_used.plane_masters["[plane]"]
+		if(!master)
+			continue
+		present++
+		var/has_matrix = sumiari_master_has_ink_matrix(master)
+		var/has_layer = sumiari_master_layer_source(master)
+		if(has_matrix)
+			matrix_planes++
+		if(has_layer)
+			stacked++
+		if(eyes.wash_mode == SUMIARI_WASH_LIVE && plane != SUMIARI_INK_PLANE && (has_matrix || has_layer))
+			bad += "live wash leaked onto plane [plane]"
+		if(eyes.wash_mode == SUMIARI_WASH_INK && has_layer)
+			bad += "force ink still stacks plane [plane]"
+		if(eyes.wash_mode == SUMIARI_WASH_COLOR && (has_matrix || has_layer))
+			bad += "force color still filters plane [plane]"
 	var/atom/movable/screen/sumiari_relay/glare = sumiari_find_piece(eyes, "sumiari glare")
-	if(!ink)
-		bad += "no ink relay"
+	if(eyes.wash_mode == SUMIARI_WASH_INK)
+		if(matrix_planes != present)
+			bad += "matrices=[matrix_planes]/[present]"
+		if(stacked)
+			bad += "force ink stacked=[stacked]"
+		if(glare?.alpha)
+			bad += "force ink glare alpha=[glare.alpha]"
+	else if(eyes.wash_mode == SUMIARI_WASH_COLOR)
+		if(matrix_planes || stacked)
+			bad += "force color matrices=[matrix_planes] stacked=[stacked]"
+		if(glare?.alpha)
+			bad += "force color glare alpha=[glare.alpha]"
 	else
-		if(ink.appearance_flags & NO_CLIENT_COLOR)
-			bad += "ink relay blocks client colour"
-		if(ink.plane <= LIGHTING_PLANE)
-			bad += "ink relay under the lighting plane"
-		var/ink_scene = sumiari_filter_field(ink.filters, 1, "render_source")
-		if(eyes.wash_mode == SUMIARI_WASH_COLOR)
-			if(ink.alpha != 0 || glare?.alpha != 0)
-				bad += "force color still drawing ink=[ink.alpha] glare=[glare?.alpha]"
-		else if(eyes.wash_mode == SUMIARI_WASH_INK)
-			if(ink.alpha != 255 || length(ink.filters) != 2 || glare?.alpha != 0)
-				bad += "force ink filters=[length(ink.filters)] glare=[glare?.alpha]"
-			if(ink_scene != sumiari_offscreen(SUMIARI_TARGET_SCENE))
-				bad += "ink scene=[ink_scene || "none"]"
-		else
-			var/ink_mask = sumiari_filter_field(ink.filters, 3, "render_source")
-			if(ink_scene != sumiari_offscreen(SUMIARI_TARGET_SCENE))
-				bad += "ink scene=[ink_scene || "none"]"
-			if(ink_mask != sumiari_offscreen(SUMIARI_TARGET_MASK))
-				bad += "ink mask=[ink_mask || "none"]"
-	for(var/atom/movable/screen/piece as anything in eyes.screen_pieces)
-		if(findtext(piece.name, "sumiari color ") || findtext(piece.name, "sumiari ink ") || findtext(piece.name, "sumiari glare "))
-			bad += "per-plane relay [piece.name]"
+		if(!sumiari_master_layer_source(ink_master))
+			bad += "live stack missing"
+		var/live_mask = null
+		for(var/sample in ink_master?.filters)
+			if(sumiari_filter_field(list(sample), 1, "render_source") == sumiari_offscreen(SUMIARI_TARGET_MASK))
+				live_mask = sumiari_offscreen(SUMIARI_TARGET_MASK)
+		if(live_mask != sumiari_offscreen(SUMIARI_TARGET_MASK))
+			bad += "live mask missing"
+#if SUMIARI_NIGHT_GLARE
+		if(!glare || glare.alpha != 255)
+			bad += "glare alpha=[glare?.alpha]"
+		else if(glare.appearance_flags & NO_CLIENT_COLOR)
+			bad += "glare blocks client colour"
+		else if(glare.plane <= LIGHTING_PLANE)
+			bad += "glare under the lighting plane"
+		else if(sumiari_filter_field(glare.filters, length(glare.filters), "render_source") != sumiari_offscreen(SUMIARI_TARGET_GLARE))
+			bad += "glare mask missing"
+#endif
 	if(!length(bad))
 		return null
 	return bad.Join("; ")
@@ -1594,9 +1773,14 @@ var/global/sumiari_run_headless_test = FALSE
 	if(!islist(plate_filters) || length(plate_filters) < index)
 		return
 	var/sample = plate_filters[index]
+	var/kind = sumiari_filter_kind(sample)
 	if(field == "render_source")
+		if(kind != "layer" && kind != "alpha")
+			return
 		return sample:render_source
 	if(field == "blend_mode")
+		if(kind != "layer")
+			return
 		return sample:blend_mode
 
 /proc/sumiari_find_piece(obj/item/organ/eyes/sumiari/eyes, piece_name)
@@ -1605,7 +1789,7 @@ var/global/sumiari_run_headless_test = FALSE
 			return piece
 
 /proc/sumiari_scene_blend(obj/item/organ/eyes/sumiari/eyes, plane)
-	var/atom/movable/screen/sumiari_plate/scene = sumiari_find_piece(eyes, SUMIARI_TARGET_SCENE)
+	var/atom/movable/screen/plane_master/scene = eyes?.owner?.hud_used?.plane_masters["[SUMIARI_INK_PLANE]"]
 	if(!length(scene?.filters))
 		return "missing"
 	var/wanted = sumiari_world_render_source(plane)
@@ -1623,6 +1807,9 @@ var/global/sumiari_run_headless_test = FALSE
 			continue
 		if(master.render_target == sumiari_world_render_target(plane))
 			log_world("SUMIARI TEST FAIL plane [plane] still captured")
+			return FALSE
+		if(sumiari_master_has_ink_matrix(master) || sumiari_master_layer_source(master))
+			log_world("SUMIARI TEST FAIL plane [plane] still washed")
 			return FALSE
 	var/atom/movable/screen/plane_master/lighting/lighting = body.hud_used.plane_masters["[LIGHTING_PLANE]"]
 	if(lighting && lighting.render_target != "lighting")
