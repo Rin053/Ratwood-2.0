@@ -15,6 +15,7 @@
 //Why do plane masters need a backdrop sometimes? Read https://secure.byond.com/forum/?post=2141928
 //Trust me, you need one. Period. If you don't think you do, you're doing something extremely wrong.
 /atom/movable/screen/plane_master/proc/backdrop(mob/mymob)
+	apply_sumiari_sight(mymob)
 
 /atom/movable/screen/plane_master/proc/apply_vampire_sight(mob/mymob)
 	var/obj/item/organ/eyes/night_vision/vampire/eyes = mymob?.getorganslot(ORGAN_SLOT_EYES)

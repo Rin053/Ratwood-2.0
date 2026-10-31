@@ -1289,6 +1289,8 @@ GLOBAL_VAR_INIT(mobids, 1)
 		var/atom/movable/screen/plane_master/lighting/L = hud_used.plane_masters["[LIGHTING_PLANE]"]
 		if (L)
 			L.alpha = lighting_alpha
+		// Sumiari keeps this capture at full alpha and hides it offscreen. A dimmed alpha would scale the mask.
+		sumiari_hold_lighting_capture(src)
 
 ///Update the mouse pointer of the attached client in this mob
 /mob/proc/update_mouse_pointer()
