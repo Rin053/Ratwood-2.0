@@ -134,6 +134,21 @@
 // Stored in place of a null render_target. BYOND drops a list entry whose value is null.
 #define SUMIARI_NO_TARGET ""
 
+// Static lights barely reach full on the lighting plane. set_light leaves inner range 0 and the falloff
+// curve is cubed, so a range-5 campfire peaks at about 0.43 of its color even on its own tile, and
+// #da5e21 puts that at 0.37 on the brightest channel. That read as 63% color right beside the fire.
+// The static part of the mask is divided by this, then clamped: a tile next to a campfire is fully gray,
+// and the ramp down to color is still the vanilla falloff, only stretched. Darkness 0 stays 0.
+#define SUMIARI_LIGHT_FULL 0.3
+#define SUMIARI_LIGHT_GAIN (1 / SUMIARI_LIGHT_FULL)
+// Every lit emitter on a turf draws its own sprite here through one shared vis_contents marker.
+// The plane master stores it under an asterisk target, so no one sees it. Sumiari read it into the mask
+// at full strength, so a flame, a brazier, a wall candle, or a wisp is never in color.
+#define SUMIARI_SOURCE_PLANE -45
+#define SUMIARI_SOURCE_RENDER_TARGET "*sumiari_light_source"
+#define SUMIARI_PLANE_SOURCE -49
+#define SUMIARI_TARGET_SOURCE "sumiari_source"
+
 // Draw order is the order a normal human composites the world. Lowest first.
 GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	OPENSPACE_PLANE,
@@ -269,6 +284,9 @@ var/global/turf/sumiari_test_dark_turf
 	if(lighting)
 		lighting.filters = sumiari_lighting_punch_filters(O_LIGHTING_VISUAL_RENDER_TARGET)
 		lighting.alpha = who.lighting_alpha
+	var/atom/movable/screen/fullscreen/glow = who?.screens?["see_through_darkness"]
+	if(glow)
+		glow.alpha = initial(glow.alpha)
 
 /obj/item/organ/eyes/sumiari/proc/present_screen_pieces()
 	if(!owner)
@@ -321,6 +339,12 @@ var/global/turf/sumiari_test_dark_turf
 	if(cookie)
 		cookie.alpha = LIGHTING_PLANE_ALPHA_VISIBLE
 		remember_render_target(cookie, SUMIARI_OLIGHT_SOURCE)
+	// The human hud adds a faint glow around the wearer to the lighting plane (up to 30/255).
+	// The lighting plane is hidden for these eyes, so that glow only fed the mask, and the gain
+	// would have washed the wearer's own tiles in true darkness.
+	var/atom/movable/screen/fullscreen/glow = owner.screens?["see_through_darkness"]
+	if(glow)
+		glow.alpha = 0
 
 // Inverse-alpha holes for emissives and movable lights. olight_source is the cookie plane's render target.
 /proc/sumiari_lighting_punch_filters(olight_source)
@@ -407,14 +431,19 @@ var/global/turf/sumiari_test_dark_turf
 	add_plate(SUMIARI_PLANE_LIGHT, SUMIARI_TARGET_LIGHT, sumiari_offscreen(SUMIARI_TARGET_ALPHA), list(
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_UNLIT), blend_mode = BLEND_MULTIPLY),
 		filter(type = "color", color = sumiari_matrix_invert_gray()),
+		filter(type = "color", color = sumiari_matrix_light_gain()),
 	))
 	// Cookie RGB is the light color. The falloff is the icon alpha, and set_power keeps that alpha at 255.
 	// Copying alpha, not max(R, G, B), keeps a dim orange torch the same radius as the vanilla pool.
 	add_plate(SUMIARI_PLANE_COOKIE, SUMIARI_TARGET_COOKIE, SUMIARI_OLIGHT_SOURCE, sumiari_lighting_channel_filters(4))
+	// The emitters' own sprites. Alpha into gray, so a sprite pixel is a full wash whatever its tile reads.
+	add_plate(SUMIARI_PLANE_SOURCE, SUMIARI_TARGET_SOURCE, SUMIARI_SOURCE_RENDER_TARGET, sumiari_lighting_channel_filters(4))
 	// Max with the cookie. Add alone would wash a sconce twice, once for the fixture and once for its torch.
 	add_plate(SUMIARI_PLANE_MASK, SUMIARI_TARGET_MASK, sumiari_offscreen(SUMIARI_TARGET_LIGHT), list(
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_ADD),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
 		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
 	))
 	// *SUNLIGHT_PLANE, not the lighting-plane light image. A campfire is full-bright on *lighting and black here.
@@ -749,6 +778,11 @@ var/global/turf/sumiari_test_dark_turf
 /proc/sumiari_matrix_invert_gray()
 	return list(-1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1)
 
+// Gray times SUMIARI_LIGHT_GAIN, alpha kept. The plate clamps at 1, which is the fully lit wash.
+/proc/sumiari_matrix_light_gain()
+	var/gain = SUMIARI_LIGHT_GAIN
+	return list(gain, 0, 0, 0, 0, gain, 0, 0, 0, 0, gain, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+
 // White RGB, alpha = R. The alpha mask filter reads that alpha.
 /proc/sumiari_matrix_gray_to_alpha()
 	return list(0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0)
@@ -925,7 +959,8 @@ var/global/turf/sumiari_test_dark_turf
 	// dynamic_lumcount is a flat stamp (0.5 on every turf in view of a held light). It is not the
 	// mask the player sees, so a pitch-black cave tile inside that radius was reading as half lit.
 	// Held lights contribute their visual falloff instead. Corner cache is the static-light overlay.
-	var/intensity = CLAMP01(lamps + sun + movable)
+	// Same gain the mask plate applies to the lighting plane, which carries both lamps and sun.
+	var/intensity = CLAMP01(((lamps + sun) * SUMIARI_LIGHT_GAIN) + movable)
 	var/overlay = "none"
 	var/datum/lighting_object/lighting = T.lighting_object
 	if(lighting?.current_underlay == GLOB.lighting_underlay_dark)
@@ -957,7 +992,7 @@ var/global/turf/sumiari_test_dark_turf
 	.["sun_strength"] = sun_strength
 	.["dynamic"] = dynamic
 	.["movable"] = movable
-	.["text"] = "sumiari light: [T.x],[T.y],[T.z] area=[T.loc] intensity=[intensity] lamps=[lamps] raw_peak=[raw_peak] sun=[sun] sun_mask=[sun_mask] sun_strength=[sun_strength] sun_state=[sky] sun_overlay_lum=[sun_overlay_lum] falloff=[falloff] movable=[movable] dyn=[dynamic] get_lumcount=[T.get_lumcount()] luminosity=[T.luminosity] overlay=[overlay] softly_lit=[T.is_softly_lit() ? 1 : 0] sun_color=[SSoutdoor_effects?.picked_color] tod=[SSoutdoor_effects?.current_step_datum?.type] corners=\[[corner_text.Join(" | ")]\] lights=\[[nearby.Join(" ; ")]\] hands=\[[hands]\]"
+	.["text"] = "sumiari light: [T.x],[T.y],[T.z] area=[T.loc] intensity=[intensity] gain=[SUMIARI_LIGHT_GAIN] source_marked=[sumiari_turf_has_marked_source(T) ? 1 : 0] lamps=[lamps] raw_peak=[raw_peak] sun=[sun] sun_mask=[sun_mask] sun_strength=[sun_strength] sun_state=[sky] sun_overlay_lum=[sun_overlay_lum] falloff=[falloff] movable=[movable] dyn=[dynamic] get_lumcount=[T.get_lumcount()] luminosity=[T.luminosity] overlay=[overlay] softly_lit=[T.is_softly_lit() ? 1 : 0] sun_color=[SSoutdoor_effects?.picked_color] tod=[SSoutdoor_effects?.current_step_datum?.type] corners=\[[corner_text.Join(" | ")]\] lights=\[[nearby.Join(" ; ")]\] hands=\[[hands]\]"
 
 /proc/sumiari_turf_intensity(turf/T)
 	return sumiari_light_sample(T)["intensity"]
@@ -2494,3 +2529,59 @@ var/global/sumiari_run_headless_test = FALSE
 	var/obj/item/organ/eyes/plain = new
 	C.dna.organ_dna[ORGAN_SLOT_EYES] = plain.create_organ_dna()
 	qdel(plain)
+
+// One shared marker. Each parent draws it with the parent's own icon, state, and dir, on the hidden source plane.
+/obj/effect/sumiari_light_marker
+	name = ""
+	icon = null
+	plane = SUMIARI_SOURCE_PLANE
+	layer = 0
+	appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
+	vis_flags = VIS_INHERIT_ICON | VIS_INHERIT_ICON_STATE | VIS_INHERIT_DIR
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	anchored = TRUE
+
+// Made on first use, not at GLOB init, so it is never an atom created before the atoms subsystem.
+GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
+
+/atom/movable/screen/plane_master/sumiari_light_source
+	name = "sumiari light source plane master"
+	plane = SUMIARI_SOURCE_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_SOURCE_RENDER_TARGET
+
+/atom/proc/sumiari_mark_light_source(lit)
+	var/obj/effect/sumiari_light_marker/marker = GLOB.sumiari_light_marker
+	if(!marker)
+		if(!lit)
+			return
+		marker = new
+		GLOB.sumiari_light_marker = marker
+	// /atom has no vis_contents. Areas never emit, so only turfs and movables reach here.
+	if(isturf(src))
+		var/turf/T = src
+		var/has = (marker in T.vis_contents)
+		if(lit && !has)
+			T.vis_contents += marker
+		else if(!lit && has)
+			T.vis_contents -= marker
+		return
+	if(ismovable(src))
+		var/atom/movable/AM = src
+		var/has = (marker in AM.vis_contents)
+		if(lit && !has)
+			AM.vis_contents += marker
+		else if(!lit && has)
+			AM.vis_contents -= marker
+
+/proc/sumiari_turf_has_marked_source(turf/T)
+	if(!isturf(T) || !GLOB.sumiari_light_marker)
+		return FALSE
+	if(GLOB.sumiari_light_marker in T.vis_contents)
+		return TRUE
+	for(var/atom/movable/thing as anything in T)
+		if(GLOB.sumiari_light_marker in thing.vis_contents)
+			return TRUE
+	return FALSE

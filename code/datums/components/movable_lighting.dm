@@ -161,6 +161,9 @@
 /datum/component/overlay_lighting/proc/add_dynamic_lumi(atom/movable/affected_movable)
 	LAZYSET(affected_movable.affected_dynamic_lights, src, lumcount_range + 1)
 	affected_movable.vis_contents += visible_mask
+	// The parent's own sprite is the light. A holder (a mob with a torch) keeps its color: the cookie covers it.
+	if(affected_movable == parent)
+		affected_movable.sumiari_mark_light_source(TRUE)
 	affected_movable.update_dynamic_luminosity()
 
 
@@ -168,6 +171,7 @@
 /datum/component/overlay_lighting/proc/remove_dynamic_lumi(atom/movable/affected_movable)
 	LAZYREMOVE(affected_movable.affected_dynamic_lights, src)
 	affected_movable.vis_contents -= visible_mask
+	affected_movable.sumiari_mark_light_source(FALSE)
 	affected_movable.update_dynamic_luminosity()
 
 
