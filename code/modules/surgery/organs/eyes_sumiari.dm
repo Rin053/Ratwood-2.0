@@ -2,7 +2,7 @@
 // Pitch black is full color. Wherever a normal human sees light, that same image is an ink wash.
 // The wash keeps the sprite's brightness: Rec.709 luma, then a gentle slope that does not threshold.
 // A contrast crush turned dither into white specks on black. The paper lift is not on that curve.
-// It is a second relay, and only where the sunlight plane itself is bright.
+// It is a second relay, and only in direct midday sun. The sunlight plane is white at dawn too.
 // The wash is not a second light model. It is the vanilla lighting plane, used as a mask:
 // static lights keep their corner-smoothed gradient, movable lights keep the radial cookie,
 // sunlight stays in the capture, and fire flicker updates the mask on the same frame.
@@ -31,9 +31,10 @@
 //    Force ink still desaturates, because that path is a color matrix on the world masters themselves.
 // 5. Force ink does not use the relay. Each world plane master gets the ink color matrix directly.
 //    Force color takes those filters back off and hides both relays.
-// 6. Sun haze is a second relay, same stack, masked by *SUNLIGHT_PLANE above the glare threshold.
-//    A cave and a campfire are black on that plane, so they get the luma wash and not the paper lift.
-//    The lift is not part of the ink matrix.
+// 6. Sun haze is a second relay, same stack, masked by *SUNLIGHT_PLANE. That plane is white for any
+//    open or border tile, including dawn, so the mask is also gated by the sun's own strength and the
+//    time of day. Dawn, dusk, night, and a border sky contribute none. Midday mixes in a small lift.
+//    A cave and a campfire are black on that plane. The lift is not part of the ink matrix.
 //
 // Reusable as /obj/item/organ/eyes/sumiari. Humen wear these by default until the Sumiari race exists.
 // Revert the human default in code/modules/mob/living/carbon/human/species_types/roguetown/human/humen.dm.
@@ -61,10 +62,14 @@
 #define SUMIARI_MOON_TINT 0
 // How much of that sky color is added. Kept small so it reads as paper, not a blue filter.
 #define SUMIARI_MOON_TINT_STRENGTH 0.14
-// Paper lift for direct sun only. The ink matrix does not use these. The sunlight plane is black in a
-// cave and under a lamp, so a campfire cannot pick this up. 0.72 and 0.26 are the spec haze, not a new curve.
-#define SUMIARI_SUN_HAZE_SLOPE 0.72
-#define SUMIARI_SUN_HAZE_BIAS 0.26
+// Subtle paper lift. Same slope as the ink, so it does not flatten a dim scene. The bias sits a little
+// above the ink lift. The ink matrix does not use these. A campfire is black on the sunlight plane.
+#define SUMIARI_SUN_HAZE_SLOPE 0.96
+#define SUMIARI_SUN_HAZE_BIAS 0.08
+// No haze below this sun-color strength. Dawn #394579 is about 0.47. Dusk peaks around 0.76.
+#define SUMIARI_SUN_HAZE_MIN 0.80
+// Even a white midday sun only mixes in this much of the lift. The rest stays the ink brightness.
+#define SUMIARI_SUN_HAZE_CAP 0.35
 
 // Rec.709 luma. A gray pixel keeps the brightness of the color pixel.
 #define SUMIARI_LUMA_R 0.2126
@@ -734,12 +739,14 @@ var/global/sumiari_test_without_client = FALSE
 /proc/sumiari_matrix_gray_to_alpha()
 	return list(0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0)
 
-// Alpha is 0 below the glare threshold and 1 at full brightness. The renderer clamps.
-// This reads the sunlight plane, which is grayscale. sun_override forces the sun. Null uses the live sun.
+// Alpha is 0 below the glare threshold. At a white sun pixel it is the haze scale, which is 0 at
+// dawn and at most SUMIARI_SUN_HAZE_CAP at midday. The renderer clamps.
+// This reads the sunlight plane, which is grayscale. sun_override forces the sun strength. Null uses the live sun.
+// sky_state forces the turf's sky. Border, blocked, and none stay at 0 even when the plane is white.
 // A black pixel (cave, lamp, campfire) stays at alpha 0 even at noon, because the bias is negative.
-/proc/sumiari_matrix_glare_to_alpha(sun_override)
+/proc/sumiari_matrix_glare_to_alpha(sun_override, sky_state)
 	var/span = SUMIARI_GLARE_FULL - SUMIARI_GLARE_START
-	var/day = sumiari_sun_haze_scale(sun_override)
+	var/day = sumiari_sun_haze_scale(sun_override, sky_state)
 	var/scale = day / span
 	var/bias = day * (-SUMIARI_GLARE_START / span)
 	return list(0, 0, 0, scale, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, bias)
@@ -749,16 +756,26 @@ var/global/sumiari_test_without_client = FALSE
 	var/strength = SUMIARI_MOON_TINT_STRENGTH
 	return list(strength, 0, 0, 0, 0, strength, 0, 0, 0, 0, strength, 0, 0, 0, 0, 0, 0, 0, 0, 1)
 
-// 1 in direct sun. 0 when the sun is down, so open sky at night does not haze. Linear between those.
-/proc/sumiari_sun_haze_scale(sun_override)
-	var/sun = isnull(sun_override) ? sumiari_sun_strength() : sun_override
-	if(sun >= SUMIARI_GLARE_START)
-		return 1
-	if(sun <= 0)
+// 0 at night, dawn, dusk, sunrise, sunset, and on a border sky. Caps at SUMIARI_SUN_HAZE_CAP in direct midday.
+// A number passed in is the sun strength. Null reads the live sun, and then only daytime counts.
+// sky_state null skips the turf test. Border does not count as direct sun: the plane is white there anyway.
+/proc/sumiari_sun_haze_scale(sun_override, sky_state)
+	if(isnum(sky_state) && sky_state != SKY_VISIBLE)
 		return 0
-	return sun / SUMIARI_GLARE_START
+	var/sun = sun_override
+	if(isnull(sun))
+		if(!istype(SSoutdoor_effects?.current_step_datum, /datum/time_of_day/daytime))
+			return 0
+		sun = sumiari_sun_strength()
+	if(sun < SUMIARI_SUN_HAZE_MIN)
+		return 0
+	var/span = 1 - SUMIARI_SUN_HAZE_MIN
+	var/ramp = (sun - SUMIARI_SUN_HAZE_MIN) / span
+	if(ramp > 1)
+		ramp = 1
+	return ramp * SUMIARI_SUN_HAZE_CAP
 
-// The spec paper lift. Rec.709, then a slope under 1 and a positive bias. The ink relay does not call this.
+// A small lift over the ink curve. Same slope, so a dim pixel stays dim. The ink relay does not call this.
 /proc/sumiari_sun_haze_matrix()
 	var/luma_r = SUMIARI_SUN_HAZE_SLOPE * SUMIARI_LUMA_R
 	var/luma_g = SUMIARI_SUN_HAZE_SLOPE * SUMIARI_LUMA_G
@@ -1223,15 +1240,33 @@ var/global/sumiari_run_headless_test = FALSE
 	var/day_full = day_matrix[4] + day_matrix[20]
 	var/night_full = night_matrix[4] + night_matrix[20]
 	var/cave_noon = day_matrix[20]
-	if(abs(day_full - 1) > 0.02 || abs(night_full) > 0.02 || cave_noon > 0.02)
-		log_world("SUMIARI TEST sun haze day=[day_full] night=[night_full] cave=[cave_noon]")
+	var/dawn_strength = 121 / 255
+	var/list/dawn_matrix = sumiari_matrix_glare_to_alpha(dawn_strength)
+	var/dawn_open = dawn_matrix[4] + dawn_matrix[20]
+	var/list/dusk_matrix = sumiari_matrix_glare_to_alpha(0.76)
+	var/dusk_open = dusk_matrix[4] + dusk_matrix[20]
+	var/border_noon = sumiari_sun_haze_scale(1, SKY_VISIBLE_BORDER)
+	if(abs(day_full - SUMIARI_SUN_HAZE_CAP) > 0.02 || day_full > SUMIARI_SUN_HAZE_CAP + 0.001)
+		log_world("SUMIARI TEST sun haze noon=[day_full] cap=[SUMIARI_SUN_HAZE_CAP]")
 		return FALSE
-	if(abs(sumiari_sun_haze_scale(0)) > 0.001 || abs(sumiari_sun_haze_scale(1) - 1) > 0.001)
+	if(abs(night_full) > 0.02 || cave_noon > 0.02 || dawn_open > 0.02 || dusk_open > 0.02 || border_noon > 0.02)
+		log_world("SUMIARI TEST sun haze night=[night_full] cave=[cave_noon] dawn=[dawn_open] dusk=[dusk_open] border=[border_noon]")
+		return FALSE
+	if(abs(sumiari_sun_haze_scale(0)) > 0.001 || abs(sumiari_sun_haze_scale(1) - SUMIARI_SUN_HAZE_CAP) > 0.001 || abs(sumiari_sun_haze_scale(dawn_strength)) > 0.001)
 		return FALSE
 	var/list/ink_untouched = sumiari_color_matrix(SUMIARI_MONO_FULL, 1)
 	var/list/haze = sumiari_sun_haze_matrix()
 	if(abs(ink_untouched[17] - SUMIARI_INK_LIFT) > 0.001 || abs(haze[17] - SUMIARI_SUN_HAZE_BIAS) > 0.001)
 		log_world("SUMIARI TEST ink lift=[ink_untouched[17]] haze bias=[haze[17]]")
+		return FALSE
+	if(abs(haze[1] - ink_untouched[1]) > 0.001)
+		log_world("SUMIARI TEST sun haze slope drifted from the ink curve")
+		return FALSE
+	var/list/mid_ink = sumiari_apply_matrix(ink_untouched, 0.5, 0.5, 0.5)
+	var/list/mid_haze = sumiari_apply_matrix(haze, 0.5, 0.5, 0.5)
+	var/noon_lift = (mid_haze[1] - mid_ink[1]) * SUMIARI_SUN_HAZE_CAP
+	if(noon_lift < 0 || noon_lift > 0.05)
+		log_world("SUMIARI TEST sun haze lift=[noon_lift] is not a subtle midday mix")
 		return FALSE
 	if(length(sumiari_matrix_channel(1)) != 20 || length(sumiari_matrix_gray_to_alpha()) != 20 || length(sumiari_matrix_invert_gray()) != 20)
 		return FALSE
@@ -1415,7 +1450,7 @@ var/global/sumiari_run_headless_test = FALSE
 	else
 		eyes.wash_mode = SUMIARI_WASH_LIVE
 	eyes.apply_wash_filters()
-	var/expect = "Lit sprites, including the thing that is glowing, turn gray at about their own brightness. A campfire or wisp pool is that gray, not full color, and not a white fog. Darkness keeps the sprite color. Open sun, and only open sun, hazes toward paper. The HUD stays in color. No green or orange cast."
+	var/expect = "Lit sprites, including the thing that is glowing, turn gray at about their own brightness. A campfire or wisp pool is that gray, not full color, and not a white fog. Darkness keeps the sprite color. Dawn, dusk, night, and a border sky stay at that same brightness. Direct midday sun adds only a slight lift. The HUD stays in color. No green or orange cast."
 	if(eyes.wash_mode == SUMIARI_WASH_INK)
 		expect = "Every world sprite is a gray of its own brightness: grass stays as light as it was, shading stays shading, and textures do not turn into white specks on black. Darkness is that same gray, not a black void and not the sprite color. The HUD, chat, and stat panel stay in color."
 	else if(eyes.wash_mode == SUMIARI_WASH_COLOR)
