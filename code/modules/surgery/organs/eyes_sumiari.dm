@@ -60,11 +60,56 @@
 #define SUMIARI_INK_VIGNETTE 0
 // Edge strength, 0 to 1. The icon is drawn once from this value.
 #define SUMIARI_INK_VIGNETTE_ALPHA 0.22
-// A little of the real sun or moon color, added only where the world is still in color.
-// Open night picks up the moon. A cave has no sunlight plane, so it stays neutral.
-#define SUMIARI_MOON_TINT 0
-// How much of that sky color is added. Kept small so it reads as paper, not a blue filter.
-#define SUMIARI_MOON_TINT_STRENGTH 0.14
+// Moonlight tint. At night, open sky reads as a faint cool silver, so moonlight looks different from
+// firelight. Firelight stays neutral ink gray. Vanilla night has no moon in the lighting model (the
+// midnight sun color is #000000), so "moonlit" means a pixel the sky plane calls open or border sky.
+// The silver is the ink luma times a cool tint, laid over the world at a low alpha:
+// alpha = strength * (sky - LAMP_GAIN * lamp wash). A lamp-washed pixel gets none and keeps its firelit look.
+// A cave or roof has no sky, so it gets none. Day, dawn, and dusk get none.
+#define SUMIARI_MOON_TINT 1
+// Peak alpha of the silver layer on open sky with no lamp light. Under half, so the colors still show through.
+#define SUMIARI_MOON_TINT_STRENGTH 0.45
+// Silver: each channel of the ink gray is scaled by these. Blue a little up and red a little down.
+// The average stays about 1, so brightness stays with the sprite.
+#define SUMIARI_MOON_SILVER_R 0.88
+#define SUMIARI_MOON_SILVER_G 0.97
+#define SUMIARI_MOON_SILVER_B 1.15
+// A little moon glow added to the silver (before the tint), so open dark sky reads as moonlit, not only as cooler.
+#define SUMIARI_MOON_SILVER_LIFT 0.06
+// How fast lamp and fire light push the silver out. At 3, a pixel at a third of full lamp wash or more gets none,
+// so the edge of a campfire's glow fades to plain night instead of silvering the warm light.
+#define SUMIARI_MOON_LAMP_GAIN 3
+
+// Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
+// that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
+// or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
+// It never shows: the dead, the undead, magic invisibility (the invisibility spells and veils),
+// anything above the Sumiari see_invisible (ghosts, jaunts), a body standing in light, or a body
+// the Sumiari already sees plainly. A body hidden by the field-of-view cone is not shown either.
+#define SUMIARI_NIGHT_SENSES 1
+// Tiles from the Sumiari (square range, like view). 2 means the 5x5 block around them.
+#define SUMIARI_SENSE_RANGE 2
+// A body is sensed only when its tile wash (the same 0-1 brightness the ink mask uses, gain included)
+// is below this. 0.25 means a tile still drawn at least three-quarters in color for the Sumiari.
+#define SUMIARI_SENSE_DARK_MAX 0.25
+// How often the senses rescan. A step by the Sumiari also rescans at once.
+#define SUMIARI_SENSE_INTERVAL (0.5 SECONDS)
+// Silhouette alpha pulses slowly between these two (0-255).
+#define SUMIARI_SENSE_ALPHA_LOW 30
+#define SUMIARI_SENSE_ALPHA_HIGH 70
+#define SUMIARI_SENSE_PULSE (3 SECONDS)
+// Soft edge on the silhouette, in pixels.
+#define SUMIARI_SENSE_BLUR 1.5
+// Pale ink-wash fill (0-1 per channel).
+#define SUMIARI_SENSE_TONE_R 0.80
+#define SUMIARI_SENSE_TONE_G 0.82
+#define SUMIARI_SENSE_TONE_B 0.88
+// A sneaker in plain line of sight, faded on a dark tile, also gets the silhouette. 0 limits the senses to hidden bodies.
+#define SUMIARI_SENSE_SNEAKERS 1
+// Most silhouettes at once.
+#define SUMIARI_SENSE_MAX 8
+// Layer above the relays so the wash cannot gray it.
+#define SUMIARI_SENSE_LAYER (SUMIARI_RELAY_LAYER_BASE + 40)
 // Subtle paper lift. Same slope as the ink, so it does not flatten a dim scene. The bias sits a little
 // above the ink lift. The ink matrix does not use these. A campfire is black on the sunlight plane.
 #define SUMIARI_SUN_HAZE_SLOPE 0.96
@@ -92,8 +137,9 @@
 #define SUMIARI_WASH_LIVE "live"
 #define SUMIARI_WASH_INK "ink"
 #define SUMIARI_WASH_COLOR "color"
-// 9 mask plates, each a master plus the child that draws the capture, plus the ink relay and the sun relay.
-#define SUMIARI_PIECE_CAP 24
+// 11 plates (the 10 mask plates plus the moon mask), each a master plus the child that draws the capture,
+// plus the ink, sun, and moon relays.
+#define SUMIARI_PIECE_CAP 26
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 #define SUMIARI_SEE_IN_DARK 8
 // Darkness-sneak raises invisibility to SEE_INVISIBLE_LIVING + skill*0.55 + 1 (about 29 at legendary).
@@ -192,6 +238,13 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/list/screen_pieces
 	// The glare sampler's color matrix is rebuilt when the sun moves, so night haze can ease without a new composite.
 	var/atom/movable/screen/sumiari_sampler/glare_plate
+	// The moon mask sampler. Its alpha matrix is rebuilt on a time-of-day change, so night silver turns on and off.
+	var/atom/movable/screen/sumiari_sampler/moon_plate
+	// Night senses: body -> image shown to sense_client, and body -> the dir/lying the image was copied at.
+	var/list/sensed_images
+	var/list/sensed_shapes
+	var/client/sense_client
+	var/sense_timer
 	// Pixel size of the mask canvas. A view change rebuilds it so the sample stays one pixel per screen pixel.
 	var/mask_pixels_x = 0
 	var/mask_pixels_y = 0
@@ -259,6 +312,7 @@ var/global/turf/sumiari_test_dark_turf
 		hold_lighting_capture()
 		capture_world_planes()
 		apply_wash_filters()
+		start_night_senses()
 		return
 	// The view grew or shrank. The old canvas would resample the lighting plane, which is the tile step.
 	if(vision_on && length(screen_pieces))
@@ -271,12 +325,15 @@ var/global/turf/sumiari_test_dark_turf
 	capture_world_planes()
 	build_screen_pieces()
 	present_screen_pieces()
+	start_night_senses()
 
 /obj/item/organ/eyes/sumiari/proc/release_client_vision(mob/living/carbon/M)
+	stop_night_senses(M)
 	sumiari_active_eyes -= src
 	vision_on = FALSE
 	wash_mode = SUMIARI_WASH_LIVE
 	glare_plate = null
+	moon_plate = null
 	clear_master_wash(M)
 	clear_screen_pieces(M)
 	restore_render_targets(M)
@@ -372,6 +429,7 @@ var/global/turf/sumiari_test_dark_turf
 
 /obj/item/organ/eyes/sumiari/proc/build_screen_pieces()
 	glare_plate = null
+	moon_plate = null
 	if(screen_pieces)
 		QDEL_LIST(screen_pieces)
 	screen_pieces = list()
@@ -403,6 +461,8 @@ var/global/turf/sumiari_test_dark_turf
 	sampler.blockscharging = FALSE
 	if(target_name == SUMIARI_TARGET_GLARE)
 		glare_plate = sampler
+	if(target_name == SUMIARI_TARGET_MOON)
+		moon_plate = sampler
 	screen_pieces += plate
 	screen_pieces += sampler
 	return sampler
@@ -505,6 +565,7 @@ var/global/turf/sumiari_test_dark_turf
 			sumiari_add_filter(master, filter(type = "color", color = sumiari_color_matrix(SUMIARI_MONO_FULL, 0)))
 	var/atom/movable/screen/sumiari_relay/ink = sumiari_find_piece(src, "sumiari ink")
 	var/atom/movable/screen/sumiari_relay/sun = sumiari_find_piece(src, "sumiari sun")
+	var/atom/movable/screen/sumiari_relay/moon = sumiari_find_piece(src, "sumiari moon")
 	if(wash_mode != SUMIARI_WASH_LIVE)
 		if(ink)
 			ink.alpha = 0
@@ -512,6 +573,9 @@ var/global/turf/sumiari_test_dark_turf
 		if(sun)
 			sun.alpha = 0
 			sun.filters = null
+		if(moon)
+			moon.alpha = 0
+			moon.filters = null
 		return
 	if(ink)
 		var/list/ink_filters = world_stack_filters()
@@ -525,28 +589,31 @@ var/global/turf/sumiari_test_dark_turf
 		sun_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_GLARE))
 		sun.filters = sun_filters
 		sun.alpha = 255
+	if(moon)
+		var/list/moon_filters = world_stack_filters()
+		moon_filters += filter(type = "color", color = sumiari_moon_silver_matrix())
+		moon_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON))
+		moon.filters = moon_filters
+		moon.alpha = 255
 
-// Ink edge, and a trace of the sky's own color, both limited to pixels the lighting plane still calls dark.
+// Ink edge (limited to pixels the lighting plane still calls dark) and the night moon silver.
 /obj/item/organ/eyes/sumiari/proc/build_flourishes()
-#if SUMIARI_INK_VIGNETTE || SUMIARI_MOON_TINT
+#if SUMIARI_INK_VIGNETTE
 	add_plate(SUMIARI_PLANE_DARK, SUMIARI_TARGET_DARK, sumiari_offscreen(SUMIARI_TARGET_LIGHT), list(
 		filter(type = "color", color = sumiari_matrix_invert_gray()),
 		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
 	))
 #endif
 #if SUMIARI_MOON_TINT
-	add_plate(SUMIARI_PLANE_MOON, SUMIARI_TARGET_MOON, SUNLIGHTING_RENDER_TARGET, list(
-		filter(type = "color", color = sumiari_matrix_moon_tint()),
-	))
+	// Sky plane gray (open sky 1, border partial, roof and cave 0), minus the lamp wash, into alpha.
+	// The wash plate already carries the gain, so a fully firelit pixel subtracts to 0 and stays neutral.
+	add_plate(SUMIARI_PLANE_MOON, SUMIARI_TARGET_MOON, SUNLIGHTING_RENDER_TARGET, sumiari_moon_mask_filters())
 	var/atom/movable/screen/sumiari_relay/moon = new
 	moon.name = "sumiari moon"
-	moon.layer = SUMIARI_RELAY_LAYER_BASE + 28
-	moon.blend_mode = BLEND_ADD
+	moon.plane = SUMIARI_RELAY_PLANE
+	moon.layer = SUMIARI_RELAY_LAYER_BASE + 2
+	moon.alpha = 0
 	moon.blockscharging = FALSE
-	moon.filters = list(
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON), blend_mode = BLEND_OVERLAY),
-		filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_DARK)),
-	)
 	screen_pieces += moon
 #endif
 #if SUMIARI_INK_VIGNETTE
@@ -558,11 +625,14 @@ var/global/turf/sumiari_test_dark_turf
 #endif
 
 /obj/item/organ/eyes/sumiari/proc/refresh_time_filters()
-	if(!vision_on || !glare_plate)
+	if(!vision_on)
 		return
-	glare_plate.filters = list(
-		filter(type = "color", color = sumiari_matrix_glare_to_alpha()),
-	)
+	if(glare_plate)
+		glare_plate.filters = list(
+			filter(type = "color", color = sumiari_matrix_glare_to_alpha()),
+		)
+	if(moon_plate)
+		moon_plate.filters = sumiari_moon_mask_filters()
 
 /atom/movable/screen/plane_master/proc/apply_sumiari_sight(mob/mymob)
 	if(!sumiari_plane_is_world(plane))
@@ -801,10 +871,48 @@ var/global/turf/sumiari_test_dark_turf
 	var/bias = day * (-SUMIARI_GLARE_START / span)
 	return list(0, 0, 0, scale, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, bias)
 
-// Scales the sunlight plane and forces its alpha to 1. The darkness mask then decides where it shows.
-/proc/sumiari_matrix_moon_tint()
-	var/strength = SUMIARI_MOON_TINT_STRENGTH
-	return list(strength, 0, 0, 0, 0, strength, 0, 0, 0, 0, strength, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+// Moon strength for the silver layer. Only the midnight step counts: its sun color is black, so the
+// sky lights nothing and the only light outside is lamps. Dawn, day, sunset, and dusk return 0.
+// night_override forces night (TRUE) or day (FALSE). Null reads the live time of day.
+/proc/sumiari_moon_strength(night_override)
+	var/night = night_override
+	if(isnull(night))
+		night = istype(SSoutdoor_effects?.current_step_datum, /datum/time_of_day/midnight)
+	if(!night)
+		return 0
+	return SUMIARI_MOON_TINT_STRENGTH
+
+// Sky gray (R of the sky plane, alpha forced 1) over the lamp gain, minus the lamp wash, then strength times gain into alpha.
+/proc/sumiari_moon_mask_filters(night_override)
+	return list(
+		filter(type = "color", color = sumiari_matrix_sky_scaled(1 / SUMIARI_MOON_LAMP_GAIN)),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_SUBTRACT),
+		filter(type = "color", color = sumiari_matrix_moon_alpha(sumiari_moon_strength(night_override) * SUMIARI_MOON_LAMP_GAIN)),
+	)
+
+// Sky R copied to gray and scaled, alpha forced to 1. Scaling the sky down before the lamp subtract and the
+// strength back up after it gives strength * (sky - gain * lamp) without a second lamp copy.
+/proc/sumiari_matrix_sky_scaled(scale)
+	return list(scale, scale, scale, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+
+// White RGB, alpha = strength * gray. At strength 0 the whole plate is transparent and the relay draws nothing.
+/proc/sumiari_matrix_moon_alpha(strength)
+	return list(0, 0, 0, strength, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0)
+
+// The ink curve, with each output channel scaled toward cool silver. A gray sprite turns faintly blue-white.
+/proc/sumiari_moon_silver_matrix()
+	var/list/ink = sumiari_color_matrix(SUMIARI_MONO_FULL, 0)
+	var/list/tint = list(SUMIARI_MOON_SILVER_R, SUMIARI_MOON_SILVER_G, SUMIARI_MOON_SILVER_B)
+	var/list/silver = ink.Copy()
+	for(var/row in 0 to 4)
+		if(row == 3)
+			continue
+		for(var/channel in 1 to 3)
+			var/value = ink[row * 4 + channel]
+			if(row == 4)
+				value += SUMIARI_MOON_SILVER_LIFT
+			silver[row * 4 + channel] = value * tint[channel]
+	return silver
 
 // 0 at night, dawn, dusk, sunrise, sunset, and on a border sky. Caps at SUMIARI_SUN_HAZE_CAP in direct midday.
 // A number passed in is the sun strength. Null reads the live sun, and then only daytime counts.
@@ -1917,15 +2025,8 @@ var/global/sumiari_run_headless_test = FALSE
 	if(!sumiari_sweep_wash(eyes))
 		failed = TRUE
 #if SUMIARI_MOON_TINT
-	var/found_moon = FALSE
-	for(var/atom/movable/screen/piece as anything in eyes.screen_pieces)
-		if(piece.name == "sumiari moon")
-			found_moon = TRUE
-	if(!found_moon)
-		log_world("SUMIARI TEST FAIL moon tint relay missing")
+	if(!sumiari_sweep_moon(eyes))
 		failed = TRUE
-	else
-		log_world("SUMIARI TEST flourish PASS moon")
 #endif
 #if SUMIARI_INK_VIGNETTE
 	var/found_vignette = FALSE
@@ -1978,6 +2079,10 @@ var/global/sumiari_run_headless_test = FALSE
 		failed = TRUE
 	if(!sumiari_probe_hook_torch(sumiari_test_dark_turf))
 		failed = TRUE
+#if SUMIARI_NIGHT_SENSES
+	if(!sumiari_sweep_senses(body, trash))
+		failed = TRUE
+#endif
 	if(!sumiari_sweep_blindness(body, eyes))
 		failed = TRUE
 	if(eyes.vision_on && sumiari_screen_live == pieces)
@@ -2395,6 +2500,29 @@ var/global/sumiari_run_headless_test = FALSE
 	log_world("SUMIARI TEST wash PASS ink color live layers=[length(live_sources)]/[length(GLOB.sumiari_vision_plane_order)] [live_sources.Join(",")]")
 	return TRUE
 
+// Moon relay drawn in live mode, masked by the moon plate. The plate is transparent by day and strength-scaled at night.
+/proc/sumiari_sweep_moon(obj/item/organ/eyes/sumiari/eyes)
+	var/atom/movable/screen/sumiari_relay/moon = sumiari_find_piece(eyes, "sumiari moon")
+	if(!moon || !eyes.moon_plate)
+		log_world("SUMIARI TEST FAIL moon tint relay=[moon ? "yes" : "no"] plate=[eyes.moon_plate ? "yes" : "no"]")
+		return FALSE
+	if(moon.plane != SUMIARI_RELAY_PLANE || moon.plane >= HUD_PLANE || moon.layer <= SUMIARI_RELAY_LAYER_BASE)
+		log_world("SUMIARI TEST FAIL moon relay plane=[moon.plane] layer=[moon.layer]")
+		return FALSE
+	if(eyes.wash_mode == SUMIARI_WASH_LIVE && sumiari_filter_field(moon.filters, length(moon.filters), "render_source") != sumiari_offscreen(SUMIARI_TARGET_MOON))
+		log_world("SUMIARI TEST FAIL moon relay mask missing")
+		return FALSE
+	var/list/silver = sumiari_moon_silver_matrix()
+	var/list/gray = sumiari_apply_matrix(silver, 0.5, 0.5, 0.5)
+	if(!(gray[3] > gray[2] && gray[2] > gray[1]))
+		log_world("SUMIARI TEST FAIL moon silver is not cool [gray[1]],[gray[2]],[gray[3]]")
+		return FALSE
+	if(sumiari_moon_strength(FALSE) != 0 || sumiari_moon_strength(TRUE) != SUMIARI_MOON_TINT_STRENGTH)
+		log_world("SUMIARI TEST FAIL moon strength day=[sumiari_moon_strength(FALSE)] night=[sumiari_moon_strength(TRUE)]")
+		return FALSE
+	log_world("SUMIARI TEST moon PASS silver=[gray[1]],[gray[2]],[gray[3]] strength=[SUMIARI_MOON_TINT_STRENGTH] live=[sumiari_moon_strength()]")
+	return TRUE
+
 /proc/sumiari_sweep_other_z(turf/here)
 	if(!isturf(here))
 		return
@@ -2587,3 +2715,228 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 		if(GLOB.sumiari_light_marker in thing.vis_contents)
 			return TRUE
 	return FALSE
+
+
+// ---------------------------------------------------------------------------------------------
+// Night senses. See SUMIARI_NIGHT_SENSES at the top for what is and is not revealed.
+
+/obj/item/organ/eyes/sumiari/proc/start_night_senses()
+#if SUMIARI_NIGHT_SENSES
+	if(!owner || sense_timer)
+		if(owner)
+			sense_tick()
+		return
+	RegisterSignal(owner, COMSIG_MOVABLE_MOVED, PROC_REF(on_owner_moved_senses), override = TRUE)
+	sense_timer = addtimer(CALLBACK(src, PROC_REF(sense_tick)), SUMIARI_SENSE_INTERVAL, TIMER_STOPPABLE | TIMER_LOOP)
+	sense_tick()
+#endif
+
+/obj/item/organ/eyes/sumiari/proc/stop_night_senses(mob/living/carbon/M)
+	var/mob/living/carbon/who = M || owner
+	if(who)
+		UnregisterSignal(who, COMSIG_MOVABLE_MOVED)
+	if(sense_timer)
+		deltimer(sense_timer)
+		sense_timer = null
+	clear_sensed()
+	sense_client = null
+
+/obj/item/organ/eyes/sumiari/proc/on_owner_moved_senses(datum/source)
+	SIGNAL_HANDLER
+	sense_tick()
+
+/obj/item/organ/eyes/sumiari/proc/clear_sensed()
+	for(var/mob/living/L as anything in sensed_images)
+		var/image/shape = sensed_images[L]
+		sense_client?.images -= shape
+	sensed_images = null
+	sensed_shapes = null
+
+/obj/item/organ/eyes/sumiari/proc/drop_sensed(mob/living/L)
+	var/image/shape = sensed_images?[L]
+	if(shape)
+		sense_client?.images -= shape
+	sensed_images -= L
+	sensed_shapes -= L
+
+// Why the senses are off for this viewer right now, or null when they work.
+/obj/item/organ/eyes/sumiari/proc/sense_blocked()
+	if(!vision_on)
+		return "vision off"
+	var/mob/living/carbon/viewer = owner
+	if(!viewer || QDELETED(viewer))
+		return "no owner"
+	if(!viewer.client)
+		return "no client"
+	if(viewer.getorganslot(ORGAN_SLOT_EYES) != src)
+		return "not these eyes"
+	if(viewer.stat >= UNCONSCIOUS)
+		return "unconscious"
+	if(is_blind(viewer))
+		return "blind"
+	if(organ_flags & ORGAN_FAILING)
+		return "eyes failing"
+	return null
+
+/obj/item/organ/eyes/sumiari/proc/sense_tick()
+	if(QDELETED(src) || !vision_on)
+		stop_night_senses()
+		return
+	if(sense_client && sense_client != owner?.client)
+		clear_sensed()
+		sense_client = null
+	if(sense_blocked())
+		clear_sensed()
+		return
+	sense_client = owner.client
+	var/list/found = sumiari_sense_targets(owner)
+	for(var/mob/living/L as anything in sensed_images)
+		if(!found[L])
+			drop_sensed(L)
+	for(var/mob/living/L as anything in found)
+		show_sensed(L)
+
+/obj/item/organ/eyes/sumiari/proc/show_sensed(mob/living/L)
+	var/turf/here = get_turf(owner)
+	var/turf/there = get_turf(L)
+	if(!here || !there)
+		return
+	var/shape_key = "[L.dir]-[L.lying]-[L.icon_state]-[length(L.overlays)]"
+	var/image/shape = sensed_images?[L]
+	if(shape && sensed_shapes?[L] != shape_key)
+		drop_sensed(L)
+		shape = null
+	if(!shape)
+		shape = sumiari_sense_image(L, owner)
+		LAZYSET(sensed_images, L, shape)
+		LAZYSET(sensed_shapes, L, shape_key)
+		sense_client.images += shape
+	shape.pixel_x = ((there.x - here.x) * world.icon_size) + L.pixel_x - owner.pixel_x
+	shape.pixel_y = ((there.y - here.y) * world.icon_size) + L.pixel_y - owner.pixel_y
+
+// The flat pale silhouette, riding on the viewer so it draws even where the body's own tile does not.
+/proc/sumiari_sense_image(mob/living/L, mob/living/viewer)
+	var/image/shape = image(loc = viewer)
+	shape.appearance = L.appearance
+	shape.loc = viewer
+	shape.name = ""
+	shape.plane = SUMIARI_RELAY_PLANE
+	shape.layer = SUMIARI_SENSE_LAYER
+	shape.invisibility = 0
+	shape.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	shape.appearance_flags = RESET_TRANSFORM | RESET_COLOR | RESET_ALPHA | KEEP_APART | KEEP_TOGETHER
+	shape.color = sumiari_sense_tone_matrix()
+	shape.filters = list(filter(type = "blur", size = SUMIARI_SENSE_BLUR))
+	shape.alpha = SUMIARI_SENSE_ALPHA_LOW
+	animate(shape, alpha = SUMIARI_SENSE_ALPHA_HIGH, time = SUMIARI_SENSE_PULSE / 2, loop = -1, easing = SINE_EASING)
+	animate(alpha = SUMIARI_SENSE_ALPHA_LOW, time = SUMIARI_SENSE_PULSE / 2, easing = SINE_EASING)
+	return shape
+
+// Every pixel becomes the pale tone. Sprite alpha is kept, so the outline is the body's own shape.
+/proc/sumiari_sense_tone_matrix()
+	return list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, SUMIARI_SENSE_TONE_R, SUMIARI_SENSE_TONE_G, SUMIARI_SENSE_TONE_B, 0)
+
+// Bodies the senses show now, as body -> reason. Scans the turfs in range and the containers on them.
+/proc/sumiari_sense_targets(mob/living/carbon/viewer, list/report)
+	. = list()
+	var/turf/center = get_turf(viewer)
+	if(!center)
+		return
+	var/list/visible = view(SUMIARI_SENSE_RANGE, viewer)
+	var/count = 0
+	for(var/turf/T in range(SUMIARI_SENSE_RANGE, center))
+		for(var/atom/movable/thing as anything in T)
+			var/list/bodies
+			if(isliving(thing))
+				bodies = list(thing)
+			else if(istype(thing, /obj/structure))
+				for(var/mob/living/inside in thing)
+					LAZYADD(bodies, inside)
+			for(var/mob/living/L as anything in bodies)
+				var/reason = sumiari_sense_reason(viewer, L, visible)
+				if(report && L != viewer)
+					report += "[L]@[L.x],[L.y] [reason]"
+				if(copytext(reason, 1, 7) != "sensed" || count >= SUMIARI_SENSE_MAX)
+					continue
+				.[L] = reason
+				count++
+
+// "sensed: why" when the body should show, otherwise why it does not.
+/proc/sumiari_sense_reason(mob/living/carbon/viewer, mob/living/L, list/visible)
+	if(!istype(L))
+		return "not living"
+	if(L == viewer)
+		return "self"
+	if(L.stat == DEAD)
+		return "dead"
+	if(L.mob_biotypes & MOB_UNDEAD)
+		return "undead"
+	if(L.mob_timers?[MT_INVISIBILITY] > world.time)
+		return "magic invisibility"
+	if(L.invisibility >= INVISIBILITY_OBSERVER || L.invisibility > viewer.see_invisible)
+		return "invisible [L.invisibility]"
+	var/turf/here = get_turf(viewer)
+	var/turf/there = get_turf(L)
+	if(!here || !there || here.z != there.z || get_dist(here, there) > SUMIARI_SENSE_RANGE)
+		return "out of range"
+	var/hidden_in = null
+	if(!isturf(L.loc))
+		if(!istype(L.loc, /obj/structure) || L.loc.loc != there)
+			return "carried or held"
+		hidden_in = "in [L.loc]"
+	else if(isnull(visible))
+		visible = view(SUMIARI_SENSE_RANGE, viewer)
+	var/why = hidden_in
+	if(!why)
+		if(L in visible)
+#if SUMIARI_SENSE_SNEAKERS
+			if(!L.rogue_sneaking || !viewer.can_see_cone(L))
+				return "seen"
+			why = "sneaking"
+#else
+			return "seen"
+#endif
+		else
+			why = "out of sight"
+	var/wash = sumiari_turf_intensity(there)
+	if(wash >= SUMIARI_SENSE_DARK_MAX)
+		return "lit [round(wash, 0.01)]"
+	return "sensed: [why] wash=[round(wash, 0.01)]"
+
+/proc/sumiari_sense_report(mob/living/carbon/C)
+	var/obj/item/organ/eyes/sumiari/eyes = C?.getorganslot(ORGAN_SLOT_EYES)
+	if(!istype(eyes))
+		return "sumiari senses: no sumiari eyes"
+	var/list/report = list()
+	sumiari_sense_targets(C, report)
+	var/blocked = eyes.sense_blocked()
+	return "sumiari senses: [C]@[C.x],[C.y] blocked=[blocked || "no"] shown=[length(eyes.sensed_images)] timer=[eyes.sense_timer ? "yes" : "no"] near=\[[report.Join(" ; ")]\]"
+
+// Reason logic that does not depend on the map: dead, undead, magic, ghost-level invisibility.
+/proc/sumiari_sweep_senses(mob/living/carbon/human/body, list/trash)
+	var/turf/spot = get_turf(body)
+	var/list/cases = list()
+	var/mob/living/carbon/human/dead = new(spot)
+	trash += dead
+	dead.death()
+	cases[dead] = "dead"
+	var/mob/living/carbon/human/magic = new(spot)
+	trash += magic
+	magic.mob_timers[MT_INVISIBILITY] = world.time + 1 MINUTES
+	cases[magic] = "magic invisibility"
+	var/mob/living/carbon/human/jaunt = new(spot)
+	trash += jaunt
+	jaunt.invisibility = INVISIBILITY_OBSERVER
+	cases[jaunt] = "invisible"
+	cases[body] = "self"
+	for(var/mob/living/L as anything in cases)
+		var/reason = sumiari_sense_reason(body, L, list())
+		if(copytext(reason, 1, length(cases[L]) + 1) != cases[L])
+			log_world("SUMIARI TEST FAIL senses [cases[L]] gave [reason]")
+			return FALSE
+	var/list/tone = sumiari_apply_matrix(sumiari_sense_tone_matrix(), 0.1, 0.9, 0.3)
+	if(abs(tone[1] - SUMIARI_SENSE_TONE_R) > 0.001 || abs(tone[3] - SUMIARI_SENSE_TONE_B) > 0.001)
+		log_world("SUMIARI TEST FAIL senses tone [tone.Join(",")]")
+		return FALSE
+	log_world("SUMIARI TEST senses PASS range=[SUMIARI_SENSE_RANGE] dark_max=[SUMIARI_SENSE_DARK_MAX] interval=[SUMIARI_SENSE_INTERVAL]")
+	return TRUE
