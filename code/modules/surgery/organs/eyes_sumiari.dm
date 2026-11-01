@@ -333,14 +333,20 @@
 #define SUMIARI_WATER_PERIOD 34
 #define SUMIARI_WATER_CORE_ALPHA 150
 #define SUMIARI_WATER_END_ALPHA 60
-// 2) Moon-edge highlights. A wall or cliff tile gets a two-pixel pale rim (bright outer pixel, faint inner one) along
-// each north, west and east side that meets open sky; trees, rocks, big mushrooms and bushes on open sky get a
+// 2) Moon-edge highlights. A wall or cliff tile gets a soft catch-light where it meets open sky: along its north
+// side a faint outer pixel over a fainter inner one, and on a west or east side only a short sliver at the top that
+// fades out downward (a full-height side line read as a flat pale band beside the rock); trees, rocks, big mushrooms and bushes on open sky get a
 // one-pixel rim on the edges of their own sprite that face the moon (up and left): the sprite, solid silver, minus
 // itself shifted one pixel away from the moon. The moon mask decides how bright each rim ends up.
 #define SUMIARI_MOON_RIMS 1
-#define SUMIARI_RIM_OUTER_ALPHA 170
-#define SUMIARI_RIM_INNER_ALPHA 55
-#define SUMIARI_RIM_SPRITE_ALPHA 150
+#define SUMIARI_RIM_OUTER_ALPHA 85
+// Pixels of the side sliver, fading from RIM_SIDE_ALPHA at the top to nothing.
+#define SUMIARI_RIM_SIDE_LENGTH 10
+#define SUMIARI_RIM_SIDE_ALPHA 50
+// Deciseconds an edge or sprite rim takes to fade in when it appears.
+#define SUMIARI_RIM_FADE_IN 15
+#define SUMIARI_RIM_INNER_ALPHA 25
+#define SUMIARI_RIM_SPRITE_ALPHA 95
 // 3) Dew sparkle: now and then a tiny point of light (one bright pixel, four faint ones around it) fades in and out
 // somewhere on open-sky grass or snow, at a random spot inside the tile. At most DEW_MAX at once and a DEW_CHANCE
 // percent chance of a new one per beauty tick, so it reads as the odd glint, never as noise. On the ground plane,
@@ -4940,8 +4946,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 		var/key = "e[T.x],[T.y]"
 		if(fx_want(key, "[sides]", wanted))
 			var/image/edge = sumiari_fx_style(image(sumiari_rim_icon(sides), T), SUMIARI_FX_LOWER_PLANE)
-			edge.alpha = sumiari_fx_alpha(255)
-			fx_put(key, "[sides]", sumiari_fx_breathe(edge, T, SUMIARI_PULSE_DEPTH * 0.5, 3))
+			fx_put(key, "[sides]", sumiari_fx_fade_in(sumiari_fx_breathe(edge, T, SUMIARI_PULSE_DEPTH * 0.5, 3), sumiari_fx_alpha(255)))
 		return
 	if(!sumiari_spare_turf_open(T))
 		return
@@ -4953,7 +4958,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 		if(fx_want(key, state, wanted))
 			fx_put(key, state, sumiari_rim_image(thing))
 
-// The wall rim for a set of sides (NORTH, WEST, EAST bits): outer pixel bright, the one inside it faint.
+// The wall rim for a set of sides (NORTH, WEST, EAST bits): a soft top catch-light, short fading slivers at the sides.
 /proc/sumiari_rim_icon(sides)
 	var/static/list/made = list()
 	if(made["[sides]"])
@@ -4961,16 +4966,13 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	var/icon/rim = sumiari_blank_icon()
 	if(sides & NORTH)
 		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_INNER_ALPHA), 1, 31, 32, 31)
-	if(sides & WEST)
-		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_INNER_ALPHA), 2, 1, 2, 32)
-	if(sides & EAST)
-		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_INNER_ALPHA), 31, 1, 31, 32)
-	if(sides & NORTH)
 		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_OUTER_ALPHA), 1, 32, 32, 32)
-	if(sides & WEST)
-		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_OUTER_ALPHA), 1, 1, 1, 32)
-	if(sides & EAST)
-		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_OUTER_ALPHA), 32, 1, 32, 32)
+	for(var/step in 0 to SUMIARI_RIM_SIDE_LENGTH - 1)
+		var/a = round(SUMIARI_RIM_SIDE_ALPHA * (1 - step / SUMIARI_RIM_SIDE_LENGTH) ** 2)
+		if(sides & WEST)
+			rim.DrawBox(sumiari_fx_silver(a), 1, 32 - step, 1, 32 - step)
+		if(sides & EAST)
+			rim.DrawBox(sumiari_fx_silver(a), 32, 32 - step, 32, 32 - step)
 	made["[sides]"] = rim
 	return rim
 
@@ -4983,7 +4985,6 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	sumiari_fx_style(rim, sumiari_fx_plane_near(thing.plane))
 	rim.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	rim.color = sumiari_solid_matrix(sumiari_fx_silver(255))
-	rim.alpha = sumiari_fx_alpha(SUMIARI_RIM_SPRITE_ALPHA)
 	rim.filters = list(filter(type = "alpha", icon = sumiari_flora_cutout(thing), x = 1, y = -1, flags = MASK_INVERSE))
 	// Breathe as a solid-color matrix: only its alpha column changes.
 	var/list/solid = rim.color
@@ -4993,7 +4994,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	if(T)
 		animate(rim, color = solid_low, time = max(sumiari_moon_pulse, 2) / 2, delay = sumiari_fx_phase(T.x, T.y, 3), loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
 		animate(color = solid, time = max(sumiari_moon_pulse, 2) / 2, easing = SINE_EASING)
-	return rim
+	return sumiari_fx_fade_in(rim, sumiari_fx_alpha(SUMIARI_RIM_SPRITE_ALPHA))
 
 // 3) Dew sparkle.
 /obj/item/organ/eyes/sumiari/proc/fx_dew()
@@ -5009,6 +5010,12 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	var/image/dew = sumiari_dew_image(T)
 	LAZYSET(fx_dew_images, dew, world.time + SUMIARI_DEW_RISE + SUMIARI_DEW_FALL + 2)
 	fx_client.images += dew
+
+// Fades a steady effect image in from nothing, alongside its breath, so it never pops on as you walk.
+/proc/sumiari_fx_fade_in(image/picture, target_alpha)
+	picture.alpha = 0
+	animate(picture, alpha = target_alpha, time = SUMIARI_RIM_FADE_IN, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+	return picture
 
 /proc/sumiari_dew_image(turf/T)
 	var/image/dew = sumiari_fx_style(image(sumiari_dew_icon(), T), SUMIARI_FX_FLOOR_PLANE)
