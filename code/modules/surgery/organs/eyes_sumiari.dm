@@ -397,6 +397,17 @@
 #define SUMIARI_SWAY_SHIMMER_GAP 70
 // A tile whose lamp light (static corners plus movable lights, no sun) is above this counts as lit by a lamp or fire.
 #define SUMIARI_FX_LAMP_LIT 0.08
+// 7) Moonlit fog: faint silver-lilac mist lying on open-sky water, marsh and the grass at their banks. Each misty tile
+// gets one soft 64x64 wisp (no edges: its opacity falls off like a soft ellipse to nothing) centred on the tile, drifting
+// a few pixels to and fro on its own slow period and thickening and thinning with the moon's breath. Only about half
+// the candidate tiles carry a wisp (picked by position, so it never flickers between scans), at most FOG_MAX. Under
+// mobs, so it pools around legs instead of veiling them; never screen-sized.
+#define SUMIARI_MOON_FOG 1
+#define SUMIARI_FOG_MAX 45
+#define SUMIARI_FOG_ALPHA 70
+#define SUMIARI_FOG_DRIFT 7
+#define SUMIARI_FOG_PERIOD 110
+#define SUMIARI_FOG_VARIANTS 3
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -590,6 +601,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/list/fx_dew_images
 	// Sway: how many plants this scan has swaying (capped at SWAY_MAX).
 	var/fx_sway_count = 0
+	// Fog: wisps this scan.
+	var/fx_fog_count = 0
 	// Bloom: how open the night flowers are drawn right now (null until the first scan).
 	var/fx_bloom
 	var/beauty_timer
@@ -4466,6 +4479,7 @@ var/global/sumiari_moon_shade_enabled = TRUE
 var/global/sumiari_moon_intensity = SUMIARI_MOON_INTENSITY
 var/global/sumiari_moon_pulse = SUMIARI_MOON_PULSE
 var/global/sumiari_moon_sway_enabled = TRUE
+var/global/sumiari_moon_fog_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4669,6 +4683,10 @@ var/global/sumiari_moon_sway_enabled = TRUE
 		if(sumiari_moon_sway_enabled)
 			fx_sway(T, wanted)
 #endif
+#if SUMIARI_MOON_FOG
+		if(sumiari_moon_fog_enabled)
+			fx_fog(T, wanted)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
@@ -4676,6 +4694,7 @@ var/global/sumiari_moon_sway_enabled = TRUE
 // Per-scan caps start again from zero.
 /obj/item/organ/eyes/sumiari/proc/fx_scan_counters_reset()
 	fx_sway_count = 0
+	fx_fog_count = 0
 
 // Effects that change between scans. Each effect adds its own part here.
 /obj/item/organ/eyes/sumiari/proc/fx_live(turf/center)
@@ -5062,6 +5081,59 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	sumiari_fx_breathe(shimmer, T, SUMIARI_PULSE_DEPTH, 6)
 	return list(swayed, shimmer)
 
+// 7) Moonlit fog.
+/proc/sumiari_fog_ground(turf/T)
+	if(istype(T, /turf/open/water))
+		return TRUE
+	if(!is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && !istype(T, /turf/open/floor/rogue/dirt))
+		return FALSE
+	for(var/dir in GLOB.cardinals)
+		if(istype(get_step(T, dir), /turf/open/water))
+			return TRUE
+	return FALSE
+
+/obj/item/organ/eyes/sumiari/proc/fx_fog(turf/T, list/wanted)
+	if(fx_fog_count >= SUMIARI_FOG_MAX || ((T.x * 5 + T.y * 3) % 2) || !sumiari_spare_turf_open(T) || !sumiari_fog_ground(T))
+		return
+	fx_fog_count++
+	var/key = "f[T.x],[T.y]"
+	if(fx_want(key, "1", wanted))
+		fx_put(key, "1", sumiari_fog_image(T))
+
+/proc/sumiari_fog_image(turf/T)
+	var/variant = ((T.x * 11 + T.y * 7) % SUMIARI_FOG_VARIANTS) + 1
+	var/image/wisp = sumiari_fx_style(image(sumiari_fog_icon(variant), T), SUMIARI_FX_GAME_PLANE)
+	wisp.pixel_x = -16
+	wisp.pixel_y = -16
+	wisp.alpha = sumiari_fx_alpha(SUMIARI_FOG_ALPHA)
+	var/period = SUMIARI_FOG_PERIOD + ((T.x * 29 + T.y * 13) % 7) * 8
+	var/drift = ((T.x + T.y) % 2) ? SUMIARI_FOG_DRIFT : -SUMIARI_FOG_DRIFT
+	animate(wisp, pixel_x = -16 + drift, pixel_y = -15, time = period / 2, delay = (T.x * 17 + T.y * 5) % period, loop = -1, easing = SINE_EASING)
+	animate(pixel_x = -16 - drift, pixel_y = -17, time = period / 2, easing = SINE_EASING)
+	return sumiari_fx_breathe(wisp, T, SUMIARI_PULSE_DEPTH * 1.2, 7)
+
+// A soft lilac ellipse, 64x64, opacity (1 - r^2)^2 so it melts away at its rim. Variants differ in stretch.
+/proc/sumiari_fog_icon(variant)
+	var/static/list/made = list()
+	if(made["[variant]"])
+		return made["[variant]"]
+	var/icon/wisp = sumiari_blank_icon()
+	wisp.Scale(64, 64)
+	var/list/tone = rgb2num(SUMIARI_TONE_LILAC)
+	var/stretch_x = list(30, 26, 31)[variant]
+	var/stretch_y = list(18, 22, 15)[variant]
+	for(var/py in 1 to 64)
+		for(var/px in 1 to 64)
+			var/dx = (px - 32.5) / stretch_x
+			var/dy = (py - 32.5) / stretch_y
+			var/r2 = dx * dx + dy * dy
+			if(r2 >= 1)
+				continue
+			var/opacity = (1 - r2) * (1 - r2)
+			wisp.DrawBox(rgb(tone[1], tone[2], tone[3], round(255 * opacity)), px, py)
+	made["[variant]"] = wisp
+	return wisp
+
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
 #if SUMIARI_MOON_FX
@@ -5161,9 +5233,17 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 		bad += "sway"
 	qdel(tuft)
 #endif
+#if SUMIARI_MOON_FOG
+	var/icon/wisp_icon = sumiari_fog_icon(1)
+	if(wisp_icon.Width() != 64 || wisp_icon.GetPixel(32, 32) == null || wisp_icon.GetPixel(1, 1) != null || wisp_icon.GetPixel(64, 32) != null)
+		bad += "fog icon"
+	var/image/wisp = sumiari_fog_image(spot)
+	if(wisp.plane != SUMIARI_FX_GAME_PLANE || wisp.loc != spot)
+		bad += "fog image"
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG]")
 	return TRUE
