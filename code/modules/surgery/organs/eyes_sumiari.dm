@@ -450,6 +450,19 @@
 #define SUMIARI_FROST_FULL (3 HOURS)
 #define SUMIARI_FROST_MELT (5 HOURS)
 #define SUMIARI_FROST_GONE (7 HOURS)
+// 12) Glowing footprints. Every living thing that walks on moonlit open ground (people, beasts, anything) leaves a
+// faint silver-lilac print that glows for a moment and fades over STEP_FADE, brighter at the top of the moon's
+// breath; left and right feet alternate and turn with the walker. Cost: the move hook does one list-length check
+// when no Sumiari eyes are active anywhere and nothing else; otherwise a mob is looked at no more than once per
+// STEP_GAP, and a print is only made for Sumiari whose effect area (FX_RANGE) holds that tile, at most STEPS_MAX
+// glowing at once per viewer. Footprint decals already on the ground (blood, mud) catch a soft moon shimmer: a
+// silver-lilac copy of the decal breathing with the moon. Not on water, open space, roofs or in lamp pools.
+#define SUMIARI_MOON_STEPS 1
+#define SUMIARI_STEP_GAP 2
+#define SUMIARI_STEPS_MAX 30
+#define SUMIARI_STEP_ALPHA 150
+#define SUMIARI_STEP_FADE (4 SECONDS)
+#define SUMIARI_STEP_DECAL_ALPHA 110
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -655,6 +668,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	// Frost: sprites this scan, and the night's frost level (0..1) in twentieths, for this scan.
 	var/fx_frost_count = 0
 	var/fx_frost_step = 0
+	// Footprints glowing right now (image -> expiry).
+	var/list/fx_steps
 	// Bloom: how open the night flowers are drawn right now (null until the first scan).
 	var/fx_bloom
 	var/beauty_timer
@@ -4536,6 +4551,7 @@ var/global/sumiari_moon_beams_enabled = TRUE
 var/global/sumiari_moon_reflect_enabled = TRUE
 var/global/sumiari_moon_petals_enabled = TRUE
 var/global/sumiari_moon_frost_enabled = TRUE
+var/global/sumiari_moon_steps_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4680,6 +4696,9 @@ var/global/sumiari_moon_frost_enabled = TRUE
 		fx_client?.images -= petal
 	fx_petals = null
 	fx_petal_sources = null
+	for(var/image/print as anything in fx_steps)
+		fx_client?.images -= print
+	fx_steps = null
 	fx_bloom = null
 	fx_images = null
 	fx_states = null
@@ -4764,6 +4783,10 @@ var/global/sumiari_moon_frost_enabled = TRUE
 		if(sumiari_moon_frost_enabled && fx_frost_step)
 			fx_frost(T, wanted)
 #endif
+#if SUMIARI_MOON_STEPS
+		if(sumiari_moon_steps_enabled)
+			fx_step_decals(T, wanted)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
@@ -4788,6 +4811,9 @@ var/global/sumiari_moon_frost_enabled = TRUE
 #if SUMIARI_MOON_PETALS
 	fx_live_petals()
 #endif
+#if SUMIARI_MOON_STEPS
+	fx_steps = sumiari_fx_expire(fx_client, fx_steps)
+#endif
 
 #if SUMIARI_MOON_PETALS
 /obj/item/organ/eyes/sumiari/proc/fx_live_petals()
@@ -4800,6 +4826,18 @@ var/global/sumiari_moon_frost_enabled = TRUE
 	var/image/petal = sumiari_petal_image(T)
 	LAZYSET(fx_petals, petal, world.time + SUMIARI_PETAL_FALL + SUMIARI_PETAL_REST + SUMIARI_PETAL_FADE + 2)
 	fx_client.images += petal
+#endif
+#if SUMIARI_MOON_STEPS
+// A walker set foot on T: a fading print, if T is in this viewer's moonlit effect area.
+/obj/item/organ/eyes/sumiari/proc/fx_footstep(turf/T, mob/living/walker)
+	if(!fx_client || !fx_center || fx_center.z != T.z || get_dist(fx_center, T) > SUMIARI_FX_RANGE)
+		return
+	fx_steps = sumiari_fx_expire(fx_client, fx_steps)
+	if(LAZYLEN(fx_steps) >= SUMIARI_STEPS_MAX)
+		return
+	var/image/print = sumiari_step_image(T, walker.dir, walker.sumiari_step_foot)
+	LAZYSET(fx_steps, print, world.time + SUMIARI_STEP_FADE + 2)
+	fx_client.images += print
 #endif
 // Marks key as wanted this scan; TRUE when its image must be (re)built because the state changed.
 /obj/item/organ/eyes/sumiari/proc/fx_want(key, state, list/wanted)
@@ -5525,6 +5563,86 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	made["[sides]"] = edge
 	return edge
 
+// 12) Glowing footprints.
+/mob/living/var/tmp/sumiari_step_next = 0
+/mob/living/var/tmp/sumiari_step_foot = FALSE
+
+/mob/living/Moved()
+	. = ..()
+	if(length(sumiari_active_eyes))
+		sumiari_moon_footstep(src)
+
+/proc/sumiari_moon_footstep(mob/living/walker)
+	if(!sumiari_night_beauty_enabled || !sumiari_moon_steps_enabled || walker.sumiari_step_next > world.time)
+		return
+	walker.sumiari_step_next = world.time + SUMIARI_STEP_GAP
+	var/turf/T = walker.loc
+	if(!isturf(T) || walker.invisibility || (walker.movement_type & FLYING) || isclosedturf(T) || istype(T, /turf/open/water) || istype(T, /turf/open/transparent/openspace) || !sumiari_spare_turf_open(T))
+		return
+	walker.sumiari_step_foot = !walker.sumiari_step_foot
+	for(var/obj/item/organ/eyes/sumiari/eyes as anything in sumiari_active_eyes)
+		eyes.fx_footstep(T, walker)
+
+/proc/sumiari_step_image(turf/T, walk_dir, left_foot)
+	var/image/print = sumiari_fx_style(image(sumiari_step_icon(), T), SUMIARI_FX_FLOOR_PLANE)
+	var/side = left_foot ? -3 : 3
+	if(walk_dir & (EAST | WEST))
+		print.transform = turn(matrix(), 90)
+		print.pixel_y = side
+		print.pixel_x = rand(-2, 2)
+	else
+		print.pixel_x = side
+		print.pixel_y = rand(-2, 2)
+	var/peak = sumiari_fx_alpha(SUMIARI_STEP_ALPHA * (1 - SUMIARI_PULSE_DEPTH + SUMIARI_PULSE_DEPTH * sumiari_fx_breath_now(T)))
+	print.alpha = round(peak * 0.4)
+	animate(print, alpha = peak, time = 3, easing = SINE_EASING)
+	animate(alpha = 0, time = SUMIARI_STEP_FADE - 3, easing = SINE_EASING | EASE_IN)
+	return print
+
+// One soft foot in the middle of a 32x32 icon: a 3x6 oval, bright in the middle, a faint halo around it.
+/proc/sumiari_step_icon()
+	var/static/icon/made
+	if(made)
+		return made
+	var/list/tone = rgb2num(SUMIARI_TONE_LILAC)
+	var/icon/print = sumiari_blank_icon()
+	for(var/py in 11 to 22)
+		for(var/px in 13 to 20)
+			var/dx = (px - 16.5) / 2.6
+			var/dy = (py - 16.5) / 4.6
+			var/r2 = dx * dx + dy * dy
+			if(r2 >= 1)
+				continue
+			var/opacity = (1 - r2)
+			var/mix = 1 - r2 * 0.5
+			print.DrawBox(rgb(round(tone[1] * (1 - mix) + SUMIARI_FX_SILVER_R * mix), round(tone[2] * (1 - mix) + SUMIARI_FX_SILVER_G * mix), round(tone[3] * (1 - mix) + SUMIARI_FX_SILVER_B * mix), round(255 * opacity)), px, py)
+	made = print
+	return print
+
+// Footprint decals (blood, mud) on moonlit open ground: a silver-lilac copy that breathes with the moon.
+/obj/item/organ/eyes/sumiari/proc/fx_step_decals(turf/T, list/wanted)
+	if(isclosedturf(T) || !sumiari_spare_turf_open(T))
+		return
+	for(var/obj/effect/decal/cleanable/blood/footprints/decal in T)
+		if(decal.invisibility)
+			continue
+		var/key = "p[REF(decal)]"
+		var/state = "[decal.entered_dirs]|[decal.exited_dirs]|[decal.blood_state]|[decal.dir]|[length(decal.overlays)]"
+		if(fx_want(key, state, wanted))
+			fx_put(key, state, sumiari_step_decal_image(decal))
+
+/proc/sumiari_step_decal_image(obj/effect/decal/cleanable/blood/footprints/decal)
+	var/image/glow = image(loc = decal)
+	glow.appearance = decal.appearance
+	glow.loc = decal
+	glow.name = ""
+	glow.plane = SUMIARI_FX_FLOOR_PLANE
+	glow.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	glow.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART | KEEP_TOGETHER
+	glow.color = sumiari_sway_shimmer_matrix()
+	glow.alpha = sumiari_fx_alpha(SUMIARI_STEP_DECAL_ALPHA)
+	return sumiari_fx_breathe(glow, get_turf(decal), SUMIARI_PULSE_DEPTH * 1.2, 12)
+
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
 #if SUMIARI_MOON_FX
@@ -5674,9 +5792,20 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	if(paving_icon.GetPixel(10, 32) == null || paving_icon.GetPixel(10, 1) != null)
 		bad += "frost paving"
 #endif
+#if SUMIARI_MOON_STEPS
+	var/image/print = sumiari_step_image(spot, EAST, TRUE)
+	var/icon/print_icon = sumiari_step_icon()
+	if(print.plane != SUMIARI_FX_FLOOR_PLANE || print.pixel_y != -3 || print_icon.GetPixel(16, 16) == null || print_icon.GetPixel(16, 25) != null)
+		bad += "footprint"
+	var/obj/effect/decal/cleanable/blood/footprints/old_print = new(spot)
+	var/image/decal_glow = sumiari_step_decal_image(old_print)
+	if(decal_glow.plane != SUMIARI_FX_FLOOR_PLANE || decal_glow.loc != old_print || !(decal_glow.appearance_flags & KEEP_TOGETHER))
+		bad += "footprint decal"
+	qdel(old_print)
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST] steps=[SUMIARI_MOON_STEPS]")
 	return TRUE
