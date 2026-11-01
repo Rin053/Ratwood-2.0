@@ -263,7 +263,8 @@
 
 // Moon spares non-fire light. At night, on open moonlit sky, a light that is not a flame (glowshroom, glowing moss,
 // wisp, condensed-light orb, spell light) and the tiles it lights show the vivid moon instead of the lamp gray.
-// Flames (sumiari_light_is_fire) stay gray under the moon or not, and away from the moon every light stays gray.
+// Flames (sumiari_light_is_fire) stay gray away from the moon; under the open night sky SUMIARI_MOON_FIRE_BLIND
+// takes their gray off too (the spares then only matter for the moon plate and the level below).
 // How: a Sumiari-only client image of plain white tiles on the hidden SUMIARI_SPARE_PLANE covers each non-fire
 // emitter's open-sky tiles that no flame reaches. The ink mask subtracts it (no gray there) and the moon mask adds
 // it (full vivid there). No screen piece: the plane master is a stock HUD plane master with an asterisk target.
@@ -642,6 +643,14 @@
 // wash again at (LUMINANCE - 1 + LIFT), masked by the wash and the night sky. Drawn brightness is then
 // 1.5 * (1 - w) + (1 + 0.5 + LIFT) * w = 1.5 + LIFT * w for wash w: never under the moonlight, rising with the light.
 #define SUMIARI_MOON_LAMP_HANDOFF 1
+// Fire-blind at night (Ryan): while the moon look is up, fire no longer touches these eyes on open sky. The ink
+// mask subtracts the night skylight (FIRE_BLIND_GAIN x, so any lamp wash under the open night sky goes to 0), so no
+// tile there turns gray and the lamp relay adds nothing; the moon mask already ignores lamp light (hand-off), and the
+// moon effects' lamp gate, the spares' fire cut and the flora halos' lamp check all stand down. A flame's own sprite
+// keeps its gray (the emitter max comes after the subtract). By day the skylight is 0, so fire is gray as before;
+// roofs and caves have no skylight, so fire is gray there too. Vanilla lighting is only read, never changed.
+#define SUMIARI_MOON_FIRE_BLIND 1
+#define SUMIARI_MOON_FIRE_BLIND_GAIN 4
 #define SUMIARI_MOON_LAMP_LIFT 0.15
 #define SUMIARI_PLANE_SKYLIGHT -70
 #define SUMIARI_TARGET_SKYLIGHT "sumiari_skylight"
@@ -1058,6 +1067,10 @@ var/global/turf/sumiari_test_dark_turf
 	add_plate(SUMIARI_PLANE_MASK, SUMIARI_TARGET_MASK, sumiari_offscreen(SUMIARI_TARGET_LIGHT), list(
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_ADD),
+#if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION && SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
+		// No lamp gray, fire or not, under the open night sky (see SUMIARI_MOON_FIRE_BLIND).
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_fire_blind()),
+#endif
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
 #if SUMIARI_MOON_SPARES_NONFIRE
@@ -1752,6 +1765,15 @@ var/global/sumiari_moon_handoff_enabled = TRUE
 
 /proc/sumiari_matrix_skylight(fade)
 	return sumiari_matrix_moon_alpha(sumiari_moon_strength() * fade)
+
+// The skylight's alpha as opaque gray, FIRE_BLIND_GAIN times over (0 while the switch is off). The mask reads only
+// its gray (sumiari_matrix_gray_to_alpha), like the dim plate's alpha-to-gray max.
+/proc/sumiari_matrix_fire_blind()
+	var/k = sumiari_moon_fire_blind ? SUMIARI_MOON_FIRE_BLIND_GAIN : 0
+	return list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k, k, k, 0, 0, 0, 0, 1)
+
+// Runtime switch for SUMIARI_MOON_FIRE_BLIND (the moon effects read it live; the ink mask on the next vision build).
+var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 
 // A mask plate's alpha as opaque gray, for the subtract-then-add max on the dim plate.
 /proc/sumiari_matrix_alpha_to_gray()
@@ -4456,6 +4478,9 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 		return FALSE
 	if(istype(plant, /obj/structure/glowshroom))
 		return TRUE
+	// Fire-blind: under the open night sky no lamp or flame keeps a halo off.
+	if(sumiari_moon_fire_blind && sumiari_is_moon_night() && sumiari_spare_moonlit(T))
+		return TRUE
 	return sumiari_turf_intensity(T) < SUMIARI_SENSE_DARK_MAX
 
 // The plant's sprite with every pixel that has any alpha made solid: the halo is cut out of the whole sprite,
@@ -4589,6 +4614,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			fires += source
 		else if(sumiari_spare_emits(source))
 			calm += source
+	// Fire-blind: no flame cuts a spare at night (spare_tick only runs while the moon look is up).
+	if(sumiari_moon_fire_blind)
+		fires = list()
 	var/list/fire_lit = sumiari_spare_fire_tiles(fires)
 	// The movable flames in view, for the moon effects' lamp gate (sumiari_fx_lamp_light), which runs right after.
 	sumiari_fx_movable_fires = list()
@@ -4609,7 +4637,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 				fires_below += source
 			else if(sumiari_spare_emits(source))
 				calm_below += source
-		if(length(fires_below))
+		if(length(fires_below) && !sumiari_moon_fire_blind)
 			fire_lit_below = sumiari_spare_fire_tiles(fires_below)
 	calm = sumiari_nearest_first(calm + calm_below, center, SUMIARI_SPARE_MAX_EMITTERS)
 	var/list/keep = list()
@@ -5619,6 +5647,9 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 var/global/list/sumiari_fx_movable_fires = list()
 
 /proc/sumiari_fx_lamp_light(turf/T)
+	// Fire-blind: the moon effects only run while the moon look is up, and then fire no longer turns them off.
+	if(sumiari_moon_fire_blind)
+		return 0
 	var/total = 0
 	for(var/atom/source as anything in sumiari_fx_movable_fires)
 		if(!QDELETED(source))
