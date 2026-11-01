@@ -63,3 +63,76 @@
 	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	alpha = 0
 	vis_flags = NONE
+
+/**
+ * Invisible stand-in that draws a movable light's visible_mask on the map.
+ *
+ * BYOND only draws an atom (and its vis_contents) for a viewer who can see the turf that atom covers.
+ * The light mask used to sit in the vis_contents of whatever carried the light, so any opaque thing
+ * between the viewer and the light source (a tree, reeds, a closed door) hid the source turf and
+ * took the whole light pool with it, even though the lit ground around it was still in plain view.
+ *
+ * The carrier sits on the source's turf with bounds that cover the full light radius. BYOND draws an
+ * atom when ANY turf it covers is visible, so the pool now shows whenever the viewer can see lit
+ * ground, whether or not the source itself is hidden. The mask itself is unchanged, so the
+ * brightness, size and colour of every light stay exactly what they were.
+ *
+ * Because big bounds put the carrier in the contents of every covered turf, it is made inert:
+ * not an obj or mob, no density, no mouse interaction, anchored, flying, and it ignores
+ * forced moves, throws, conveyors, explosions, fire and non-forced deletion. Only the
+ * overlay_lighting component moves it, by setting loc directly so no Entered/Crossed procs run.
+ */
+/atom/movable/light_carrier
+	name = ""
+	icon = null
+	anchored = TRUE
+	density = FALSE
+	opacity = FALSE
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	movement_type = FLYING
+	move_resist = INFINITY
+	appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM
+	vis_flags = NONE
+
+/atom/movable/light_carrier/Destroy(force)
+	if(!force)
+		return QDEL_HINT_LETMELIVE
+	vis_contents.Cut()
+	loc = null
+	return ..()
+
+/atom/movable/light_carrier/Cross(atom/movable/AM)
+	return TRUE
+
+/atom/movable/light_carrier/Crossed(atom/movable/AM, oldloc)
+	return
+
+/atom/movable/light_carrier/Uncross(atom/movable/AM, atom/newloc)
+	return TRUE
+
+/atom/movable/light_carrier/Uncrossed(atom/movable/AM)
+	return
+
+/atom/movable/light_carrier/Move(atom/newloc, direct, glide_size_override)
+	return FALSE
+
+/atom/movable/light_carrier/forceMove(atom/destination)
+	return FALSE
+
+/atom/movable/light_carrier/throw_at(atom/target, range, speed, mob/thrower, spin, diagonals_first, datum/callback/callback, force, extra)
+	return FALSE
+
+/atom/movable/light_carrier/ConveyorMove(movedir)
+	return
+
+/atom/movable/light_carrier/can_zFall(turf/source, levels, turf/target, direction)
+	return FALSE
+
+/atom/movable/light_carrier/ex_act(severity, target, epicenter, devastation_range, heavy_impact_range, light_impact_range, flame_range)
+	return
+
+/atom/movable/light_carrier/fire_act(added, maxstacks)
+	return
+
+/atom/movable/light_carrier/acid_act(acidpwr, acid_volume)
+	return FALSE
