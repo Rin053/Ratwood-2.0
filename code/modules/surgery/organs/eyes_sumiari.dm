@@ -532,7 +532,7 @@
 #define SUMIARI_WASH_INK "ink"
 #define SUMIARI_WASH_COLOR "color"
 // The mask, cookie, knee, dim and moon plates, each a master plus the child that draws the capture,
-// plus the ink, sun, dim and moon relays (36 today), with a little headroom.
+// plus the ink, sun, dim and moon relays (38 today), with a little headroom.
 #define SUMIARI_PIECE_CAP 40
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 #define SUMIARI_SEE_IN_DARK 8
@@ -587,6 +587,13 @@
 // brighter for a human is a step brighter here, with the same falloff and shape. Full light is untouched.
 #define SUMIARI_DARKVISION 1
 #define SUMIARI_DARKVISION_FLOOR 0.36
+// Moonlit open sky at night keeps the full moon look (sat 1.75, lum 1.5): the skylight plate (sky plane plus cliff
+// faces, feathered like the moon mask, times the moon fade) is full light for the dim plate, so the dim is off under
+// the night sky and eases back in across dawn and dusk. A floor there (0.36, or a moonlight share of 0.45, or a
+// lamp-matched 0.8) left the moonlit night dull, and the moon look's 1.5x against the gray wash's 1x made lamp pools
+// darker rings in brighter moonlight. Caves, roofs and the whole day keep the proportional dim.
+#define SUMIARI_PLANE_SKYLIGHT -70
+#define SUMIARI_TARGET_SKYLIGHT "sumiari_skylight"
 #define SUMIARI_PLANE_DIM -69
 #define SUMIARI_TARGET_DIM "sumiari_dim"
 
@@ -654,6 +661,7 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	// The moon mask sampler. Its alpha matrix is rebuilt on a time-of-day change, so night silver turns on and off.
 	var/atom/movable/screen/sumiari_sampler/moon_plate
 	var/atom/movable/screen/sumiari_sampler/knee_plate
+	var/atom/movable/screen/sumiari_sampler/skylight_plate
 	// Night senses: body -> image shown to sense_client, and body -> the dir/lying the image was copied at.
 	var/list/sensed_images
 	var/list/sensed_shapes
@@ -795,6 +803,7 @@ var/global/turf/sumiari_test_dark_turf
 	glare_plate = null
 	moon_plate = null
 	knee_plate = null
+	skylight_plate = null
 	clear_master_wash(M)
 	clear_screen_pieces(M)
 	restore_render_targets(M)
@@ -893,6 +902,7 @@ var/global/turf/sumiari_test_dark_turf
 	glare_plate = null
 	moon_plate = null
 	knee_plate = null
+	skylight_plate = null
 	if(screen_pieces)
 		QDEL_LIST(screen_pieces)
 	screen_pieces = list()
@@ -928,6 +938,8 @@ var/global/turf/sumiari_test_dark_turf
 		moon_plate = sampler
 	if(target_name == SUMIARI_TARGET_KNEE)
 		knee_plate = sampler
+	if(target_name == SUMIARI_TARGET_SKYLIGHT)
+		skylight_plate = sampler
 	screen_pieces += plate
 	screen_pieces += sampler
 	return sampler
@@ -1008,8 +1020,14 @@ var/global/turf/sumiari_test_dark_turf
 	dim_filters += list(
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
-		filter(type = "color", color = sumiari_matrix_dim_alpha()),
 	)
+#if SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
+	// Night sky: max with the skylight (full under open sky at night, 0 by day).
+	dim_filters += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_SUBTRACT)
+	dim_filters += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_ADD)
+	add_plate(SUMIARI_PLANE_SKYLIGHT, SUMIARI_TARGET_SKYLIGHT, SUNLIGHTING_RENDER_TARGET, sumiari_skylight_filters())
+#endif
+	dim_filters += filter(type = "color", color = sumiari_matrix_dim_alpha())
 	add_plate(SUMIARI_PLANE_DIM, SUMIARI_TARGET_DIM, SUMIARI_LIGHTING_SOURCE, dim_filters)
 #endif
 	// *SUNLIGHT_PLANE, not the lighting-plane light image. A campfire is full-bright on *lighting and black here.
@@ -1268,6 +1286,12 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 		return
 	sumiari_grain_under_moon(owner, fade, time_ds)
 	var/halo_target = round(SUMIARI_FLORA_ALPHA * fade)
+	if(skylight_plate)
+		if(time_ds <= 0)
+			animate(skylight_plate)
+			skylight_plate.filters = sumiari_skylight_filters(fade)
+		else if(length(skylight_plate.filters))
+			animate(skylight_plate.filters[length(skylight_plate.filters)], color = sumiari_matrix_skylight(fade), time = time_ds)
 	if(time_ds <= 0)
 		if(moon_plate)
 			animate(moon_plate)
@@ -1349,6 +1373,8 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 		)
 	if(moon_plate)
 		moon_plate.filters = sumiari_moon_mask_filters()
+	if(skylight_plate)
+		skylight_plate.filters = sumiari_skylight_filters()
 
 /atom/movable/screen/plane_master/proc/apply_sumiari_sight(mob/mymob)
 	if(!sumiari_plane_is_world(plane))
@@ -1583,6 +1609,23 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	return list(gain, 0, 0, 0, 0, gain, 0, 0, 0, 0, gain, 0, 0, 0, 0, 1, 0, 0, 0, 0)
 
 var/global/sumiari_darkvision_enabled = TRUE
+
+// Open sky as light for the dim plate: the sky plane (plus cliff faces), feathered like the moon mask, as opaque
+// gray moon strength * fade. fade null reads the live moon fade.
+/proc/sumiari_skylight_filters(fade)
+	if(isnull(fade))
+		fade = sumiari_moon_fade()
+	. = list()
+#if SUMIARI_MOON_CLIFFS
+	. += filter(type = "layer", render_source = SUMIARI_CLIFF_RENDER_TARGET, blend_mode = BLEND_ADD)
+#endif
+	. += filter(type = "color", color = sumiari_matrix_sky_scaled(1))
+	. += filter(type = "blur", size = SUMIARI_MOON_EDGE_BLUR)
+	. += filter(type = "color", color = sumiari_matrix_skylight(fade))
+
+/proc/sumiari_matrix_skylight(fade)
+	var/k = sumiari_moon_strength() * fade
+	return list(k, k, k, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
 
 // Black RGB, alpha = (1 - FLOOR) * (1 - R): the share of a pixel's brightness a human loses to the dark.
 /proc/sumiari_matrix_dim_alpha()
