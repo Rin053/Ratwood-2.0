@@ -413,8 +413,9 @@
 #define SUMIARI_SWAY_SHIMMER_HIGH 80
 #define SUMIARI_SWAY_SHIMMER_GAP 70
 // Lamp light on a tile (static corners plus movable lights, no sun). Firebowls reach a dozen tiles, and their faint
-// tail (under LAMP_LIT) still shows the full moon look, so effects stay there. From LAMP_LIT to LAMP_FULL the effects
-// thin out tile by tile in a fixed dither (a soft edge that does not flicker); past LAMP_FULL the tile is fire-lit.
+// tail (under LAMP_LIT) still shows the full moon look, so effects stay there. From LAMP_LIT to LAMP_FULL every
+// effect on the tile fades smoothly (alpha, sway depth, petal fall), a soft edge toward the fire; past LAMP_FULL the
+// tile is fire-lit and has none.
 #define SUMIARI_FX_LAMP_LIT 0.15
 #define SUMIARI_FX_LAMP_FULL 0.4
 // 7) Moonlit mist: a few faint, low, thin streaks of silver-lilac mist lying on open-sky marsh, river and pond water
@@ -4810,6 +4811,8 @@ var/global/sumiari_moon_beams_enabled = TRUE
 var/global/sumiari_moon_reflect_enabled = TRUE
 var/global/sumiari_moon_shrine_enabled = TRUE
 var/global/sumiari_moon_petals_enabled = TRUE
+// The lamp share of the tile whose effect is being built (see sumiari_fx_lamp_share); 1 outside a build.
+var/global/sumiari_fx_tile_share = 1
 var/global/sumiari_moon_frost_enabled = TRUE
 var/global/sumiari_moon_steps_enabled = TRUE
 
@@ -4904,7 +4907,7 @@ var/global/sumiari_moon_steps_enabled = TRUE
 
 // An effect alpha at the master intensity.
 /proc/sumiari_fx_alpha(alpha)
-	return clamp(round(alpha * sumiari_moon_intensity), 0, 255)
+	return clamp(round(alpha * sumiari_moon_intensity * sumiari_fx_tile_share), 0, 255)
 
 // Where a tile sits in the moon's breath, in deciseconds 0..pulse: a slow wave across the map plus a little jitter.
 /proc/sumiari_fx_phase(x, y, salt = 0)
@@ -5109,7 +5112,7 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	if(!sumiari_moon_petals_enabled || !length(fx_petal_sources) || LAZYLEN(fx_petals) >= SUMIARI_PETAL_MAX)
 		return
 	var/turf/T = pick(fx_petal_sources)
-	if(!prob(SUMIARI_PETAL_CHANCE * (0.6 + 0.8 * sumiari_fx_breath_now(T))))
+	if(!prob(SUMIARI_PETAL_CHANCE * (0.6 + 0.8 * sumiari_fx_breath_now(T)) * sumiari_fx_lamp_share(T)))
 		return
 	var/image/petal = sumiari_petal_image(sumiari_petal_landing(T))
 	LAZYSET(fx_petals, petal, world.time + SUMIARI_PETAL_FALL + SUMIARI_PETAL_REST + SUMIARI_PETAL_FADE + 2)
@@ -5474,19 +5477,23 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 	return list(0, 0, 0, sw * strength, 0, 0, 0, se * strength, 0, 0, 0, nw * strength, 0, 0, 0, ne * strength, rgb[1] / 255, rgb[2] / 255, rgb[3] / 255, 0)
 
 // Moon effect checks that do not depend on the map or the time of day.
-// A tile some lamp, fire or movable light reaches (reads vanilla lighting only; the sun and moon do not count).
-/proc/sumiari_fx_lamp_lit(turf/T)
-	if(!T)
-		return FALSE
+// Lamp, fire and movable light on a tile (reads vanilla lighting only; the sun and moon do not count).
+/proc/sumiari_fx_lamp_light(turf/T)
 	var/total = T.dynamic_lumcount
 	for(var/datum/lighting_corner/corner as anything in T.corners)
 		if(corner)
 			total += (corner.lum_r + corner.lum_g + corner.lum_b) / 12
-	if(total <= SUMIARI_FX_LAMP_LIT)
-		return FALSE
-	if(total >= SUMIARI_FX_LAMP_FULL)
-		return TRUE
-	return ((T.x * 73 + T.y * 151) % 97) / 97 < (total - SUMIARI_FX_LAMP_LIT) / (SUMIARI_FX_LAMP_FULL - SUMIARI_FX_LAMP_LIT)
+	return total
+
+/proc/sumiari_fx_lamp_lit(turf/T)
+	return sumiari_fx_lamp_share(T) <= 0
+
+// How much of the moon effects a tile keeps by its lamp light: 1 (none) .. 0 (fire-lit), a smoothstep in tenths.
+/proc/sumiari_fx_lamp_share(turf/T)
+	if(!T)
+		return 0
+	var/t = clamp((sumiari_fx_lamp_light(T) - SUMIARI_FX_LAMP_LIT) / (SUMIARI_FX_LAMP_FULL - SUMIARI_FX_LAMP_LIT), 0, 1)
+	return round(1 - t * t * (3 - 2 * t), 0.1)
 
 // 6) Swaying, shimmering plants.
 GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
@@ -5499,7 +5506,8 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 )))
 
 /obj/item/organ/eyes/sumiari/proc/fx_sway(turf/T, list/wanted)
-	if(isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_fx_lamp_lit(T))
+	var/share = sumiari_fx_lamp_share(T)
+	if(isclosedturf(T) || !sumiari_spare_turf_open(T) || share <= 0)
 		return
 	for(var/obj/plant in T)
 		if(fx_sway_count >= SUMIARI_SWAY_MAX)
@@ -5508,9 +5516,11 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 			continue
 		fx_sway_count++
 		var/key = "s[REF(plant)]"
-		var/state = "[plant.icon]|[plant.icon_state]|[plant.dir]|[plant.plane]|[plant.layer]|[plant.color]"
+		var/state = "[plant.icon]|[plant.icon_state]|[plant.dir]|[plant.plane]|[plant.layer]|[plant.color]|[share]"
 		if(fx_want(key, state, wanted))
+			sumiari_fx_tile_share = share
 			var/list/pair = sumiari_sway_images(plant)
+			sumiari_fx_tile_share = 1
 			fx_put(key, state, pair[1])
 			fx_put("[key]g", state, pair[2])
 		else
@@ -5521,7 +5531,7 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 /proc/sumiari_sway_params(obj/plant)
 	var/seed = abs(plant.x * 37 + plant.y * 91 + plant.pixel_x * 7 + plant.pixel_y * 13 + length("[plant.type]") * 5)
 	var/period = SUMIARI_SWAY_PERIOD + seed % 27
-	var/skew = SUMIARI_SWAY_SKEW * (60 + (seed * 7) % 71) / 100
+	var/skew = SUMIARI_SWAY_SKEW * (60 + (seed * 7) % 71) / 100 * sumiari_fx_lamp_share(get_turf(plant))
 	if((seed >> 3) % 2)
 		skew = -skew
 	return list(period, skew, seed)
@@ -5661,7 +5671,10 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 	return FALSE
 
 /obj/item/organ/eyes/sumiari/proc/fx_beam(turf/T, list/wanted)
-	if(fx_beam_count >= SUMIARI_BEAM_MAX || ((T.x * 2 + T.y) % 3) || isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_turf_has_tree(T) || sumiari_fx_lamp_lit(T))
+	if(fx_beam_count >= SUMIARI_BEAM_MAX || ((T.x * 2 + T.y) % 3) || isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_turf_has_tree(T))
+		return
+	var/share = sumiari_fx_lamp_share(T)
+	if(share <= 0)
 		return
 	var/trees = 0
 	for(var/dir in GLOB.alldirs)
@@ -5671,8 +5684,10 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 		return
 	fx_beam_count++
 	var/key = "m[T.x],[T.y]"
-	if(fx_want(key, "1", wanted))
-		fx_put(key, "1", sumiari_beam_image(T))
+	if(fx_want(key, "[share]", wanted))
+		sumiari_fx_tile_share = share
+		fx_put(key, "[share]", sumiari_beam_image(T))
+		sumiari_fx_tile_share = 1
 
 /proc/sumiari_beam_image(turf/T)
 	var/image/beam = sumiari_fx_style(image(sumiari_beam_icon(), T), SUMIARI_FX_UPPER_PLANE)
@@ -5750,16 +5765,19 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 )))
 
 /obj/item/organ/eyes/sumiari/proc/fx_shrine(turf/T, list/wanted)
-	if(fx_shrine_count >= SUMIARI_SHRINE_MAX || !sumiari_spare_turf_open(T) || sumiari_fx_lamp_lit(T))
+	var/share = sumiari_fx_lamp_share(T)
+	if(fx_shrine_count >= SUMIARI_SHRINE_MAX || !sumiari_spare_turf_open(T) || share <= 0)
 		return
 	for(var/obj/holy in T)
 		if(!is_type_in_typecache(holy, GLOB.sumiari_shrine_types) || holy.invisibility || !holy.icon_state)
 			continue
 		fx_shrine_count++
 		var/key = "n[REF(holy)]"
-		var/state = "[holy.icon]|[holy.icon_state]|[holy.dir]"
+		var/state = "[holy.icon]|[holy.icon_state]|[holy.dir]|[share]"
 		if(fx_want(key, state, wanted))
+			sumiari_fx_tile_share = share
 			fx_put(key, state, sumiari_shrine_image(holy))
+			sumiari_fx_tile_share = 1
 		return
 
 /proc/sumiari_shrine_image(obj/holy)
@@ -5941,7 +5959,8 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 				var/image/paving = sumiari_fx_style(image(sumiari_frost_paving_icon(sides), T), SUMIARI_FX_FLOOR_PLANE)
 				paving.alpha = sumiari_fx_alpha(SUMIARI_FROST_PAVING_ALPHA * level)
 				fx_put(key, "[sides]|[fx_frost_step]", sumiari_fx_breathe(paving, T, SUMIARI_PULSE_DEPTH * 0.5, 11))
-	var/sways = sumiari_moon_sway_enabled && SUMIARI_MOON_SWAY && !sumiari_fx_lamp_lit(T)
+	var/sway_share = sumiari_fx_lamp_share(T)
+	var/sways = sumiari_moon_sway_enabled && SUMIARI_MOON_SWAY && sway_share > 0
 	for(var/obj/thing in T)
 		if(fx_frost_count >= SUMIARI_FROST_MAX)
 			return
@@ -5949,7 +5968,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 			continue
 		fx_frost_count++
 		var/key = "i[REF(thing)]"
-		var/state = "[thing.icon]|[thing.icon_state]|[thing.dir]|[thing.plane]|[fx_frost_step]|[sways]"
+		var/state = "[thing.icon]|[thing.icon_state]|[thing.dir]|[thing.plane]|[fx_frost_step]|[sways]|[sway_share]"
 		if(fx_want(key, state, wanted))
 			fx_put(key, state, sumiari_frost_image(thing, level, sways && is_type_in_typecache(thing, GLOB.sumiari_sway_types)))
 
