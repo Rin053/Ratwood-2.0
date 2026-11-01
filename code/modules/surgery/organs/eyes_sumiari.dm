@@ -217,8 +217,10 @@
 #define SUMIARI_SPARE_PLANE -46
 #define SUMIARI_SPARE_RENDER_TARGET "*sumiari_moon_spare"
 // Emitters looked for within this many tiles of the Sumiari, at most this many spared, each out to this radius.
+// The nearest are spared first. A kneestinger patch is dozens of small lights: at 16, picked in scan order, half a
+// courtyard of them stayed gray. Each spared emitter is one cached image, rebuilt only when its tiles change.
 #define SUMIARI_SPARE_SCAN 11
-#define SUMIARI_SPARE_MAX_EMITTERS 16
+#define SUMIARI_SPARE_MAX_EMITTERS 64
 #define SUMIARI_SPARE_RANGE_MAX 9
 // Each spared tile's strength (sumiari_spare_strength) follows the light's own reach: full out to its range plus
 // SPARE_MARGIN tiles, then a SPARE_FEATHER-tile fade, and never under its falloff (distance, inner range, curve,
@@ -3857,20 +3859,32 @@ GLOBAL_LIST_INIT(sumiari_fire_light_types, typecacheof(list(
 // Checked first: subtypes of a flame path that are not flames.
 GLOBAL_LIST_INIT(sumiari_nonfire_light_types, typecacheof(list(
 	/obj/item/flashlight/flare/light,	// condensed light (the Light spell orb), a flare subtype
+	/obj/structure/glowshroom,			// kneestingers
+	/obj/structure/flora,				// glowing moss, glow flowers and shrooms (flammable, but not burning)
+	/obj/structure/fluff/statue/gargoyle/moss,	// mossy gargoyles glow; the candle one is a flame and is listed above
+	/obj/item/natural,					// glowing herbs and drops
+	/obj/item/reagent_containers/food/snacks/grown,
+)))
+// Exceptions to the exceptions: these are flames even though a non-fire path above covers them.
+GLOBAL_LIST_INIT(sumiari_fire_light_overrides, typecacheof(list(
+	/obj/structure/fluff/statue/gargoyle/moss/candles,
 )))
 
 // Flame or not. Exceptions, then the flame paths, then anything actually burning. Everything else is not a flame.
 /proc/sumiari_light_is_fire(atom/source)
 	if(!source)
 		return FALSE
-	if(is_type_in_typecache(source, GLOB.sumiari_nonfire_light_types))
-		return FALSE
-	if(is_type_in_typecache(source, GLOB.sumiari_fire_light_types))
-		return TRUE
+	// Anything actually burning is a flame, whatever it is (a kneestinger set alight).
 	if(isobj(source))
 		var/obj/thing = source
 		if(thing.resistance_flags & ON_FIRE)
 			return TRUE
+	if(is_type_in_typecache(source, GLOB.sumiari_fire_light_overrides))
+		return TRUE
+	if(is_type_in_typecache(source, GLOB.sumiari_nonfire_light_types))
+		return FALSE
+	if(is_type_in_typecache(source, GLOB.sumiari_fire_light_types))
+		return TRUE
 	if(isliving(source))
 		var/mob/living/burning = source
 		if(burning.on_fire)
@@ -3935,34 +3949,56 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			continue
 		if(sumiari_light_is_fire(source))
 			fires += source
-		else if(length(calm) < SUMIARI_SPARE_MAX_EMITTERS && sumiari_spare_emits(source))
+		else if(sumiari_spare_emits(source))
 			calm += source
 	var/list/fire_lit = sumiari_spare_fire_tiles(fires)
-	// Open space shows the level below: a candle or forge down there must keep the tiles above it gray too.
+	// Open space shows the level below: a candle or forge down there must keep the tiles above it gray too, and a
+	// kneestinger down there must keep its glow in moon color when seen from above (its gray cookie shows through).
 	var/list/fire_lit_below
+	var/list/calm_below = list()
 	var/turf/below_center = GET_TURF_BELOW(center)
 	if(below_center)
 		var/list/fires_below = list()
 		for(var/atom/source as anything in sumiari_emitters_near(below_center, SUMIARI_SPARE_SCAN))
-			if(get_turf(source) && sumiari_light_is_fire(source))
+			if(!get_turf(source))
+				continue
+			if(sumiari_light_is_fire(source))
 				fires_below += source
+			else if(sumiari_spare_emits(source))
+				calm_below += source
 		if(length(fires_below))
 			fire_lit_below = sumiari_spare_fire_tiles(fires_below)
+	calm = sumiari_nearest_first(calm + calm_below, center, SUMIARI_SPARE_MAX_EMITTERS)
 	var/list/keep = list()
 	for(var/atom/source as anything in calm)
-		var/turf/origin = get_turf(source)
+		var/turf/lamp = get_turf(source)
+		// A light on the level below is drawn on this level's tiles above it, where open space shows it.
+		var/below = (lamp.z != center.z)
+		var/turf/origin = below ? locate(lamp.x, lamp.y, center.z) : lamp
+		if(!origin)
+			continue
 		var/range = clamp(CEILING(source.light_outer_range + SUMIARI_SPARE_MARGIN + SUMIARI_SPARE_FEATHER, 1), 1, SUMIARI_SPARE_RANGE_MAX)
 		var/list/tiles = list()
-		var/list/key_parts = list("[origin.x],[origin.y],[origin.z]")
+		var/list/key_parts = list("[origin.x],[origin.y],[origin.z],[below]")
 		for(var/dx in -range to range)
 			for(var/dy in -range to range)
 				if((dx * dx) + (dy * dy) > range * range)
 					continue
 				var/turf/T = locate(origin.x + dx, origin.y + dy, origin.z)
-				if(!sumiari_spare_moonlit(T) || fire_lit[T])
+				if(!T || fire_lit[T])
 					continue
-				if(fire_lit_below && istransparentturf(T) && fire_lit_below[GET_TURF_BELOW(T)])
-					continue
+				if(below)
+					// Only through open space, onto moonlit ground down there that no flame down there reaches.
+					var/turf/down = locate(lamp.x + dx, lamp.y + dy, lamp.z)
+					if(!istransparentturf(T) || !down || (fire_lit_below && fire_lit_below[down]))
+						continue
+					if(!sumiari_spare_moonlit(down) && !sumiari_spare_moonlit(T))
+						continue
+				else
+					if(!sumiari_spare_moonlit(T))
+						continue
+					if(fire_lit_below && istransparentturf(T) && fire_lit_below[GET_TURF_BELOW(T)])
+						continue
 				var/strength = sumiari_spare_strength(source, dx, dy)
 				if(strength < SUMIARI_SPARE_MIN)
 					continue
@@ -3986,6 +4022,24 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			spare_images -= source
 			spare_keys -= source
 #endif
+
+// The emitters sorted nearest first (a level below counts as one tile farther), at most cap of them.
+/proc/sumiari_nearest_first(list/emitters, turf/center, cap)
+	var/list/buckets = list()
+	for(var/atom/source as anything in emitters)
+		var/turf/T = get_turf(source)
+		var/dist = max(abs(T.x - center.x), abs(T.y - center.y)) + abs(T.z - center.z) + 1
+		while(length(buckets) < dist)
+			buckets += list(list())
+		var/list/bucket = buckets[dist]
+		bucket += source
+	var/list/sorted = list()
+	for(var/list/bucket as anything in buckets)
+		for(var/source in bucket)
+			if(length(sorted) >= cap)
+				return sorted
+			sorted += source
+	return sorted
 
 // Tiles a flame can light: within its range (plus half a tile) and in its view, so a wall candle behind a wall
 // does not keep the open sky outside gray. One view() per flame per tick.
