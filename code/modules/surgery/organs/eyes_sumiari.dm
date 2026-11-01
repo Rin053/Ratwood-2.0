@@ -532,7 +532,7 @@
 #define SUMIARI_WASH_INK "ink"
 #define SUMIARI_WASH_COLOR "color"
 // The mask, cookie, knee, dim and moon plates, each a master plus the child that draws the capture,
-// plus the ink, sun, dim and moon relays (38 today), with a little headroom.
+// plus the ink, sun, dim and moon relays (39 today), with a little headroom.
 #define SUMIARI_PIECE_CAP 40
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 #define SUMIARI_SEE_IN_DARK 8
@@ -592,6 +592,13 @@
 // the night sky and eases back in across dawn and dusk. A floor there (0.36, or a moonlight share of 0.45, or a
 // lamp-matched 0.8) left the moonlit night dull, and the moon look's 1.5x against the gray wash's 1x made lamp pools
 // darker rings in brighter moonlight. Caves, roofs and the whole day keep the proportional dim.
+// Lamp hand-off under the night sky. The moon look is LUMINANCE (1.5x) and the gray wash 1x, and the moon mask
+// stepped aside for lamp light, so a lamp pool read darker than the moonlight around it. With the hand-off the moon
+// mask no longer subtracts static or movable lamp light (emitter sprites still do), and a lamp relay adds the gray
+// wash again at (LUMINANCE - 1 + LIFT), masked by the wash and the night sky. Drawn brightness is then
+// 1.5 * (1 - w) + (1 + 0.5 + LIFT) * w = 1.5 + LIFT * w for wash w: never under the moonlight, rising with the light.
+#define SUMIARI_MOON_LAMP_HANDOFF 1
+#define SUMIARI_MOON_LAMP_LIFT 0.15
 #define SUMIARI_PLANE_SKYLIGHT -70
 #define SUMIARI_TARGET_SKYLIGHT "sumiari_skylight"
 #define SUMIARI_PLANE_DIM -69
@@ -1023,8 +1030,8 @@ var/global/turf/sumiari_test_dark_turf
 	)
 #if SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
 	// Night sky: max with the skylight (full under open sky at night, 0 by day).
-	dim_filters += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_SUBTRACT)
-	dim_filters += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_ADD)
+	dim_filters += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_alpha_to_gray())
+	dim_filters += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_ADD, color = sumiari_matrix_alpha_to_gray())
 	add_plate(SUMIARI_PLANE_SKYLIGHT, SUMIARI_TARGET_SKYLIGHT, SUNLIGHTING_RENDER_TARGET, sumiari_skylight_filters())
 #endif
 	dim_filters += filter(type = "color", color = sumiari_matrix_dim_alpha())
@@ -1051,6 +1058,16 @@ var/global/turf/sumiari_test_dark_turf
 	sun.blockscharging = FALSE
 	screen_pieces += ink
 	screen_pieces += sun
+#if SUMIARI_MOON_LAMP_HANDOFF
+	var/atom/movable/screen/sumiari_relay/lamp = new
+	lamp.name = "sumiari lamp"
+	lamp.plane = SUMIARI_RELAY_PLANE
+	lamp.layer = SUMIARI_RELAY_LAYER_BASE + 3
+	lamp.alpha = 0
+	lamp.blend_mode = BLEND_ADD
+	lamp.blockscharging = FALSE
+	screen_pieces += lamp
+#endif
 #if SUMIARI_DARKVISION
 	// Over every relay, under fullscreen and the HUD. Glow sprites above the lighting stay full, as for a human.
 	var/atom/movable/screen/sumiari_relay/dim = new
@@ -1240,6 +1257,17 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	var/atom/movable/screen/sumiari_relay/sun = sumiari_find_piece(src, "sumiari sun")
 	var/atom/movable/screen/sumiari_relay/moon = sumiari_find_piece(src, "sumiari moon")
 	var/atom/movable/screen/sumiari_relay/dim = sumiari_find_piece(src, "sumiari dim")
+	var/atom/movable/screen/sumiari_relay/lamp = sumiari_find_piece(src, "sumiari lamp")
+	if(lamp)
+		lamp.alpha = 0
+		lamp.filters = null
+		if(wash_mode == SUMIARI_WASH_LIVE && sumiari_moon_handoff_enabled)
+			var/list/lamp_filters = world_stack_filters()
+			lamp_filters += filter(type = "color", color = sumiari_scale_matrix_rgb(sumiari_color_matrix(SUMIARI_MONO_FULL, 0), SUMIARI_MOON_LUMINANCE - 1 + SUMIARI_MOON_LAMP_LIFT))
+			lamp_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MASK))
+			lamp_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT))
+			lamp.filters = lamp_filters
+			lamp.alpha = 255
 	if(dim)
 		dim.alpha = 0
 		dim.filters = null
@@ -1609,9 +1637,10 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	return list(gain, 0, 0, 0, 0, gain, 0, 0, 0, 0, gain, 0, 0, 0, 0, 1, 0, 0, 0, 0)
 
 var/global/sumiari_darkvision_enabled = TRUE
+var/global/sumiari_moon_handoff_enabled = TRUE
 
-// Open sky as light for the dim plate: the sky plane (plus cliff faces), feathered like the moon mask, as opaque
-// gray moon strength * fade. fade null reads the live moon fade.
+// Open sky at night as a mask: the sky plane (plus cliff faces), feathered like the moon mask, white with alpha
+// moon strength * fade. Light for the dim plate, and the mask of the lamp hand-off relay. fade null reads the live moon fade.
 /proc/sumiari_skylight_filters(fade)
 	if(isnull(fade))
 		fade = sumiari_moon_fade()
@@ -1624,8 +1653,11 @@ var/global/sumiari_darkvision_enabled = TRUE
 	. += filter(type = "color", color = sumiari_matrix_skylight(fade))
 
 /proc/sumiari_matrix_skylight(fade)
-	var/k = sumiari_moon_strength() * fade
-	return list(k, k, k, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+	return sumiari_matrix_moon_alpha(sumiari_moon_strength() * fade)
+
+// A mask plate's alpha as opaque gray, for the subtract-then-add max on the dim plate.
+/proc/sumiari_matrix_alpha_to_gray()
+	return list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1)
 
 // Black RGB, alpha = (1 - FLOOR) * (1 - R): the share of a pixel's brightness a human loses to the dark.
 /proc/sumiari_matrix_dim_alpha()
@@ -1707,12 +1739,17 @@ var/global/sumiari_darkvision_enabled = TRUE
 		// Feather the open-sky edge (ledges, roofs, cliff tops) so the moon grade fades across it instead of
 		// stopping on a tile line. Before the lamp subtract, so firelit pixels stay exactly gray.
 		filter(type = "blur", size = SUMIARI_MOON_EDGE_BLUR),
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_SUBTRACT),
-		// Movable lights too (a held torch, a lantern): their pool is gray for these eyes, so the moon stays off it.
-		// The cookie is the same brightness the gray mask reads, so the moon never decides what is lit.
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
 	)
+#if SUMIARI_MOON_LAMP_HANDOFF
+	if(!sumiari_moon_handoff_enabled)
+#endif
+		. += list(
+			filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_SUBTRACT),
+			// Movable lights too (a held torch, a lantern): their pool is gray for these eyes, so the moon stays off it.
+			// The cookie is the same brightness the gray mask reads, so the moon never decides what is lit.
+			filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
+		)
+	. += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT)
 #if SUMIARI_MOON_SPARES_NONFIRE
 	// Spared tiles (non-fire light on open moonlit sky) go back to full vivid.
 	. += filter(type = "layer", render_source = SUMIARI_SPARE_RENDER_TARGET, blend_mode = BLEND_ADD)
