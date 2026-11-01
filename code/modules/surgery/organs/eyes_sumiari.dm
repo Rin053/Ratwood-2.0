@@ -156,7 +156,8 @@
 #define SUMIARI_GLINT_COLOR "#eef2ff"
 #define SUMIARI_GLINT_ALPHA 255
 // Dew: moonlit grass (and moss) may twinkle too, not only water and metal. 0 = shiny tiles only.
-#define SUMIARI_GLINT_DEW 1
+// Off while the moon-effect dew (SUMIARI_MOON_DEW) runs: that one is finer and lives on the ground.
+#define SUMIARI_GLINT_DEW (1 - SUMIARI_MOON_DEW)
 // 5) Moon-cast shadows: the moon matrix adds a cool indigo that is strongest on black and gone at white
 //    (k * indigo * (1 - luma)). Only a trace of red (blue >> green > red): a larger red share on top of the cool
 //    sheen turned dim brown brick pink.
@@ -290,6 +291,17 @@
 #define SUMIARI_RIM_OUTER_ALPHA 170
 #define SUMIARI_RIM_INNER_ALPHA 55
 #define SUMIARI_RIM_SPRITE_ALPHA 150
+// 3) Dew sparkle: now and then a tiny point of light (one bright pixel, four faint ones around it) fades in and out
+// somewhere on open-sky grass or snow, at a random spot inside the tile. At most DEW_MAX at once and a DEW_CHANCE
+// percent chance of a new one per beauty tick, so it reads as the odd glint, never as noise. On the ground plane,
+// so grass tufts sit under it and anyone standing there covers it.
+#define SUMIARI_MOON_DEW 1
+#define SUMIARI_DEW_MAX 4
+#define SUMIARI_DEW_CHANCE 35
+#define SUMIARI_DEW_SPOTS_MAX 60
+#define SUMIARI_DEW_ALPHA 230
+#define SUMIARI_DEW_RISE (1.2 SECONDS)
+#define SUMIARI_DEW_FALL (1.8 SECONDS)
 
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
@@ -472,6 +484,9 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/list/fx_states
 	var/turf/fx_center
 	var/fx_age = 0
+	// Dew: grass tiles found by the last scan, and the live sparkles (image -> expiry).
+	var/list/fx_dew_spots
+	var/list/fx_dew_images
 	var/beauty_timer
 	var/list/glint_images
 	var/list/glint_spots
@@ -4169,6 +4184,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 
 var/global/sumiari_moon_water_enabled = TRUE
 var/global/sumiari_moon_rims_enabled = TRUE
+var/global/sumiari_moon_dew_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4258,6 +4274,10 @@ var/global/sumiari_moon_rims_enabled = TRUE
 /obj/item/organ/eyes/sumiari/proc/clear_fx()
 	for(var/key in fx_images)
 		fx_client?.images -= fx_images[key]
+	for(var/image/dew as anything in fx_dew_images)
+		fx_client?.images -= dew
+	fx_dew_images = null
+	fx_dew_spots = null
 	fx_images = null
 	fx_states = null
 	fx_center = null
@@ -4287,6 +4307,7 @@ var/global/sumiari_moon_rims_enabled = TRUE
 
 /obj/item/organ/eyes/sumiari/proc/fx_scan(turf/center)
 	var/list/wanted = list()
+	fx_dew_spots = null
 	var/turf/low = locate(max(center.x - SUMIARI_FX_RANGE, 1), max(center.y - SUMIARI_FX_RANGE, 1), center.z)
 	var/turf/high = locate(min(center.x + SUMIARI_FX_RANGE, world.maxx), min(center.y + SUMIARI_FX_RANGE, world.maxy), center.z)
 	for(var/turf/T as anything in block(low, high))
@@ -4298,13 +4319,19 @@ var/global/sumiari_moon_rims_enabled = TRUE
 		if(sumiari_moon_rims_enabled)
 			fx_rims(T, wanted)
 #endif
+#if SUMIARI_MOON_DEW
+		if(sumiari_moon_dew_enabled && LAZYLEN(fx_dew_spots) < SUMIARI_DEW_SPOTS_MAX && is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && sumiari_spare_turf_open(T))
+			LAZYADD(fx_dew_spots, T)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
 
 // Effects that change between scans. Each effect adds its own part here.
 /obj/item/organ/eyes/sumiari/proc/fx_live(turf/center)
-	return
+#if SUMIARI_MOON_DEW
+	fx_dew()
+#endif
 
 // Marks key as wanted this scan; TRUE when its image must be (re)built because the state changed.
 /obj/item/organ/eyes/sumiari/proc/fx_want(key, state, list/wanted)
@@ -4430,6 +4457,42 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	rim.filters = list(filter(type = "alpha", icon = sumiari_flora_cutout(thing), x = 1, y = -1, flags = MASK_INVERSE))
 	return rim
 
+// 3) Dew sparkle.
+/obj/item/organ/eyes/sumiari/proc/fx_dew()
+	for(var/image/old as anything in fx_dew_images)
+		if(fx_dew_images[old] <= world.time)
+			fx_client.images -= old
+			fx_dew_images -= old
+	if(!sumiari_moon_dew_enabled || !length(fx_dew_spots) || LAZYLEN(fx_dew_images) >= SUMIARI_DEW_MAX || !prob(SUMIARI_DEW_CHANCE))
+		return
+	var/turf/T = pick(fx_dew_spots)
+	if(locate(/mob/living) in T)
+		return
+	var/image/dew = sumiari_dew_image(T)
+	LAZYSET(fx_dew_images, dew, world.time + SUMIARI_DEW_RISE + SUMIARI_DEW_FALL + 2)
+	fx_client.images += dew
+
+/proc/sumiari_dew_image(turf/T)
+	var/image/dew = sumiari_fx_style(image(sumiari_dew_icon(), T), SUMIARI_FX_FLOOR_PLANE)
+	dew.pixel_x = rand(-12, 12)
+	dew.pixel_y = rand(-12, 12)
+	dew.alpha = 0
+	animate(dew, alpha = SUMIARI_DEW_ALPHA, time = SUMIARI_DEW_RISE, easing = SINE_EASING)
+	animate(alpha = 0, time = SUMIARI_DEW_FALL, easing = SINE_EASING)
+	return dew
+
+/proc/sumiari_dew_icon()
+	var/static/icon/made
+	if(made)
+		return made
+	made = sumiari_blank_icon()
+	made.DrawBox(sumiari_fx_silver(90), 15, 16)
+	made.DrawBox(sumiari_fx_silver(90), 17, 16)
+	made.DrawBox(sumiari_fx_silver(90), 16, 15)
+	made.DrawBox(sumiari_fx_silver(90), 16, 17)
+	made.DrawBox(rgb(246, 248, 255, 255), 16, 16)
+	return made
+
 // Moon effect checks that do not depend on the map or the time of day.
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
@@ -4465,9 +4528,15 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 		bad += "rim image plane=[rock_rim.plane]"
 	qdel(rock)
 #endif
+#if SUMIARI_MOON_DEW
+	var/image/dew = sumiari_dew_image(spot)
+	var/icon/dew_icon = sumiari_dew_icon()
+	if(dew.plane != SUMIARI_FX_FLOOR_PLANE || abs(dew.pixel_x) > 12 || dew_icon.GetPixel(16, 16) == null || dew_icon.GetPixel(20, 20) != null || SUMIARI_GLINT_DEW)
+		bad += "dew"
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW]")
 	return TRUE
