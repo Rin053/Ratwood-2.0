@@ -110,6 +110,7 @@ GLOBAL_VAR(restart_counter)
 	GLOB.obfs_x = rand(-2500, 2500)
 	GLOB.obfs_y = rand(-2500, 2500)
 
+	sumiari_note_test_request(params)
 	Master.Initialize(10, FALSE, TRUE)
 
 	#ifdef UNIT_TESTS

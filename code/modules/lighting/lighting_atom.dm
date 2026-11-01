@@ -59,6 +59,8 @@
 			light.update(.)
 		else
 			light = new/datum/light_source(src, .)
+	// Sumiari eyes wash an emitter's own sprite. The marker draws only on a hidden plane.
+	sumiari_mark_light_source(!!light)
 
 
 /atom/proc/set_light_range(new_inner_range, new_outer_range)
