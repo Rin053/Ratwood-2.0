@@ -650,12 +650,16 @@
 // A wider client view (zoomed out) raises it by the view's extra radius (sumiari view_extra), up to VIEW_EXTRA_MAX.
 #define SUMIARI_SEE_IN_DARK 8
 // Every per-tile range around the viewer is tuned for the 15x15 view (radius 7): cliff/spill 9, effects 8,
-// flora 8, glints 7, spare scan 11, spirits 4, see_in_dark 8. When the client's view is wider (zoomed out), each of
-// them grows by the view's extra radius, and the per-area caps (spots, sway, frost, reflections...)
-// grow with the area, so the far tiles of a zoomed-out screen get the same look. VIEW_EXTRA_MAX caps it for
-// performance: a 25x25 view (radius 12, extra 5) is the widest that gets full coverage.
+// flora 8, glints 7, spare scan 11, spirits 4, see_in_dark 8. Each grows by the view's extra radius: how much wider
+// the client's view is than 15x15, plus how far the screen is panned off the mob. Shift+right-click "look into the
+// distance" (look_further) pans the client by up to 7 tiles, plus up to 4 more at high perception, so up to
+// PAN_MAX tiles on each axis. The bleed grid, the day cut, the seals, the wall faces, the effects and see_in_dark
+// all follow it, and the per-area caps (spots, sway, frost, reflections...) grow with the covered area, so a
+// zoomed-out or panned screen gets the same look to its edge. Past the covered square nothing is drawn, which is the
+// plain look (moon on open sky), never a cut. VIEW_EXTRA_MAX covers a 25x25 view (extra 5) panned the full PAN_MAX.
 #define SUMIARI_VIEW_BASE_RADIUS 7
-#define SUMIARI_VIEW_EXTRA_MAX 5
+#define SUMIARI_PAN_MAX 11
+#define SUMIARI_VIEW_EXTRA_MAX 16
 // Darkness-sneak raises invisibility to SEE_INVISIBLE_LIVING + skill*0.55 + 1 (about 29 at legendary).
 // 35 sees that concealment and stays under SEE_INVISIBLE_OBSERVER (60), so ghosts stay hidden.
 #define SUMIARI_SEE_INVISIBLE (SEE_INVISIBLE_LIVING + 10)
@@ -792,6 +796,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	see_invisible = SUMIARI_SEE_INVISIBLE
 	lighting_alpha = SUMIARI_LIGHTING_ALPHA
 	var/vision_on = FALSE
+	// The moon fade the look was last set to (apply_moon_fade); null until the vision is first attached.
+	var/applied_fade = null
 	// Client view radius beyond the 15x15 one (0..VIEW_EXTRA_MAX), refreshed each beauty tick (refresh_view_reach).
 	var/view_extra = 0
 	var/list/saved_render_targets
@@ -934,6 +940,7 @@ var/global/turf/sumiari_test_dark_turf
 		hold_lighting_capture()
 		capture_world_planes()
 		apply_wash_filters()
+		sync_time_look(TRUE)
 		start_night_senses()
 		return
 	// The view grew or shrank. A stale canvas would resample the lighting plane, which is the tile step.
@@ -947,7 +954,25 @@ var/global/turf/sumiari_test_dark_turf
 	capture_world_planes()
 	build_screen_pieces()
 	present_screen_pieces()
+	sync_time_look(TRUE)
 	start_night_senses()
+
+// Puts every time-of-day filter on the current clock at once (no fade). Run when the vision is attached (spawn,
+// login, reconnect, eye insert) so the first frame is already the right look (no moon by day), and from every beauty
+// tick: a look built while the clock was settling, or across a time jump with no sun-step signal, is caught within a
+// tick. While the fade ticker runs it owns the fade, so this leaves it alone.
+/obj/item/organ/eyes/sumiari/proc/sync_time_look(force = FALSE)
+	if(!vision_on || wash_mode != SUMIARI_WASH_LIVE)
+		return FALSE
+	if(sumiari_moon_fade_timer && !force)
+		return FALSE
+	var/fade = sumiari_moon_fade()
+	if(!force && !isnull(applied_fade) && abs(fade - applied_fade) < 0.01)
+		return FALSE
+	refresh_time_filters()
+	apply_wash_filters()
+	apply_moon_fade(fade, 0)
+	return TRUE
 
 /obj/item/organ/eyes/sumiari/proc/release_client_vision(mob/living/carbon/M)
 	stop_night_senses(M)
@@ -1559,6 +1584,7 @@ var/global/sumiari_moon_glow_stages = 5
 /obj/item/organ/eyes/sumiari/proc/apply_moon_fade(fade, time_ds)
 	if(!vision_on || wash_mode != SUMIARI_WASH_LIVE)
 		return
+	applied_fade = fade
 	sumiari_grain_under_moon(owner, fade, time_ds)
 	var/halo_target = round(SUMIARI_FLORA_ALPHA * fade)
 	if(mask_plate)
@@ -1963,11 +1989,19 @@ var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 	var/bias = day * (-SUMIARI_GLARE_START / span)
 	return list(0, 0, 0, scale, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, bias)
 
+// Station time for the moon look. Round-start characters are made, equipped and logged in during game setup,
+// before SSticker sets round_start_time, so station_time() there counts the whole lobby wait and can read night at
+// noon. Until the round is playing this is the time the clock will show once it starts (the offset alone).
+/proc/sumiari_station_time(wtime = world.time)
+	if(SSticker && SSticker.current_state < GAME_STATE_PLAYING)
+		return station_time(FALSE, SSticker.round_start_time + wtime - world.time)
+	return station_time(FALSE, wtime)
+
 // Moon fade, 0..1, at a station time (null: now). 1 through the night, 0 by day, a smoothstep ramp across
 // SUMIARI_MOON_FADE_IN_* (dusk) and SUMIARI_MOON_FADE_OUT_* (early dawn).
 /proc/sumiari_moon_phase(time)
 	if(isnull(time))
-		time = station_time()
+		time = sumiari_station_time()
 	var/ramp
 	if(time >= SUMIARI_MOON_FADE_IN_END || time < SUMIARI_MOON_FADE_OUT_START)
 		return 1
@@ -1989,7 +2023,7 @@ var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 // TRUE while station time is inside a fade window (the fade ticker runs only then).
 /proc/sumiari_moon_fading(time)
 	if(isnull(time))
-		time = station_time()
+		time = sumiari_station_time()
 	return (time >= SUMIARI_MOON_FADE_IN_START && time < SUMIARI_MOON_FADE_IN_END) || (time >= SUMIARI_MOON_FADE_OUT_START && time < SUMIARI_MOON_FADE_OUT_END)
 
 // Peak moon strength for the silver layer's mask. On through the night and the whole of both fade windows; the
@@ -2228,8 +2262,8 @@ var/global/sumiari_moon_fade_timer
 		return
 	var/was_running = !isnull(sumiari_moon_fade_timer)
 	sumiari_moon_fade_timer = null
-	var/now = station_time()
-	var/later = station_time(FALSE, world.time + SUMIARI_MOON_FADE_TICK)
+	var/now = sumiari_station_time()
+	var/later = sumiari_station_time(world.time + SUMIARI_MOON_FADE_TICK)
 	if(!sumiari_moon_fading(now) && !sumiari_moon_fading(later))
 		if(was_running || !from_sun_change)
 			// Window over: settle the mask and the beauty to the plain night or day look.
@@ -4564,11 +4598,13 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	beauty_client = null
 	clear_spirits()
 
-// Extra view radius for a client view (a number or "WxH"): how much wider than the 15x15 one, 0..VIEW_EXTRA_MAX.
-/proc/sumiari_view_extra(view)
+// Extra view radius for a client view (a number or "WxH"): how much wider than the 15x15 one, plus the pan in pixels
+// (client pixel_x, pixel_y from look_further) rounded up to whole tiles, 0..VIEW_EXTRA_MAX.
+/proc/sumiari_view_extra(view, pan_x = 0, pan_y = 0)
 	var/list/size = getviewsize(view || world.view)
 	var/radius = CEILING((max(size[1], size[2]) - 1) / 2, 1)
-	return clamp(radius - SUMIARI_VIEW_BASE_RADIUS, 0, SUMIARI_VIEW_EXTRA_MAX)
+	var/pan = min(CEILING(max(abs(pan_x), abs(pan_y)) / world.icon_size, 1), SUMIARI_PAN_MAX)
+	return clamp(max(radius - SUMIARI_VIEW_BASE_RADIUS, 0) + pan, 0, SUMIARI_VIEW_EXTRA_MAX)
 
 // A tile range tuned for the 15x15 view, grown by the current view's extra radius.
 /obj/item/organ/eyes/sumiari/proc/reach(base)
@@ -4580,10 +4616,11 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	var/norm = SUMIARI_VIEW_BASE_RADIUS * 2 + 1
 	return round(base * (wide * wide) / (norm * norm))
 
-// Picks up a changed client view (zoom). On a change every cached scan is dropped so the next ticks rebuild over the
+// Picks up a changed client view (zoom) or pan. On a change every cached scan is dropped so the next ticks rebuild over the
 // new area, and see_in_dark follows the view so dark tiles at the new edge still show.
 /obj/item/organ/eyes/sumiari/proc/refresh_view_reach()
-	var/extra = sumiari_view_extra(owner?.client?.view)
+	var/client/viewer = owner?.client
+	var/extra = sumiari_view_extra(viewer?.view, viewer?.pixel_x, viewer?.pixel_y)
 	if(extra == view_extra)
 		return FALSE
 	view_extra = extra
@@ -4598,6 +4635,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	if(QDELETED(src) || !vision_on)
 		stop_night_beauty()
 		return
+	sync_time_look()
 	refresh_view_reach()
 	// Keep the cone's wedge over the relays (and so over the violet glow) even if the HUD was rebuilt since the
 	// pieces were presented: a wedge left at HUD_LAYER sits under the redrawn world and the glow shows through.
@@ -4891,9 +4929,30 @@ GLOBAL_LIST_INIT(sumiari_fire_light_overrides, typecacheof(list(
 			return TRUE
 	return FALSE
 
-// Open moonlit sky, the same tiles the moon mask calls sky (open or its border), never roofed or underground.
+// Open moonlit sky, the same tiles the moon mask calls sky (open or its border), never roofed or underground. A tile
+// under an open-air walkway counts too (sumiari_moon_cover).
 /proc/sumiari_spare_turf_open(turf/T)
-	return T?.outdoor_effect && T.outdoor_effect.state != SKY_BLOCKED
+	if(!T)
+		return FALSE
+	if(T.outdoor_effect && T.outdoor_effect.state != SKY_BLOCKED)
+		return TRUE
+	return sumiari_moon_cover(T)
+
+// Outdoors under an open-air walkway, bridge or terrace: an open tile in an outdoors area whose turf above is an
+// open floor in an outdoors area, itself under the open sky. The game counts it roofed (vanilla draws it as an
+// unlit room), but it is a courtyard or path in the open, so these eyes give it the full moon look like open sky
+// (the cliff images draw its sky). A second roof, a building's floor (indoors area) or a cave never counts.
+/proc/sumiari_moon_cover(turf/T)
+	if(!T || isclosedturf(T))
+		return FALSE
+	var/area/here = T.loc
+	if(!here?.outdoors)
+		return FALSE
+	var/turf/above = get_step_multiz(T, UP)
+	if(!above || isclosedturf(above) || !above.outdoor_effect || above.outdoor_effect.state == SKY_BLOCKED)
+		return FALSE
+	var/area/up = above.loc
+	return up?.outdoors
 
 // A tile the moon reaches: open sky, or a wall face beside open sky (the moon plate spills onto it). Without the wall
 // faces, a calm light against a cliff would carve a dark gray disc out of the moonlit rock.
@@ -5354,7 +5413,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	for(var/turf/T as anything in block(low, high))
 		var/wall = isclosedturf(T) && !T.outdoor_effect
 		var/index = (T.y - gy0) * gw + (T.x - gx0) + 1
-		if(!wall && !(grid[index] == SUMIARI_BLEED_ROOF && steps[index]))
+		// A walkway-covered tile is a SKY cell with no vanilla sky overlay: its sky is drawn here.
+		var/cover = grid[index] == SUMIARI_BLEED_SKY && (!T.outdoor_effect || T.outdoor_effect.state == SKY_BLOCKED)
+		if(!wall && !cover && !(grid[index] == SUMIARI_BLEED_ROOF && steps[index]))
 			continue
 		// The same corner order the sky overlay uses (update_outdoor_effect_overlays): r SW, g SE, b NW, a NE.
 		// Seen from indoors a shut door under the sky does not light the wall faces beside it.
@@ -5624,9 +5685,52 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/base_cap = eyes.area_cap(SUMIARI_FROST_MAX)
 	eyes.view_extra = old_extra
 	if(sumiari_view_extra("15x15") != 0 || sumiari_view_extra(7) != 0 || sumiari_view_extra("21x15") != 3 || sumiari_view_extra("25x25") != 5 \
-		|| sumiari_view_extra("41x41") != SUMIARI_VIEW_EXTRA_MAX || sumiari_view_extra("11x11") != 0 || zoom_reach != SUMIARI_CLIFF_RANGE + 5 \
+		|| sumiari_view_extra("61x61") != SUMIARI_VIEW_EXTRA_MAX || sumiari_view_extra("11x11") != 0 || zoom_reach != SUMIARI_CLIFF_RANGE + 5 \
 		|| base_cap != SUMIARI_FROST_MAX || zoom_cap != round(SUMIARI_FROST_MAX * 625 / 225) || eyes.see_in_dark != SUMIARI_SEE_IN_DARK + eyes.view_extra)
 		bad += "zoom reach=[zoom_reach] cap=[zoom_cap]/[base_cap] extra21=[sumiari_view_extra("21x15")] see_in_dark=[eyes.see_in_dark]/[eyes.view_extra]"
+	// Shift+right-click pan (look_further, up to PAN_MAX tiles an axis): the pan adds to the reach, so the square
+	// still covers the panned screen's far edge plus the glide margin, even on a 25x25 view panned all the way.
+	var/pan_px = world.icon_size
+	if(sumiari_view_extra("15x15", pan_px * 11, 0) != 11 || sumiari_view_extra("15x15", 0, -pan_px * 4) != 4 || sumiari_view_extra("15x15", 16, 0) != 1 \
+		|| sumiari_view_extra("15x15", pan_px * 30, 0) != SUMIARI_PAN_MAX || sumiari_view_extra("25x25", pan_px * 11, -pan_px * 11) != 16 \
+		|| SUMIARI_CLIFF_RANGE + sumiari_view_extra("25x25", pan_px * SUMIARI_PAN_MAX, 0) < 12 + SUMIARI_PAN_MAX + 2 \
+		|| SUMIARI_SEE_IN_DARK + sumiari_view_extra("15x15", pan_px * SUMIARI_PAN_MAX, 0) < SUMIARI_VIEW_BASE_RADIUS + SUMIARI_PAN_MAX)
+		bad += "pan reach 11=[sumiari_view_extra("15x15", pan_px * 11, 0)] wide=[sumiari_view_extra("25x25", pan_px * 11, -pan_px * 11)]"
+	// Open-air walkway cover: on the vampire lair level the courtyard under the walkway is moonlit like open sky,
+	// the manor's own rooms are not. Only checked where that map is loaded.
+	for(var/lair_z in 1 to world.maxz)
+		var/turf/court = locate(24, 4, lair_z)
+		var/turf/room = locate(24, 26, lair_z)
+		if(!istype(court?.loc, /area/rogue/outdoors/woods/vampire_lair) || isclosedturf(court) || !istype(room?.loc, /area/rogue/indoors))
+			continue
+		if(!sumiari_moon_cover(court) || !sumiari_spare_turf_open(court) || sumiari_moon_cover(room))
+			var/turf/court_up = get_step_multiz(court, UP)
+			bad += "walkway cover court=[sumiari_moon_cover(court)] room=[sumiari_moon_cover(room)] z=[lair_z] up=[court_up?.type] up_sky=[court_up?.outdoor_effect?.state] up_area=[court_up?.loc?.type]"
+		log_world("SUMIARI TEST walkway cover checked z=[lair_z]")
+		break
+	if(sumiari_moon_cover(null) || sumiari_spare_turf_open(null))
+		bad += "cover null"
+	// Midday: the look the vision gets when it is attached (spawn, login, eye insert) has no moon at all from the
+	// first frame, and a stale night look is put right by the next beauty tick.
+	if(eyes.vision_on && eyes.wash_mode == SUMIARI_WASH_LIVE && !sumiari_moon_fade_timer)
+		var/old_offset = SSticker.gametime_offset
+		SSticker.gametime_offset = (SSticker.gametime_offset + (12 HOURS) - sumiari_station_time() + 864000) % 864000
+		eyes.attach_client_vision()
+		var/noon_fade = eyes.applied_fade
+		var/noon_night = sumiari_is_moon_night()
+		var/list/noon_moon = eyes.moon_plate?.filters
+		var/noon_moon_color = length(noon_moon) ? jointext(noon_moon[length(noon_moon)]:color, ",") : "none"
+		var/list/day_moon = sumiari_moon_mask_filters(FALSE)
+		var/day_moon_color = jointext(day_moon[length(day_moon)]:color, ",")
+		eyes.apply_moon_fade(1, 0)
+		var/resynced = eyes.sync_time_look()
+		var/stale_fade = eyes.applied_fade
+		var/setup_time = sumiari_station_time()
+		var/clock_ok = SSticker.current_state < GAME_STATE_PLAYING ? setup_time == station_time(FALSE, SSticker.round_start_time) : setup_time == station_time()
+		SSticker.gametime_offset = old_offset
+		eyes.sync_time_look(TRUE)
+		if(noon_fade != 0 || noon_night || noon_moon_color != day_moon_color || !resynced || stale_fade != 0 || abs(setup_time - (12 HOURS)) > 600 || !clock_ok)
+			bad += "midday attach fade=[noon_fade] night=[noon_night] moon=[noon_moon_color]/[day_moon_color] resync=[resynced]/[stale_fade] time=[setup_time]"
 	// Equal openings, equal reach: a window in a south wall and one in a west wall, each with and without a roof
 	// over it, all walk the room the same (opening step 1, next tile step 2), and the unroofed one is sealed.
 	// 3x4, south outside: row 1 sky, row 2 wall|opening|wall, rows 3-4 room.
@@ -6360,7 +6464,7 @@ GLOBAL_LIST_INIT(sumiari_bloom_types, typecacheof(list(
 // How open the night flowers are at a station time (null: now), 0..1.
 /proc/sumiari_bloom_level(time)
 	if(isnull(time))
-		time = station_time()
+		time = sumiari_station_time()
 	var/ramp
 	if(time >= SUMIARI_BLOOM_OPEN_END || time < SUMIARI_BLOOM_CLOSE_START)
 		return 1
@@ -7197,7 +7301,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 // How much frost the night has laid down at a station time (null: now), 0..1, eased.
 /proc/sumiari_frost_level(time)
 	if(isnull(time))
-		time = station_time()
+		time = sumiari_station_time()
 	var/ramp
 	if(time >= SUMIARI_FROST_START)
 		ramp = (time - SUMIARI_FROST_START) / (24 HOURS - SUMIARI_FROST_START + SUMIARI_FROST_FULL)
