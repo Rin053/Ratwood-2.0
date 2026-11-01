@@ -833,6 +833,9 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/client/cliff_client
 	var/list/cliff_images
 	var/list/cliff_keys
+	// Openings under open sky (see sumiari_moon_bleed_openings): turf -> sun-plane seal image, turf -> corner key.
+	var/list/seal_images
+	var/list/seal_keys
 	// Moon effects: the client the images were shown to, key -> image, key -> state, and the scan bookkeeping.
 	var/client/fx_client
 	var/list/fx_images
@@ -4997,8 +5000,12 @@ var/global/sumiari_moon_spares_enabled = TRUE
 /obj/item/organ/eyes/sumiari/proc/clear_cliffs()
 	for(var/turf/T as anything in cliff_images)
 		cliff_client?.images -= cliff_images[T]
+	for(var/turf/T as anything in seal_images)
+		cliff_client?.images -= seal_images[T]
 	cliff_images = null
 	cliff_keys = null
+	seal_images = null
+	seal_keys = null
 	cliff_client = null
 
 // The bleed walk around the owner (cliff square plus SPILL_RANGE + 1, so a spill from just off screen still walks in),
@@ -5014,8 +5021,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/gw = min(center.x + margin, world.maxx) - gx0 + 1
 	var/gh = min(center.y + margin, world.maxy) - gy0 + 1
 	var/list/grid = sumiari_moon_bleed_cells(gx0, gy0, gw, gh, center.z)
+	var/list/openings = sumiari_moon_bleed_openings(grid, gw, gh)
 	var/list/steps = sumiari_moon_bleed_grid(grid, gw, gh, SUMIARI_SPILL_RANGE)
-	bleed_cache = list(key, grid, steps, gx0, gy0, gw, gh)
+	bleed_cache = list(key, grid, steps, gx0, gy0, gw, gh, openings)
 	return bleed_cache
 
 /obj/item/organ/eyes/sumiari/proc/clear_spill()
@@ -5282,7 +5290,47 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			cliff_client.images -= cliff_images[T]
 			cliff_images -= T
 			cliff_keys -= T
+	// An unroofed opening still has vanilla's full open-sky overlay on the sun plane, which the moon masks read. For
+	// these eyes it is sealed at moon night: an overlay on the sun plane, over the vanilla one, keeping only the corners
+	// that touch real open sky, so the tile reads like a roofed opening and the cliff image above lights it like one.
+	var/list/sealed = list()
+	for(var/n in map[8])
+		var/cx = (n - 1) % gw + 1
+		var/cy = round((n - 1) / gw) + 1
+		var/turf/T = locate(gx0 + cx - 1, gy0 + cy - 1, center.z)
+		if(!T || get_dist(T, center) > SUMIARI_CLIFF_RANGE)
+			continue
+		var/fr = sumiari_moon_seal_corner(grid, gw, gh, cx, cy, -1, -1)
+		var/fg = sumiari_moon_seal_corner(grid, gw, gh, cx, cy, 1, -1)
+		var/fb = sumiari_moon_seal_corner(grid, gw, gh, cx, cy, -1, 1)
+		var/fa = sumiari_moon_seal_corner(grid, gw, gh, cx, cy, 1, 1)
+		sealed[T] = TRUE
+		var/key = "[fr]|[fg]|[fb]|[fa]"
+		if(seal_keys?[T] == key)
+			continue
+		if(seal_images?[T])
+			cliff_client.images -= seal_images[T]
+		var/image/seal = sumiari_spill_image(T, fr, fg, fb, fa)
+		LAZYSET(seal_images, T, seal)
+		LAZYSET(seal_keys, T, key)
+		cliff_client.images += seal
+	for(var/turf/T as anything in seal_images)
+		if(!sealed[T])
+			cliff_client.images -= seal_images[T]
+			seal_images -= T
+			seal_keys -= T
 #endif
+
+// 1 if a corner of a sealed opening touches a real open-sky cell (unshut SKY), else 0.
+/proc/sumiari_moon_seal_corner(list/grid, w, h, cx, cy, dx, dy)
+	for(var/list/offset in list(list(dx, 0), list(0, dy), list(dx, dy)))
+		var/x = cx + offset[1]
+		var/y = cy + offset[2]
+		if(x < 1 || y < 1 || x > w || y > h)
+			continue
+		if(grid[(y - 1) * w + x] == SUMIARI_BLEED_SKY)
+			return 1
+	return 0
 
 // What the sky overlay would draw on an open tile with these corners (create_sunlight_overlay), on the cliff plane.
 /proc/sumiari_cliff_image(turf/T, fr, fg, fb, fa)
@@ -5334,6 +5382,33 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			else
 				grid[index] = sumiari_moon_shut(T) ? SUMIARI_BLEED_WALL : SUMIARI_BLEED_ROOF
 	return grid
+
+// A door, window or doorway in a wall line counts as the first roofed step whether or not the map put a roof over it.
+// Roofs are the turfs on the z above, and mappers roof a wall row differently on different sides of a building (often
+// the south wall row is left open to the sky and a west or east one roofed, or the other way round). An unroofed
+// opening was a SKY cell: the walk started one tile deeper, and vanilla drew that tile as full open sky, so light came
+// one tile farther in through it than through the same window on a roofed wall (Ryan: the west window spilled more
+// than the south one). A sky cell with walls (closed or shut) on both sides along one axis and a roofed floor on one
+// side of the other axis becomes ROOF (SKY_SHUT becomes WALL). Changes grid in place; returns the changed indices.
+/proc/sumiari_moon_bleed_openings(list/grid, w, h)
+	. = list()
+	var/list/was = grid.Copy()
+	for(var/y in 2 to h - 1)
+		for(var/x in 2 to w - 1)
+			var/n = (y - 1) * w + x
+			var/cell = was[n]
+			if(cell != SUMIARI_BLEED_SKY && cell != SUMIARI_BLEED_SKY_SHUT)
+				continue
+			var/west = was[n - 1]
+			var/east = was[n + 1]
+			var/south = was[n - w]
+			var/north = was[n + w]
+			var/across = west == SUMIARI_BLEED_WALL && east == SUMIARI_BLEED_WALL && ((south == SUMIARI_BLEED_ROOF) != (north == SUMIARI_BLEED_ROOF))
+			var/upright = south == SUMIARI_BLEED_WALL && north == SUMIARI_BLEED_WALL && ((west == SUMIARI_BLEED_ROOF) != (east == SUMIARI_BLEED_ROOF))
+			if(!across && !upright)
+				continue
+			grid[n] = (cell == SUMIARI_BLEED_SKY) ? SUMIARI_BLEED_ROOF : SUMIARI_BLEED_WALL
+			. += n
 
 // Steps in from open sky (1..BLEED_RANGE, 0 = not reached) for every ROOF cell: a cardinal walk from SKY cells
 // (not SKY_SHUT) through ROOF cells only.
@@ -5446,6 +5521,29 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	if(!GLOB.sumiari_frost_skip[/obj/structure/flora/roguegrass/bush/wall] || !GLOB.sumiari_frost_skip[/obj/structure/flora/roguegrass/bush] \
 		|| GLOB.sumiari_frost_skip[/obj/structure/flora/roguegrass] || !GLOB.sumiari_frost_types[/obj/structure/flora/roguegrass])
 		bad += "frost skip"
+	// Equal openings, equal reach: a window in a south wall and one in a west wall, each with and without a roof
+	// over it, all walk the room the same (opening step 1, next tile step 2), and the unroofed one is sealed.
+	// 3x4, south outside: row 1 sky, row 2 wall|opening|wall, rows 3-4 room.
+	var/list/south_open = list(1, 1, 1, 0, 1, 0, 3, 3, 3, 3, 3, 3)
+	var/list/south_roof = list(1, 1, 1, 0, 3, 0, 3, 3, 3, 3, 3, 3)
+	// 4x3, west outside: column 1 sky, column 2 wall/opening/wall, columns 3-4 room.
+	var/list/west_open = list(1, 0, 3, 3, 1, 1, 3, 3, 1, 0, 3, 3)
+	var/list/south_changed = sumiari_moon_bleed_openings(south_open, 3, 4)
+	var/list/west_changed = sumiari_moon_bleed_openings(west_open, 4, 3)
+	sumiari_moon_bleed_openings(south_roof, 3, 4)
+	var/list/south_open_steps = sumiari_moon_bleed_grid(south_open, 3, 4)
+	var/list/south_roof_steps = sumiari_moon_bleed_grid(south_roof, 3, 4)
+	var/list/west_open_steps = sumiari_moon_bleed_grid(west_open, 4, 3)
+	if(SUMIARI_BLEED_SKY != 1 || SUMIARI_BLEED_ROOF != 3 || SUMIARI_BLEED_WALL != 0 || length(south_changed) != 1 || length(west_changed) != 1 \
+		|| south_open_steps[5] != 1 || south_open_steps[8] != 2 || south_roof_steps[5] != 1 || south_roof_steps[8] != 2 \
+		|| west_open_steps[6] != 1 || west_open_steps[7] != 2 || south_open_steps[11] != 3 || west_open_steps[8] != 3 \
+		|| sumiari_moon_seal_corner(south_open, 3, 4, 2, 2, -1, -1) != 1 || sumiari_moon_seal_corner(south_open, 3, 4, 2, 2, 1, 1) != 0 \
+		|| sumiari_moon_seal_corner(west_open, 4, 3, 2, 2, -1, 1) != 1 || sumiari_moon_seal_corner(west_open, 4, 3, 2, 2, 1, -1) != 0)
+		bad += "equal openings south=[south_open_steps.Join(",")] roof=[south_roof_steps.Join(",")] west=[west_open_steps.Join(",")]"
+	// An open-sky alley between two buildings (sky on both ends) stays sky.
+	var/list/alley = list(1, 1, 1, 0, 1, 0, 1, 1, 1)
+	if(length(sumiari_moon_bleed_openings(alley, 3, 3)) || alley[5] != 1)
+		bad += "alley sealed"
 	// Overhang lift: a wall mirror (pixel_y 32) overhangs, a plain stone does not; the hang image is its own sprite on
 	// the hidden hang plane, offsets zeroed, alpha = wash; the gray mask and dim plate take the max with that plane.
 	var/turf/hang_turf = get_turf(eyes.owner)
