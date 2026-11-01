@@ -176,8 +176,28 @@
 			if(L.has_status_effect(/datum/status_effect/buff/druqks))
 				add_filter("druqks_color", 2, color_matrix_filter(list(0,0,1,0, 0,1,0,0, 1,0,0,0, 0,0,0,1, 0,0,0,0)))
 	filters += filter(type = "alpha", render_source = FIELD_OF_VISION_BLOCKER_RENDER_TARGET, flags = MASK_INVERSE)
+	// The viewer's own sprite (vision cone redraw), after the mask so the cone never cuts it.
+	filters += filter(type = "layer", render_source = GAME_PLANE_OWNER_RENDER_TARGET)
 	apply_vampire_sight(mymob)
 	apply_sumiari_sight(mymob)
+
+// Hidden. Drawn only through the layer filter above.
+/atom/movable/screen/plane_master/game_world_owner
+	name = "own sprite plane master"
+	plane = GAME_PLANE_OWNER
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	render_target = GAME_PLANE_OWNER_RENDER_TARGET
+
+/atom/movable/screen/plane_master/game_world_owner/backdrop(mob/mymob)
+	clear_filters()
+	filters += AMBIENT_OCCLUSION
+	if(istype(mymob) && mymob.eye_blurry)
+		filters += GAUSSIAN_BLUR(CLAMP(mymob.eye_blurry*0.1,0.6,3))
+	if(isliving(mymob))
+		var/mob/living/L = mymob
+		if(L.has_status_effect(/datum/status_effect/buff/druqks))
+			add_filter("druqks_color", 2, color_matrix_filter(list(0,0,1,0, 0,1,0,0, 1,0,0,0, 0,0,0,1, 0,0,0,0)))
 
 /atom/movable/screen/plane_master/game_world_above
 	name = "above game world plane master"

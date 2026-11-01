@@ -24,6 +24,12 @@
 #define GAME_PLANE_FOV_HIDDEN -4
 #define GAME_PLANE_UPPER -3
 #define GAME_PLANE_HIGHEST -2
+// Hidden plane for the vision cone's redraw of the viewer's own sprite (and what it rides or pulls). Planes are
+// integers and none is free between FOV_HIDDEN and UPPER, so this one is never drawn natively: the FOV_HIDDEN plane
+// master layers it on top, after its field-of-vision mask. The sprite is then above other mobs, never cut by the
+// cone, and still under the flora and canopies on GAME_PLANE_UPPER.
+#define GAME_PLANE_OWNER -44
+#define GAME_PLANE_OWNER_RENDER_TARGET "*GAME_PLANE_OWNER"
 #define WEATHER_EFFECT_PLANE -1
 #define BLACKNESS_PLANE 0
 #define BLOOD_GLOW_PLANE 12

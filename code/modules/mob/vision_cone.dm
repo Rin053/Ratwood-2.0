@@ -104,35 +104,35 @@
 	if(hud_used?.fov)
 		if(hud_used.fov.alpha == 0)
 			return
-	var/image/I = image(src, src)
-	I.override = 1
-	I.plane = GAME_PLANE_UPPER
-	I.layer = layer
-	I.pixel_x = 0
-	I.pixel_y = 0
-	client.images += I
-	client.hidden_images += I
-	I.appearance_flags = RESET_TRANSFORM|KEEP_TOGETHER|PIXEL_SCALE
+	// The sprite itself goes on the hidden GAME_PLANE_OWNER (the FOV_HIDDEN plane master layers it above other mobs,
+	// past the cone mask, under canopies). The override left on the atom's own plane is an invisible click target.
+	cone_redraw(src, layer, RESET_TRANSFORM|KEEP_TOGETHER|PIXEL_SCALE)
 	if(buckled)
-		var/image/IB = image(buckled, buckled)
-		IB.override = 1
-		IB.plane = GAME_PLANE_UPPER
-		IB.layer = IB.layer
-		IB.pixel_x = 0
-		IB.pixel_y = 0
-		IB.appearance_flags = RESET_TRANSFORM|KEEP_TOGETHER
-		client.hidden_images += IB
-		client.images += IB
+		cone_redraw(buckled, buckled.layer, RESET_TRANSFORM|KEEP_TOGETHER)
 	if(pulling)
-		var/image/IB = image(pulling, pulling)
-		IB.override = 1
-		IB.plane = GAME_PLANE_UPPER
-		IB.layer = IB.layer
-		IB.pixel_x = 0
-		IB.pixel_y = 0
-		IB.appearance_flags = RESET_TRANSFORM|KEEP_TOGETHER
-		client.hidden_images += IB
-		client.images += IB
+		cone_redraw(pulling, pulling.layer, RESET_TRANSFORM|KEEP_TOGETHER)
+
+/mob/living/proc/cone_redraw(atom/movable/thing, draw_layer, flags)
+	var/image/proxy = image(thing, thing)
+	proxy.override = 1
+	proxy.plane = GAME_PLANE_UPPER
+	proxy.layer = draw_layer
+	proxy.pixel_x = 0
+	proxy.pixel_y = 0
+	proxy.alpha = 1 // not 0: a fully transparent image takes no clicks
+	proxy.mouse_opacity = MOUSE_OPACITY_OPAQUE
+	proxy.appearance_flags = flags
+	var/image/shown = image(thing, thing)
+	shown.plane = GAME_PLANE_OWNER
+	shown.layer = draw_layer
+	shown.pixel_x = 0
+	shown.pixel_y = 0
+	shown.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	shown.appearance_flags = flags
+	client.images += proxy
+	client.images += shown
+	client.hidden_images += proxy
+	client.hidden_images += shown
 /*	if(hud_used && hud_used.fov_blocker)
 		fov_blocker
 
