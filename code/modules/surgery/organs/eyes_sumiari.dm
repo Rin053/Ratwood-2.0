@@ -408,6 +408,16 @@
 #define SUMIARI_FOG_DRIFT 7
 #define SUMIARI_FOG_PERIOD 110
 #define SUMIARI_FOG_VARIANTS 3
+// 8) Moonbeam shafts: in a gap of the canopy (an open-sky tile with no tree of its own but trees on at least
+// BEAM_TREES of its eight neighbours) a faint pale column of moonlight slants down onto the ground: a 32x128 soft
+// shaft, faint at its top, fullest just above the ground, with a soft pool where it lands and soft sides, leaning a
+// little as if from the moon high in the north. Over the canopy plane, breathing slowly with the moon. Only every
+// third gap carries one (by position), at most BEAM_MAX, so they stay rare and special.
+#define SUMIARI_MOON_BEAMS 1
+#define SUMIARI_BEAM_TREES 2
+#define SUMIARI_BEAM_MAX 14
+#define SUMIARI_BEAM_ALPHA 60
+#define SUMIARI_BEAM_LEAN 0.12
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -603,6 +613,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/fx_sway_count = 0
 	// Fog: wisps this scan.
 	var/fx_fog_count = 0
+	// Beams: shafts this scan.
+	var/fx_beam_count = 0
 	// Bloom: how open the night flowers are drawn right now (null until the first scan).
 	var/fx_bloom
 	var/beauty_timer
@@ -4480,6 +4492,7 @@ var/global/sumiari_moon_intensity = SUMIARI_MOON_INTENSITY
 var/global/sumiari_moon_pulse = SUMIARI_MOON_PULSE
 var/global/sumiari_moon_sway_enabled = TRUE
 var/global/sumiari_moon_fog_enabled = TRUE
+var/global/sumiari_moon_beams_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4687,6 +4700,10 @@ var/global/sumiari_moon_fog_enabled = TRUE
 		if(sumiari_moon_fog_enabled)
 			fx_fog(T, wanted)
 #endif
+#if SUMIARI_MOON_BEAMS
+		if(sumiari_moon_beams_enabled)
+			fx_beam(T, wanted)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
@@ -4695,6 +4712,7 @@ var/global/sumiari_moon_fog_enabled = TRUE
 /obj/item/organ/eyes/sumiari/proc/fx_scan_counters_reset()
 	fx_sway_count = 0
 	fx_fog_count = 0
+	fx_beam_count = 0
 
 // Effects that change between scans. Each effect adds its own part here.
 /obj/item/organ/eyes/sumiari/proc/fx_live(turf/center)
@@ -5134,6 +5152,57 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	made["[variant]"] = wisp
 	return wisp
 
+// 8) Moonbeam shafts.
+/proc/sumiari_turf_has_tree(turf/T)
+	if(!T)
+		return FALSE
+	for(var/obj/structure/flora/tree in T)
+		if(istype(tree, /obj/structure/flora/roguetree) || istype(tree, /obj/structure/flora/newtree) || istype(tree, /obj/structure/flora/tree) || istype(tree, /obj/structure/flora/sakura) || istype(tree, /obj/structure/flora/maple))
+			return TRUE
+	return FALSE
+
+/obj/item/organ/eyes/sumiari/proc/fx_beam(turf/T, list/wanted)
+	if(fx_beam_count >= SUMIARI_BEAM_MAX || ((T.x * 2 + T.y) % 3) || isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_turf_has_tree(T) || sumiari_fx_lamp_lit(T))
+		return
+	var/trees = 0
+	for(var/dir in GLOB.alldirs)
+		if(sumiari_turf_has_tree(get_step(T, dir)))
+			trees++
+	if(trees < SUMIARI_BEAM_TREES)
+		return
+	fx_beam_count++
+	var/key = "m[T.x],[T.y]"
+	if(fx_want(key, "1", wanted))
+		fx_put(key, "1", sumiari_beam_image(T))
+
+/proc/sumiari_beam_image(turf/T)
+	var/image/beam = sumiari_fx_style(image(sumiari_beam_icon(), T), SUMIARI_FX_UPPER_PLANE)
+	beam.alpha = sumiari_fx_alpha(SUMIARI_BEAM_ALPHA)
+	// Lean from the top, the foot stays on the tile: x shifts by LEAN * (y + 64) in the icon's own frame.
+	beam.transform = matrix(1, -SUMIARI_BEAM_LEAN, -SUMIARI_BEAM_LEAN * 64, 0, 1, 0)
+	return sumiari_fx_breathe(beam, T, SUMIARI_PULSE_DEPTH * 1.3, 8)
+
+// 32x128 shaft: across, a soft hump 12 pixels wide; along, rising from nothing at the top to full near the ground,
+// with a soft pool in the bottom rows that fades out at the very edge.
+/proc/sumiari_beam_icon()
+	var/static/icon/made
+	if(made)
+		return made
+	var/icon/beam = sumiari_blank_icon()
+	beam.Scale(32, 128)
+	for(var/py in 1 to 128)
+		var/along = (py <= 12) ? (py / 12) * 1.1 : (128 - py) / 116
+		along = clamp(along, 0, 1.1)
+		var/width = (py <= 12) ? 9 + (12 - py) * 0.5 : 6
+		for(var/px in 1 to 32)
+			var/across = (px - 16.5) / width
+			var/opacity = along * max(0, 1 - across * across)
+			if(opacity <= 0.01)
+				continue
+			beam.DrawBox(rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B, round(clamp(255 * opacity, 0, 255))), px, py)
+	made = beam
+	return beam
+
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
 #if SUMIARI_MOON_FX
@@ -5241,9 +5310,17 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	if(wisp.plane != SUMIARI_FX_GAME_PLANE || wisp.loc != spot)
 		bad += "fog image"
 #endif
+#if SUMIARI_MOON_BEAMS
+	var/icon/beam_icon = sumiari_beam_icon()
+	if(beam_icon.Height() != 128 || beam_icon.GetPixel(16, 40) == null || beam_icon.GetPixel(16, 128) != null || beam_icon.GetPixel(1, 40) != null)
+		bad += "beam icon"
+	var/image/beam = sumiari_beam_image(spot)
+	if(beam.plane != SUMIARI_FX_UPPER_PLANE || beam.loc != spot)
+		bad += "beam image"
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS]")
 	return TRUE
