@@ -371,10 +371,12 @@
 // fades out downward (a full-height side line read as a flat pale band beside the rock); trees, rocks, big mushrooms and bushes on open sky get a
 // one-pixel rim on the edges of their own sprite that face the moon (up and left): the sprite, solid silver, minus
 // itself shifted one pixel away from the moon. The moon mask decides how bright each rim ends up.
-#define SUMIARI_MOON_RIMS 1
+// Removed (Ryan): the wall/cliff catch-light read as a pale lilac line along a dark tile's top and side edges. With
+// the sprite rims also off (below), the whole moon-edge highlight effect is off.
+#define SUMIARI_MOON_RIMS 0
 // The sprite rims (trees, rocks, big mushrooms, bushes) are removed (Ryan): the rim was built from the plant's
 // still sprite, so on a bush that sways for the viewer it stayed behind and drew a pale dotted arc out past the
-// leaning bush into the dark ground. 0 keeps only the wall/cliff catch-light above.
+// leaning bush into the dark ground. (The wall/cliff catch-light is off too: SUMIARI_MOON_RIMS 0.)
 #define SUMIARI_MOON_SPRITE_RIMS 0
 #define SUMIARI_RIM_OUTER_ALPHA 85
 // Pixels of the side sliver, fading from RIM_SIDE_ALPHA at the top to nothing.
