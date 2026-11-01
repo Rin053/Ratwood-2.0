@@ -444,6 +444,12 @@
 #define SUMIARI_MOON_REFLECT 1
 #define SUMIARI_REFLECT_MAX 40
 #define SUMIARI_REFLECT_ALPHA 105
+// 13) Noc's regard: a shrine, altar or pantheon cross standing under the open moon carries a faint silver-lilac sheen,
+// a copy of its own sprite breathing slowly with the moon, as if the god of the night sky lingers on what is his.
+// Only on moonlit open-sky tiles outside lamp pools; masked by the moon like everything else.
+#define SUMIARI_MOON_SHRINE 1
+#define SUMIARI_SHRINE_MAX 8
+#define SUMIARI_SHRINE_ALPHA 200
 #define SUMIARI_REFLECT_PERIOD 26
 // 10) Drifting petals and leaves: now and then a single petal (amethyst or lilac) or leaf (emerald or warm umber) lets
 // go from a moonlit tree, bush or flower and drifts down, swaying side to side and turning as it falls, settles on the
@@ -713,6 +719,7 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/fx_beam_count = 0
 	// Reflections this scan.
 	var/fx_reflect_count = 0
+	var/fx_shrine_count = 0
 	// Petals: trees and flowers found by the last scan, and the petals in the air (image -> expiry).
 	var/list/fx_petal_sources
 	var/list/fx_petals
@@ -4797,6 +4804,7 @@ var/global/sumiari_moon_sway_enabled = TRUE
 var/global/sumiari_moon_fog_enabled = TRUE
 var/global/sumiari_moon_beams_enabled = TRUE
 var/global/sumiari_moon_reflect_enabled = TRUE
+var/global/sumiari_moon_shrine_enabled = TRUE
 var/global/sumiari_moon_petals_enabled = TRUE
 var/global/sumiari_moon_frost_enabled = TRUE
 var/global/sumiari_moon_steps_enabled = TRUE
@@ -5046,6 +5054,10 @@ var/global/sumiari_moon_steps_enabled = TRUE
 		if(sumiari_moon_reflect_enabled)
 			fx_reflect(T, wanted)
 #endif
+#if SUMIARI_MOON_SHRINE
+		if(sumiari_moon_shrine_enabled)
+			fx_shrine(T, wanted)
+#endif
 #if SUMIARI_MOON_PETALS
 		if(sumiari_moon_petals_enabled && LAZYLEN(fx_petal_sources) < SUMIARI_PETAL_SOURCES_MAX)
 			fx_petal_source(T)
@@ -5068,6 +5080,7 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	fx_fog_count = 0
 	fx_beam_count = 0
 	fx_reflect_count = 0
+	fx_shrine_count = 0
 	fx_frost_count = 0
 	fx_frost_step = round(sumiari_frost_level() * 20)
 
@@ -5721,6 +5734,41 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 		if(fx_want(key, state, wanted))
 			fx_put(key, state, sumiari_reflect_image(caster, T))
 
+#if SUMIARI_MOON_SHRINE
+GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
+	/obj/structure/fluff/psycross,
+	/obj/structure/fluff/divine,
+	/obj/structure/sacrificealtar,
+)))
+
+/obj/item/organ/eyes/sumiari/proc/fx_shrine(turf/T, list/wanted)
+	if(fx_shrine_count >= SUMIARI_SHRINE_MAX || !sumiari_spare_turf_open(T) || sumiari_fx_lamp_lit(T))
+		return
+	for(var/obj/holy in T)
+		if(!is_type_in_typecache(holy, GLOB.sumiari_shrine_types) || holy.invisibility || !holy.icon_state)
+			continue
+		fx_shrine_count++
+		var/key = "n[REF(holy)]"
+		var/state = "[holy.icon]|[holy.icon_state]|[holy.dir]"
+		if(fx_want(key, state, wanted))
+			fx_put(key, state, sumiari_shrine_image(holy))
+		return
+
+/proc/sumiari_shrine_image(obj/holy)
+	var/image/sheen = image(loc = holy)
+	sheen.appearance = holy.appearance
+	sheen.loc = holy
+	sheen.name = ""
+	sheen.plane = SUMIARI_FX_GAME_PLANE
+	sheen.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	sheen.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART | KEEP_TOGETHER
+	sheen.color = sumiari_sway_shimmer_matrix()
+	sheen.alpha = sumiari_fx_alpha(SUMIARI_SHRINE_ALPHA)
+	// A soft lilac halo hugging the silhouette: the sheen spills a pixel or two into the night around it.
+	sheen.filters += filter(type = "drop_shadow", x = 0, y = 0, size = 3, offset = 1, color = sumiari_fx_tone(SUMIARI_TONE_LILAC, 200))
+	return sumiari_fx_breathe(sheen, get_turf(holy), 0.7, 21)
+#endif
+
 /proc/sumiari_reflect_image(atom/caster, turf/water)
 	var/image/mirror = sumiari_fx_style(image(sumiari_reflect_icon(caster.icon, caster.icon_state, caster.dir, caster.pixel_x), water), SUMIARI_FX_GAME_PLANE)
 	mirror.layer = 0.5
@@ -6204,6 +6252,13 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	if(decal_glow.plane != SUMIARI_FX_FLOOR_PLANE || decal_glow.loc != old_print || !(decal_glow.appearance_flags & KEEP_TOGETHER))
 		bad += "footprint decal"
 	qdel(old_print)
+#endif
+#if SUMIARI_MOON_SHRINE
+	var/obj/structure/fluff/psycross/cross = new(spot)
+	var/image/sheen = sumiari_shrine_image(cross)
+	if(sheen.plane != SUMIARI_FX_GAME_PLANE || sheen.loc != cross || !length(sheen.filters) || !is_type_in_typecache(cross, GLOB.sumiari_shrine_types))
+		bad += "shrine"
+	qdel(cross)
 #endif
 #endif
 	if(length(bad))
