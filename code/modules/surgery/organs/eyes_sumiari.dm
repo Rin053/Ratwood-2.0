@@ -302,6 +302,24 @@
 #define SUMIARI_DEW_ALPHA 230
 #define SUMIARI_DEW_RISE (1.2 SECONDS)
 #define SUMIARI_DEW_FALL (1.8 SECONDS)
+// 4) Night-flower blooming: herbs and flowers, small and large mushrooms and glowshrooms on open sky slowly open
+// through the night. A copy of the plant's sprite in deeper, richer color (saturation BLOOM_SATURATION, a little
+// gain, a faint violet-blue bias) lies over it, its alpha following the night: closed at dusk, opening from 16:00 to
+// 22:00 (eased), fully open until 5:00, closing again by 8:00. Updated a step at a time as the night goes on.
+#define SUMIARI_MOON_BLOOM 1
+#define SUMIARI_BLOOM_ALPHA 190
+#define SUMIARI_BLOOM_SATURATION 1.8
+#define SUMIARI_BLOOM_GAIN 1.15
+#define SUMIARI_BLOOM_BIAS_R 0.02
+#define SUMIARI_BLOOM_BIAS_G 0
+#define SUMIARI_BLOOM_BIAS_B 0.05
+#define SUMIARI_BLOOM_OPEN_START (16 HOURS)
+#define SUMIARI_BLOOM_OPEN_END (22 HOURS)
+#define SUMIARI_BLOOM_CLOSE_START (5 HOURS)
+#define SUMIARI_BLOOM_CLOSE_END (8 HOURS)
+// Least change in the bloom (0..1) worth re-animating the plants for, and how long that easing takes.
+#define SUMIARI_BLOOM_STEP 0.02
+#define SUMIARI_BLOOM_EASE (2 SECONDS)
 
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
@@ -487,6 +505,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	// Dew: grass tiles found by the last scan, and the live sparkles (image -> expiry).
 	var/list/fx_dew_spots
 	var/list/fx_dew_images
+	// Bloom: how open the night flowers are drawn right now (null until the first scan).
+	var/fx_bloom
 	var/beauty_timer
 	var/list/glint_images
 	var/list/glint_spots
@@ -4185,6 +4205,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 var/global/sumiari_moon_water_enabled = TRUE
 var/global/sumiari_moon_rims_enabled = TRUE
 var/global/sumiari_moon_dew_enabled = TRUE
+var/global/sumiari_moon_bloom_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4278,6 +4299,7 @@ var/global/sumiari_moon_dew_enabled = TRUE
 		fx_client?.images -= dew
 	fx_dew_images = null
 	fx_dew_spots = null
+	fx_bloom = null
 	fx_images = null
 	fx_states = null
 	fx_center = null
@@ -4308,6 +4330,8 @@ var/global/sumiari_moon_dew_enabled = TRUE
 /obj/item/organ/eyes/sumiari/proc/fx_scan(turf/center)
 	var/list/wanted = list()
 	fx_dew_spots = null
+	if(isnull(fx_bloom))
+		fx_bloom = sumiari_bloom_level()
 	var/turf/low = locate(max(center.x - SUMIARI_FX_RANGE, 1), max(center.y - SUMIARI_FX_RANGE, 1), center.z)
 	var/turf/high = locate(min(center.x + SUMIARI_FX_RANGE, world.maxx), min(center.y + SUMIARI_FX_RANGE, world.maxy), center.z)
 	for(var/turf/T as anything in block(low, high))
@@ -4323,6 +4347,10 @@ var/global/sumiari_moon_dew_enabled = TRUE
 		if(sumiari_moon_dew_enabled && LAZYLEN(fx_dew_spots) < SUMIARI_DEW_SPOTS_MAX && is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && sumiari_spare_turf_open(T))
 			LAZYADD(fx_dew_spots, T)
 #endif
+#if SUMIARI_MOON_BLOOM
+		if(sumiari_moon_bloom_enabled)
+			fx_blooms(T, wanted)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
@@ -4331,6 +4359,9 @@ var/global/sumiari_moon_dew_enabled = TRUE
 /obj/item/organ/eyes/sumiari/proc/fx_live(turf/center)
 #if SUMIARI_MOON_DEW
 	fx_dew()
+#endif
+#if SUMIARI_MOON_BLOOM
+	fx_bloom_ease()
 #endif
 
 // Marks key as wanted this scan; TRUE when its image must be (re)built because the state changed.
@@ -4493,6 +4524,75 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	made.DrawBox(rgb(246, 248, 255, 255), 16, 16)
 	return made
 
+// 4) Night-flower blooming.
+GLOBAL_LIST_INIT(sumiari_bloom_types, typecacheof(list(
+	/obj/structure/flora/roguegrass/herb,
+	/obj/structure/flora/roguegrass/pyroclasticflowers,
+	/obj/structure/flower_sprout,
+	/obj/structure/flora/tinymushrooms,
+	/obj/structure/flora/mushroomcluster,
+	/obj/structure/flora/rogueshroom,
+	/obj/structure/glowshroom,
+)))
+
+// How open the night flowers are at a station time (null: now), 0..1.
+/proc/sumiari_bloom_level(time)
+	if(isnull(time))
+		time = station_time()
+	var/ramp
+	if(time >= SUMIARI_BLOOM_OPEN_END || time < SUMIARI_BLOOM_CLOSE_START)
+		return 1
+	if(time >= SUMIARI_BLOOM_OPEN_START)
+		ramp = (time - SUMIARI_BLOOM_OPEN_START) / (SUMIARI_BLOOM_OPEN_END - SUMIARI_BLOOM_OPEN_START)
+	else if(time < SUMIARI_BLOOM_CLOSE_END)
+		ramp = 1 - (time - SUMIARI_BLOOM_CLOSE_START) / (SUMIARI_BLOOM_CLOSE_END - SUMIARI_BLOOM_CLOSE_START)
+	else
+		return 0
+	ramp = clamp(ramp, 0, 1)
+	return ramp * ramp * (3 - 2 * ramp)
+
+// Richer color: saturation, a little gain, a faint violet-blue lift. Alpha untouched.
+/proc/sumiari_bloom_matrix()
+	var/list/look = color_matrix_saturation(SUMIARI_BLOOM_SATURATION)
+	for(var/i in 1 to 12)
+		if(i % 4)
+			look[i] *= SUMIARI_BLOOM_GAIN
+	look[17] = SUMIARI_BLOOM_BIAS_R
+	look[18] = SUMIARI_BLOOM_BIAS_G
+	look[19] = SUMIARI_BLOOM_BIAS_B
+	return look
+
+/obj/item/organ/eyes/sumiari/proc/fx_blooms(turf/T, list/wanted)
+	if(isclosedturf(T) || !sumiari_spare_turf_open(T))
+		return
+	for(var/obj/plant in T)
+		if(!is_type_in_typecache(plant, GLOB.sumiari_bloom_types) || plant.invisibility || !plant.icon_state)
+			continue
+		var/key = "b[REF(plant)]"
+		var/state = "[plant.icon]|[plant.icon_state]|[plant.dir]|[plant.plane]"
+		if(fx_want(key, state, wanted))
+			fx_put(key, state, sumiari_bloom_image(plant, fx_bloom))
+
+/proc/sumiari_bloom_image(obj/plant, level)
+	var/image/bloom = image(plant.icon, plant, plant.icon_state)
+	bloom.dir = plant.dir
+	sumiari_fx_style(bloom, sumiari_fx_plane_near(plant.plane))
+	bloom.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
+	bloom.color = sumiari_bloom_matrix()
+	bloom.alpha = round(SUMIARI_BLOOM_ALPHA * level)
+	return bloom
+
+// The night moved on: ease every open flower to the new bloom.
+/obj/item/organ/eyes/sumiari/proc/fx_bloom_ease()
+	var/level = sumiari_bloom_level()
+	if(!isnull(fx_bloom) && abs(level - fx_bloom) < SUMIARI_BLOOM_STEP)
+		return
+	fx_bloom = level
+	var/target = round(SUMIARI_BLOOM_ALPHA * level)
+	for(var/key in fx_images)
+		if(copytext(key, 1, 2) == "b")
+			animate(fx_images[key], alpha = target, time = SUMIARI_BLOOM_EASE)
+
 // Moon effect checks that do not depend on the map or the time of day.
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
@@ -4534,9 +4634,27 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	if(dew.plane != SUMIARI_FX_FLOOR_PLANE || abs(dew.pixel_x) > 12 || dew_icon.GetPixel(16, 16) == null || dew_icon.GetPixel(20, 20) != null || SUMIARI_GLINT_DEW)
 		bad += "dew"
 #endif
+#if SUMIARI_MOON_BLOOM
+	if(sumiari_bloom_level(12 HOURS) != 0 || sumiari_bloom_level(0) != 1 || sumiari_bloom_level(15.9 HOURS) != 0)
+		bad += "bloom curve noon=[sumiari_bloom_level(12 HOURS)] midnight=[sumiari_bloom_level(0)]"
+	var/dusk_bloom = sumiari_bloom_level(19 HOURS)
+	var/dawn_bloom = sumiari_bloom_level(6.5 HOURS)
+	if(!(dusk_bloom > 0 && dusk_bloom < 1 && dawn_bloom > 0 && dawn_bloom < 1))
+		bad += "bloom ramp dusk=[dusk_bloom] dawn=[dawn_bloom]"
+	// Richer but not neon: a muted green gets more chroma and keeps its hue order, white does not blow past 1.2.
+	var/list/leaf = sumiari_apply_matrix(sumiari_bloom_matrix(), 0.3, 0.45, 0.25)
+	var/list/bloom_white = sumiari_apply_matrix(sumiari_bloom_matrix(), 1, 1, 1)
+	if(!(leaf[2] - leaf[3] > 0.45 - 0.25 && leaf[2] > leaf[1]) || max(bloom_white[1], bloom_white[2], bloom_white[3]) > 1.25)
+		bad += "bloom matrix leaf=[leaf[1]],[leaf[2]],[leaf[3]]"
+	var/obj/structure/flora/tinymushrooms/shroom = new(spot)
+	var/image/bloom = sumiari_bloom_image(shroom, 0.5)
+	if(bloom.alpha != round(SUMIARI_BLOOM_ALPHA * 0.5) || bloom.loc != shroom || bloom.plane != sumiari_fx_plane_near(shroom.plane))
+		bad += "bloom image alpha=[bloom.alpha] plane=[bloom.plane]"
+	qdel(shroom)
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM]")
 	return TRUE
