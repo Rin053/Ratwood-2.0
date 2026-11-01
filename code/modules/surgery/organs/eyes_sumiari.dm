@@ -453,7 +453,7 @@
 #define SUMIARI_PETAL_MAX 5
 #define SUMIARI_PETAL_CHANCE 30
 #define SUMIARI_PETAL_SOURCES_MAX 40
-#define SUMIARI_PETAL_ALPHA 220
+#define SUMIARI_PETAL_ALPHA 240
 #define SUMIARI_PETAL_FALL (4.5 SECONDS)
 #define SUMIARI_PETAL_REST (2 SECONDS)
 #define SUMIARI_PETAL_FADE (1.5 SECONDS)
@@ -5083,7 +5083,7 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	var/turf/T = pick(fx_petal_sources)
 	if(!prob(SUMIARI_PETAL_CHANCE * (0.6 + 0.8 * sumiari_fx_breath_now(T))))
 		return
-	var/image/petal = sumiari_petal_image(T)
+	var/image/petal = sumiari_petal_image(sumiari_petal_landing(T))
 	LAZYSET(fx_petals, petal, world.time + SUMIARI_PETAL_FALL + SUMIARI_PETAL_REST + SUMIARI_PETAL_FADE + 2)
 	fx_client.images += petal
 	sumiari_petal_play(petal)
@@ -5761,6 +5761,16 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 			LAZYADD(fx_petal_sources, T)
 			return
 
+// Where a petal from source T comes down: a tree's own tile is hidden under its sprite, so a tree's petals fall onto
+// the open tile in front of it (south), starting from the lower canopy; flowers and bushes drop on their own tile.
+/proc/sumiari_petal_landing(turf/T)
+	if(!sumiari_turf_has_tree(T))
+		return T
+	var/turf/front = get_step(T, SOUTH)
+	if(front && !isclosedturf(front) && !sumiari_turf_has_tree(front) && sumiari_spare_turf_open(front))
+		return front
+	return T
+
 /proc/sumiari_petal_image(turf/T)
 	var/variant = rand(1, 4)
 	var/image/petal = sumiari_fx_style(image(sumiari_petal_icon(variant), T), SUMIARI_FX_GAME_PLANE)
@@ -5786,20 +5796,25 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 	animate(alpha = 0, time = SUMIARI_PETAL_FADE, easing = SINE_EASING)
 
 // A small soft petal or leaf in the middle of a 32x32 icon: 1 amethyst petal, 2 lilac petal, 3 emerald leaf, 4 umber leaf.
+// A 4x4 rounded body with a feathered tip, and a moon-silver rim on its upper edge so even the dark leaves catch the
+// moonlight and read against grass.
 /proc/sumiari_petal_icon(variant)
 	var/static/list/made = list()
 	if(made["[variant]"])
 		return made["[variant]"]
 	var/tone = list(SUMIARI_TONE_AMETHYST, SUMIARI_TONE_LILAC, SUMIARI_TONE_EMERALD, SUMIARI_TONE_UMBER)[variant]
+	var/rim = (variant == 1) ? SUMIARI_TONE_LILAC : rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B)
 	var/icon/petal = sumiari_blank_icon()
-	petal.DrawBox(sumiari_fx_tone(tone, 255), 15, 16, 17, 16)
-	petal.DrawBox(sumiari_fx_tone(tone, 255), 16, 15, 16, 17)
-	petal.DrawBox(sumiari_fx_tone(tone, 150), 18, 16)
-	petal.DrawBox(sumiari_fx_tone(tone, 110), 16, 18)
-	petal.DrawBox(sumiari_fx_tone(tone, 110), 14, 15)
+	petal.DrawBox(sumiari_fx_tone(tone, 170), 15, 14, 16, 14)
+	petal.DrawBox(sumiari_fx_tone(tone, 255), 14, 15, 17, 16)
+	petal.DrawBox(sumiari_fx_tone(rim, 230), 15, 17, 16, 17)
+	petal.DrawBox(sumiari_fx_tone(rim, 120), 14, 17)
 	if(variant >= 3)
-		petal.DrawBox(sumiari_fx_tone(tone, 200), 17, 17)
-		petal.DrawBox(sumiari_fx_tone(tone, 200), 15, 14)
+		petal.DrawBox(sumiari_fx_tone(tone, 200), 18, 16)
+		petal.DrawBox(sumiari_fx_tone(tone, 110), 13, 14)
+	else
+		petal.DrawBox(sumiari_fx_tone(tone, 120), 18, 16)
+		petal.DrawBox(sumiari_fx_tone(tone, 120), 17, 17)
 	made["[variant]"] = petal
 	return petal
 
