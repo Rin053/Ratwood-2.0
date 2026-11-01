@@ -1109,12 +1109,14 @@ var/global/turf/sumiari_test_dark_turf
 	add_plate(SUMIARI_PLANE_MASK, SUMIARI_TARGET_MASK, sumiari_offscreen(SUMIARI_TARGET_LIGHT), list(
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_ADD),
-#if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION && SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
-		// No lamp gray, fire or not, under the open night sky (see SUMIARI_MOON_FIRE_BLIND).
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_fire_blind()),
-#endif
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
+#if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION && SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
+		// No lamp gray, fire or not, under the open night sky (see SUMIARI_MOON_FIRE_BLIND): after the emitter-sprite
+		// max, so a flame, lamp, torch or fire bowl standing on open sky is in full moon color too. Under a roof, in a
+		// cave or by day the skylight is 0 and the sprite stays gray.
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_fire_blind()),
+#endif
 #if SUMIARI_MOON_SPARES_NONFIRE
 		// No lamp gray where the moon spares a non-fire light.
 		filter(type = "layer", render_source = SUMIARI_SPARE_RENDER_TARGET, blend_mode = BLEND_SUBTRACT),
@@ -1814,6 +1816,14 @@ var/global/sumiari_moon_handoff_enabled = TRUE
 	var/k = sumiari_moon_fire_blind ? SUMIARI_MOON_FIRE_BLIND_GAIN : 0
 	return list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k, k, k, 0, 0, 0, 0, 1)
 
+// 1 if the moon mask cuts the emitter sprites out (0 while fire-blind: flames on open sky take the moon look).
+/proc/sumiari_moon_source_subtracts()
+#if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION && SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
+	return sumiari_moon_fire_blind ? 0 : 1
+#else
+	return 1
+#endif
+
 // Runtime switch for SUMIARI_MOON_FIRE_BLIND (the moon effects read it live; the ink mask on the next vision build).
 var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 
@@ -1911,7 +1921,10 @@ var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 			// The cookie is the same brightness the gray mask reads, so the moon never decides what is lit.
 			filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
 		)
-	. += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT)
+	// The emitter sprites stay off the moon, except fire-blind: then the moon (sky only, so never under cover) lights
+	// them like everything else.
+	if(sumiari_moon_source_subtracts())
+		. += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT)
 #if SUMIARI_MOON_SPARES_NONFIRE
 	// Spared tiles (non-fire light on open moonlit sky) go back to full vivid.
 	. += filter(type = "layer", render_source = SUMIARI_SPARE_RENDER_TARGET, blend_mode = BLEND_ADD)
@@ -3691,9 +3704,30 @@ var/global/sumiari_run_headless_test = FALSE
 	if(sumiari_moon_handoff_enabled)
 		lamp_subtracts = 0
 #endif
-	if(length(eyes.moon_plate.filters) != 4 + lamp_subtracts + SUMIARI_MOON_SPARES_NONFIRE + SUMIARI_MOON_CLIFFS || sumiari_filter_field(eyes.moon_plate.filters, 3 + lamp_subtracts + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE) || (lamp_subtracts && sumiari_filter_field(eyes.moon_plate.filters, 4 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_COOKIE)))
-		log_world("SUMIARI TEST FAIL moon vivid mask filters=[length(eyes.moon_plate.filters)]")
+	// Fire-blind drops the emitter-sprite subtract: a flame on open sky takes the moon look like everything else.
+	var/source_subtracts = sumiari_moon_source_subtracts()
+	var/moon_has_source = FALSE
+	for(var/moon_index in 1 to length(eyes.moon_plate.filters))
+		if(sumiari_filter_field(eyes.moon_plate.filters, moon_index, "render_source") == sumiari_offscreen(SUMIARI_TARGET_SOURCE))
+			moon_has_source = TRUE
+	if(length(eyes.moon_plate.filters) != 3 + source_subtracts + lamp_subtracts + SUMIARI_MOON_SPARES_NONFIRE + SUMIARI_MOON_CLIFFS || moon_has_source != !!source_subtracts || (source_subtracts && sumiari_filter_field(eyes.moon_plate.filters, 3 + lamp_subtracts + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE)) || (lamp_subtracts && sumiari_filter_field(eyes.moon_plate.filters, 4 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_COOKIE)))
+		log_world("SUMIARI TEST FAIL moon vivid mask filters=[length(eyes.moon_plate.filters)] source=[moon_has_source]/[source_subtracts]")
 		return FALSE
+#if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION
+	// And the gray mask clears open night sky after the emitter-sprite max, so the sprite itself is not grayed there.
+	var/atom/movable/screen/sumiari_sampler/gray_mask = sumiari_find_piece(eyes, "[SUMIARI_TARGET_MASK] sample")
+	var/last_source = 0
+	var/sky_clear = 0
+	for(var/mask_index in 1 to length(gray_mask?.filters))
+		var/mask_source = sumiari_filter_field(gray_mask.filters, mask_index, "render_source")
+		if(mask_source == sumiari_offscreen(SUMIARI_TARGET_SOURCE))
+			last_source = mask_index
+		else if(mask_source == sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT))
+			sky_clear = mask_index
+	if(!gray_mask || !last_source || sky_clear <= last_source)
+		log_world("SUMIARI TEST FAIL fire-blind sprite mask source=[last_source] sky=[sky_clear]")
+		return FALSE
+#endif
 #if SUMIARI_MOON_LAMP_HANDOFF
 	var/atom/movable/screen/sumiari_relay/lamp = sumiari_find_piece(eyes, "sumiari lamp")
 	if(!lamp || lamp.layer <= ink_relay.layer || lamp.blend_mode != BLEND_ADD || (eyes.wash_mode == SUMIARI_WASH_LIVE && sumiari_moon_handoff_enabled && sumiari_filter_field(lamp.filters, length(lamp.filters), "render_source") != sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT)))
