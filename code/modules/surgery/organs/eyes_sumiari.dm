@@ -229,6 +229,23 @@
 #define SUMIARI_SPARE_MIN 0.04
 #define SUMIARI_SPARE_BLUR 8
 
+// Moonlit wall faces. The moon mask reads the sky plane: every open or roofed tile draws its four lighting corners'
+// sunFalloff there (the vanilla per-corner sky light), but a closed turf (cliff, wall) draws nothing, so the moon
+// stopped dead on the top edge of every cliff face and wall. For these eyes only, each closed turf near the owner
+// gets a client image of exactly what an open tile would have drawn there: the lighting gradient icon tinted by its
+// own four corners' sunFalloff, the corners it already shares with the sky tiles next to it. A face beside open sky
+// is moonlit at the top and fades down its height like the ground under a roof edge; rock with no sky near stays 0.
+// The images sit on the hidden SUMIARI_CLIFF_PLANE, which the moon mask adds to the sky copy before anything else,
+// so lamps, fires, the feather blur and the fade treat a lit face exactly like lit ground. Read only: the corners
+// are not touched, nor is anything another viewer sees.
+#define SUMIARI_MOON_CLIFFS 1
+#define SUMIARI_CLIFF_PLANE -47
+#define SUMIARI_CLIFF_RENDER_TARGET "*sumiari_moon_cliff"
+// Tiles from the owner scanned each step (the 15x15 view is 7, plus a margin for the glide and the blur).
+#define SUMIARI_CLIFF_RANGE 9
+// A face whose brightest corner is under this draws nothing.
+#define SUMIARI_CLIFF_MIN 0.02
+
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -400,6 +417,10 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/client/spare_client
 	var/list/spare_images
 	var/list/spare_keys
+	// Moonlit wall faces: the client the images were shown to, turf -> image, turf -> corner key.
+	var/client/cliff_client
+	var/list/cliff_images
+	var/list/cliff_keys
 	var/beauty_timer
 	var/list/glint_images
 	var/list/glint_spots
@@ -1138,7 +1159,7 @@ var/global/turf/sumiari_test_dark_turf
 	return (time >= SUMIARI_MOON_FADE_IN_START && time < SUMIARI_MOON_FADE_IN_END) || (time >= SUMIARI_MOON_FADE_OUT_START && time < SUMIARI_MOON_FADE_OUT_END)
 
 // Peak moon strength for the silver layer's mask. On through the night and the whole of both fade windows; the
-// fade itself rides the moon relay's alpha (see apply_moon_fade), so the mask stays at its peak.
+// fade itself rides the mask's last color step (see apply_moon_fade and sumiari_moon_mask_filters).
 // night_override forces night (TRUE) or day (FALSE). Null reads the live station time.
 /proc/sumiari_moon_strength(night_override)
 	if(sumiari_moon_fade(night_override) <= 0 && (!isnull(night_override) || !sumiari_moon_fading()))
@@ -1157,7 +1178,12 @@ var/global/turf/sumiari_test_dark_turf
 	if(isnull(fade))
 		fade = sumiari_moon_fade(night_override)
 #if SUMIARI_MOON_VIVID
-	. = list(
+	. = list()
+#if SUMIARI_MOON_CLIFFS
+	// Wall faces join the sky copy first, in sky units, so everything after treats them like lit ground.
+	. += filter(type = "layer", render_source = SUMIARI_CLIFF_RENDER_TARGET, blend_mode = BLEND_ADD)
+#endif
+	. += list(
 		filter(type = "color", color = sumiari_matrix_sky_scaled(1 / SUMIARI_MOON_VIVID_LAMP_FADE)),
 		// Feather the open-sky edge (ledges, roofs, cliff tops) so the moon grade fades across it instead of
 		// stopping on a tile line. Before the lamp subtract, so firelit pixels stay exactly gray.
@@ -1171,7 +1197,11 @@ var/global/turf/sumiari_test_dark_turf
 #endif
 	. += filter(type = "color", color = sumiari_matrix_moon_alpha(sumiari_moon_strength(night_override) * SUMIARI_MOON_VIVID_LAMP_FADE * fade))
 #else
-	return list(
+	. = list()
+#if SUMIARI_MOON_CLIFFS
+	. += filter(type = "layer", render_source = SUMIARI_CLIFF_RENDER_TARGET, blend_mode = BLEND_ADD)
+#endif
+	. += list(
 		filter(type = "color", color = sumiari_matrix_sky_scaled(1 / SUMIARI_MOON_LAMP_GAIN)),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_SUBTRACT),
 		filter(type = "color", color = sumiari_matrix_moon_alpha(sumiari_moon_strength(night_override) * SUMIARI_MOON_LAMP_GAIN * fade)),
@@ -2915,7 +2945,7 @@ var/global/sumiari_run_headless_test = FALSE
 	if(!(vivid[2] - vivid[1] > 0.2) || !(vivid_gray[3] > vivid_gray[1]) || abs(vivid_gray[2] / SUMIARI_MOON_LUMINANCE - 0.5) > 0.03 || abs(vivid_luma - 0.4431) > 0.03 || !(orange[1] > orange[2] && orange[2] > orange[3]) || brick_chroma > 0.08)
 		log_world("SUMIARI TEST FAIL moon vivid matrix green=[vivid[1]],[vivid[2]],[vivid[3]] gray=[vivid_gray[1]],[vivid_gray[2]],[vivid_gray[3]]")
 		return FALSE
-	if(length(eyes.moon_plate.filters) != 5 + SUMIARI_MOON_SPARES_NONFIRE || sumiari_filter_field(eyes.moon_plate.filters, 4, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE))
+	if(length(eyes.moon_plate.filters) != 5 + SUMIARI_MOON_SPARES_NONFIRE + SUMIARI_MOON_CLIFFS || sumiari_filter_field(eyes.moon_plate.filters, 4 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE))
 		log_world("SUMIARI TEST FAIL moon vivid mask filters=[length(eyes.moon_plate.filters)]")
 		return FALSE
 #else
@@ -3172,6 +3202,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	SIGNAL_HANDLER
 	sense_tick()
 	place_beauty()
+	cliff_tick()
 
 /obj/item/organ/eyes/sumiari/proc/clear_sensed()
 	for(var/mob/living/L as anything in sensed_images)
@@ -3484,6 +3515,7 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 		beauty_timer = null
 	clear_beauty()
 	clear_spare()
+	clear_cliffs()
 
 /obj/item/organ/eyes/sumiari/proc/clear_beauty()
 	for(var/image/glint as anything in glint_images)
@@ -3502,6 +3534,7 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 		stop_night_beauty()
 		return
 	spare_tick()
+	cliff_tick()
 	if(beauty_client && beauty_client != owner?.client)
 		clear_beauty()
 	if(!sumiari_night_beauty_enabled || sense_blocked() || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
@@ -3914,6 +3947,87 @@ var/global/sumiari_moon_spares_enabled = TRUE
 #endif
 	return spare
 
+// ---------------------------------------------------------------------------------------------
+// Moonlit wall faces. See SUMIARI_MOON_CLIFFS at the top.
+
+/atom/movable/screen/plane_master/sumiari_moon_cliff
+	name = "sumiari moon cliff plane master"
+	plane = SUMIARI_CLIFF_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_CLIFF_RENDER_TARGET
+
+/obj/item/organ/eyes/sumiari/proc/clear_cliffs()
+	for(var/turf/T as anything in cliff_images)
+		cliff_client?.images -= cliff_images[T]
+	cliff_images = null
+	cliff_keys = null
+	cliff_client = null
+
+// Every step and every beauty tick: closed turfs around the owner, each with its corners' sky light. Only a turf
+// whose corners changed gets a new image, so a still night costs one pass over the square and no image churn.
+/obj/item/organ/eyes/sumiari/proc/cliff_tick()
+#if SUMIARI_MOON_CLIFFS
+	if(cliff_client && cliff_client != owner?.client)
+		clear_cliffs()
+	var/turf/center = get_turf(owner)
+	if(!vision_on || !owner?.client || !center || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
+		clear_cliffs()
+		return
+	cliff_client = owner.client
+	var/list/keep = list()
+	var/turf/low = locate(max(center.x - SUMIARI_CLIFF_RANGE, 1), max(center.y - SUMIARI_CLIFF_RANGE, 1), center.z)
+	var/turf/high = locate(min(center.x + SUMIARI_CLIFF_RANGE, world.maxx), min(center.y + SUMIARI_CLIFF_RANGE, world.maxy), center.z)
+	for(var/turf/T as anything in block(low, high))
+		if(!isclosedturf(T) || T.outdoor_effect)
+			continue
+		var/list/corners = T.corners
+		if(!corners)
+			continue
+		// The same corner order the sky overlay uses (update_outdoor_effect_overlays).
+		var/datum/lighting_corner/cr = corners[3]
+		var/datum/lighting_corner/cg = corners[2]
+		var/datum/lighting_corner/cb = corners[4]
+		var/datum/lighting_corner/ca = corners[1]
+		var/fr = cr ? cr.sunFalloff : 0
+		var/fg = cg ? cg.sunFalloff : 0
+		var/fb = cb ? cb.sunFalloff : 0
+		var/fa = ca ? ca.sunFalloff : 0
+		if(max(fr, fg, fb, fa) < SUMIARI_CLIFF_MIN)
+			continue
+		keep[T] = TRUE
+		var/key = "[fr]|[fg]|[fb]|[fa]"
+		if(cliff_keys?[T] == key)
+			continue
+		if(cliff_images?[T])
+			cliff_client.images -= cliff_images[T]
+		var/image/face = sumiari_cliff_image(T, fr, fg, fb, fa)
+		LAZYSET(cliff_images, T, face)
+		LAZYSET(cliff_keys, T, key)
+		cliff_client.images += face
+	for(var/turf/T as anything in cliff_images)
+		if(!keep[T])
+			cliff_client.images -= cliff_images[T]
+			cliff_images -= T
+			cliff_keys -= T
+#endif
+
+// What the sky overlay would draw on an open tile with these corners (create_sunlight_overlay), on the cliff plane.
+/proc/sumiari_cliff_image(turf/T, fr, fg, fb, fa)
+	var/image/face = image(LIGHTING_ICON, T)
+	face.icon_state = null
+	face.plane = SUMIARI_CLIFF_PLANE
+	face.layer = 1
+	face.blend_mode = BLEND_OVERLAY
+	face.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
+	face.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	face.color = sumiari_cliff_matrix(fr, fg, fb, fa)
+	return face
+
+/proc/sumiari_cliff_matrix(fr, fg, fb, fa)
+	return list(fr, fr, fr, 0, fg, fg, fg, 0, fb, fb, fb, 0, fa, fa, fa, 0, 0, 0, 0, 1)
+
 // Classification, plumbing, and one live spare image.
 /proc/sumiari_sweep_nonfire(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
@@ -3932,8 +4046,18 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	if(!spare_master || spare_master.render_target != SUMIARI_SPARE_RENDER_TARGET)
 		bad += "spare plane master"
 	var/list/moon_filters = sumiari_moon_mask_filters(TRUE)
-	if(sumiari_filter_field(moon_filters, 5, "render_source") != SUMIARI_SPARE_RENDER_TARGET || sumiari_filter_field(moon_filters, 5, "blend_mode") != BLEND_ADD)
+	if(sumiari_filter_field(moon_filters, 5 + SUMIARI_MOON_CLIFFS, "render_source") != SUMIARI_SPARE_RENDER_TARGET || sumiari_filter_field(moon_filters, 5 + SUMIARI_MOON_CLIFFS, "blend_mode") != BLEND_ADD)
 		bad += "moon mask has no spare add"
+#if SUMIARI_MOON_CLIFFS
+	var/atom/movable/screen/plane_master/cliff_master = eyes.owner?.hud_used?.plane_masters["[SUMIARI_CLIFF_PLANE]"]
+	if(!cliff_master || cliff_master.render_target != SUMIARI_CLIFF_RENDER_TARGET)
+		bad += "cliff plane master"
+	if(sumiari_filter_field(moon_filters, 1, "render_source") != SUMIARI_CLIFF_RENDER_TARGET || sumiari_filter_field(moon_filters, 1, "blend_mode") != BLEND_ADD)
+		bad += "moon mask has no cliff add"
+	var/list/half = sumiari_cliff_matrix(1, 0.5, 0, 0)
+	if(half[1] != 1 || half[5] != 0.5 || half[20] != 1)
+		bad += "cliff matrix"
+#endif
 	var/atom/movable/screen/sumiari_sampler/mask = null
 	for(var/atom/movable/screen/sumiari_sampler/sampler in eyes.screen_pieces)
 		if(sampler.name == "[SUMIARI_TARGET_MASK] sample")
