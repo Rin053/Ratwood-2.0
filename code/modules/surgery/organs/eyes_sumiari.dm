@@ -435,7 +435,7 @@
 #define SUMIARI_MOON_BEAMS 1
 #define SUMIARI_BEAM_TREES 2
 #define SUMIARI_BEAM_MAX 14
-#define SUMIARI_BEAM_ALPHA 40
+#define SUMIARI_BEAM_ALPHA 85
 #define SUMIARI_BEAM_LEAN 0.12
 // 9) Rippling reflections: a tree, rock, post, statue, lamp post or wall standing just north of open-sky water lays a
 // soft upside-down reflection on that water tile: its sprite flipped, cut to the tile, fading toward the far edge, a
@@ -5663,7 +5663,7 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 	for(var/py in 1 to 128)
 		var/along = (py <= 12) ? (py / 12) * 1.1 : (128 - py) / 116
 		along = clamp(along, 0, 1.1)
-		var/width = (py <= 12) ? 9 + (12 - py) * 0.5 : 6
+		var/width = (py <= 12) ? 10 + (12 - py) * 0.5 : 8
 		for(var/px in 1 to 32)
 			var/across = (px - 16.5) / width
 			var/opacity = along * max(0, 1 - across * across)
