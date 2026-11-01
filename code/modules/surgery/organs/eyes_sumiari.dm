@@ -1,7 +1,7 @@
 // Sumiari vision.
 // Pitch black is full color. Wherever a normal human sees light, that same image is an ink wash.
 // The wash keeps the sprite's brightness: Rec.709 luma, then a gentle slope that does not threshold.
-// A contrast crush turned dither into white specks on black. The paper lift is not on that curve.
+// A contrast crush would turn dither into white specks on black. The paper lift is not on that curve.
 // It is a second relay, and only in direct midday sun. The sunlight plane is white at dawn too.
 // The wash is not a second light model. It is the vanilla lighting plane, used as a mask,
 // plus the alpha of the movable-light plane. Static lights keep their corner-smoothed gradient.
@@ -9,11 +9,10 @@
 // Sunlight stays in the capture, and fire flicker updates the mask on the same frame.
 // dynamic_lumcount is a flat stamp and is not this mask.
 //
-// The camera-static relay of *sumiari_scene drew nothing on 516.1688. That plate had no atoms.
-// An asterisk render_target stores the plane's atoms, not the filters hung on its master, and the
-// asterisk keeps the filtered draw off the screen. Sampling it stays blank even when the mask is forced.
-// Color matrices on the world plane masters do desaturate on that client. That is the force-ink path.
-// Live ink is a screen relay of those same captures. A filter list on the plane master drew nothing.
+// BYOND 516.1688: an asterisk render_target stores the plane's atoms, not the filters hung on its master, and the
+// asterisk keeps the filtered draw off the screen, so sampling it stays blank and a filter list on the plane master
+// draws nothing. Color matrices on the world plane masters do desaturate; that is the force-ink path.
+// Live ink is a screen relay of those same captures.
 //
 // Composite, bottom to top:
 // 1. World planes draw themselves, in color, with no light tint. Their render targets have no asterisk.
@@ -22,15 +21,15 @@
 //    That plane stays hidden, so a torch cookie does not tint the world. Its alpha is still a mask input.
 // 3. Offscreen plates turn *lighting and that cookie plane into *sumiari_mask. Each plate is a plane master
 //    that only stores the asterisk target, plus a child that draws the source. The child uses render_source,
-//    not a layer filter on a 32×32 icon: that filter resampled the whole view down to about one pixel per tile,
-//    and the alpha mask scaled it back up as hard tile steps. The child is the size of the view and sits
+//    not a layer filter on a 32×32 icon: that filter would resample the whole view down to about one pixel per
+//    tile, and the alpha mask would scale it back up as hard tile steps. The child is the size of the view and sits
 //    at SCREEN_SOUTHWEST, so the corner gradient and the cookie falloff stay per pixel, and they flicker
 //    with the lighting plane. The cookie child copies alpha, which is the white cookie's soft falloff.
 //    The mask is the max of the static light and that alpha. Color matrices and the max blend run on that full image.
 // 4. Live ink is a screen relay on the camera-static plane, under the HUD. It stacks every world
 //    capture, runs the ink matrix, then masks with *sumiari_mask. Mask 0 leaves the relay transparent,
 //    so the color world shows through. Mask 1 covers it with ink. Filters on the above-lighting plane
-//    master did not cover the view on 516.1688: with the old glare relay gone, campfires stayed in color.
+//    master do not cover the view on 516.1688.
 //    Force ink still desaturates, because that path is a color matrix on the world masters themselves.
 // 5. Force ink does not use the relay. Each world plane master gets the ink color matrix directly.
 //    Force color takes those filters back off and hides both relays.
@@ -49,9 +48,9 @@
 // Glare eases in across the brightest end of that same line. Full brightness is exactly colorless.
 #define SUMIARI_GLARE_START 0.82
 #define SUMIARI_GLARE_FULL 1.0
-// Not applied. A slope under 1 and a positive bias lifted every fully lit pixel toward paper-white.
+// Not applied (1 = no slope): a slope under 1 with a positive bias lifts every fully lit pixel toward paper-white.
 #define SUMIARI_GLARE_SLOPE 1
-// Not applied. 0.26 was the white fog on light pools.
+// Not applied (0): a positive bias turns light pools into a white fog.
 #define SUMIARI_GLARE_BIAS 0
 
 // Vision-only flourishes. Each one is the ink wash, nothing else. 0 turns that flourish off.
@@ -60,7 +59,7 @@
 #define SUMIARI_INK_VIGNETTE 0
 // Edge strength, 0 to 1. The icon is drawn once from this value.
 #define SUMIARI_INK_VIGNETTE_ALPHA 0.22
-// Moonlight layer (SUMIARI_MOON_VIVID below picks vivid color, the default; 0 is the older silver tint).
+// Moonlight layer (SUMIARI_MOON_VIVID below picks vivid color, the default; 0 is the plain silver tint).
 // Moonlight tint. At night, open sky reads as a faint cool silver, so moonlight looks different from
 // firelight. Firelight stays neutral ink gray. Vanilla night has no moon in the lighting model (the
 // midnight sun color is #000000), so "moonlit" means a pixel the sky plane calls open or border sky.
@@ -106,7 +105,7 @@
 // 1 / LUMINANCE (nothing clips there), a second copy subtracts SLOPE * (graded - START / LUMINANCE) (the subtract
 // clamps at 0, so it only touches highlights), and the gain is put back once on the whole stack. Output rises
 // 1:1 up to KNEE_START, then at (1 - SLOPE) of the rate, so highlights roll into the glow instead of clipping.
-// Mobs are not kneed (their look never reaches 1). 0 turns the knee off and grades exactly as before.
+// Mobs are not kneed (their look never reaches 1). 0 turns the knee off.
 #define SUMIARI_MOON_KNEE 1
 #define SUMIARI_MOON_KNEE_START 0.72
 #define SUMIARI_MOON_KNEE_SLOPE 0.55
@@ -128,14 +127,14 @@
 // Blues and teals lean sapphire: blue input pushes green (violet-blue toward sapphire's 216 degrees).
 #define SUMIARI_MOON_HUE_SAPPHIRE 0.35
 // Mobs (GAME_PLANE_FOV_HIDDEN) under the moon: no hue push, no violet shadow. The moon relay shows sprites unlit, so
-// skin came out at full daytime chroma and read salmon against the night. Mobs get moonlight instead: chroma eased to
+// skin would come out at full daytime chroma and read salmon against the night. Mobs get moonlight instead: chroma eased to
 // MOB_SATURATION, a MOB_SILVER share of the silver tint (luma kept), and MOB_GAIN so whites never clip.
 // 0 = same look as the world.
 #define SUMIARI_MOON_MOB_NEUTRAL 1
 #define SUMIARI_MOON_MOB_SATURATION 0.7
 #define SUMIARI_MOON_MOB_SILVER 0.15
 #define SUMIARI_MOON_MOB_GAIN 0.95
-// Mobs take the moon too (Ryan, 7:25 PM), skin-safe. Where a mob stands in moonlight it gets the same kind of grade as
+// Mobs take the moon too, skin-safe. Where a mob stands in moonlight it gets the same kind of grade as
 // the world: its LUMINANCE (times MOB_GRADE_GAIN), chroma up (MOB_GRADE_SATURATION around Rec.709 luma), a
 // MOB_GRADE_SHEEN share of the world's silver sheen and its violet shadow lift, but none of the world's hue pushes. Skin turns salmon or pink when its blue rises against its
 // green; plain saturation lowers blue against green on every warm tone, so skin goes richer and more golden, never
@@ -143,7 +142,7 @@
 // Where: the same moon mask as the ground (open sky only, off roofs and caves with the soft roof-line feather, off
 // every fire, torch and lamp pool), so a mob walking under an eave or toward a fire fades out of the grade smoothly
 // as its sprite glides, pixel by pixel, with no server work at all. That covers the owner's own sprite too: the
-// GAME_PLANE_FOV_HIDDEN master layers in GAME_PLANE_OWNER (vision_cone.dm untouched).
+// GAME_PLANE_FOV_HIDDEN master layers in GAME_PLANE_OWNER.
 // 0 (or sumiari_moon_mob_grade_enabled off, applied when the moon relay is next rebuilt) = the neutral mob look above.
 #define SUMIARI_MOON_MOB_GRADE 1
 #define SUMIARI_MOB_GRADE_SATURATION 1.6
@@ -159,13 +158,13 @@
 // 1) Starlight glints: a tiny slow four-point twinkle on open-sky water, wet ground, or a metal item. One beauty
 //    tick samples a few random tiles in view (no full scan) and keeps at most GLINT_MAX glints alive.
 #define SUMIARI_NIGHT_GLINTS 1
-// Calmer since the moon world itself is lit: a few at a time, smaller, softer (8 at 1.6x full white read as busy).
+// A few at a time, small and soft: the moonlit world is already bright.
 #define SUMIARI_GLINT_MAX 4
 #define SUMIARI_GLINT_TRIES 8
 // Percent chance per beauty tick to start a new glint when below the cap.
 #define SUMIARI_GLINT_CHANCE 80
-// Each glint stays SUMIARI_GLINT_LIFE and twinkles every SUMIARI_GLINT_CYCLE. A glint that lived for one short
-// twinkle never showed: the client drew a brand-new image's first moments of animation as nothing.
+// Each glint stays SUMIARI_GLINT_LIFE and twinkles every SUMIARI_GLINT_CYCLE. A glint that lives for only one short
+// twinkle never shows: the client draws a brand-new image's first moments of animation as nothing.
 #define SUMIARI_GLINT_LIFE (6 SECONDS)
 #define SUMIARI_GLINT_CYCLE (2 SECONDS)
 #define SUMIARI_GLINT_SCALE 1.15
@@ -175,7 +174,7 @@
 // The game glint is a 3-7px cross, too small to read at full-frame zoom, so a soft moonlit core (the light_32 lamp
 // sprite, scaled down and tinted) sits under it and swells with it. It is the twinkle's halo.
 #define SUMIARI_GLINT_CORE_SCALE 0.4
-// 0: no soft core under the twinkle (the core read as a purple blob).
+// 0: no soft core under the twinkle.
 #define SUMIARI_GLINT_CORE 0
 #define SUMIARI_GLINT_CORE_COLOR "#d4c8ff"
 #define SUMIARI_GLINT_CORE_ALPHA 230
@@ -186,20 +185,19 @@
 #define SUMIARI_GLINT_DEW (1 - SUMIARI_MOON_DEW)
 // 5) Moon-cast shadows: the moon matrix adds a cool indigo that is strongest on black and gone at white
 //    (k * indigo * (1 - luma)). Only a trace of red (blue >> green > red): a larger red share on top of the cool
-//    sheen turned dim brown brick pink.
+//    sheen turns dim brown brick pink.
 #define SUMIARI_NIGHT_SHADOWS 1
-//    The lift is kept small (0.035): at 0.12 it was a large share of a dark pixel's value but a small share of its
-//    lighter neighbour's, so every dark ground texture turned into blue-and-brown speckle (the "grain" around the
-//    character; the grain overlay itself barely mattered). The cool cast now comes mostly from SHADOW_CAST, a gentle
-//    multiplicative lean toward the violet that tints every pixel in proportion and so adds no speckle.
+//    The lift is kept small: a large one is a big share of a dark pixel's value but a small share of its lighter
+//    neighbour's, which turns dark ground textures into speckle. The cool cast comes mostly from SHADOW_CAST, a
+//    gentle multiplicative lean toward the violet that tints every pixel in proportion and so adds no speckle.
 #define SUMIARI_SHADOW_VIOLET 0.035
 #define SUMIARI_SHADOW_CAST 0.12
 // Moon haze: a luminous silver-lilac veil over everything the moon reaches, so moonlit ground reads ethereal and
-// stands out from roofs, caves and firelight (more than the old violet shadow lift, 0.12, ever did). Unlike that lift it is one flat added
+// stands out from roofs, caves and firelight. Unlike the shadow lift it is one flat added
 // tone, the same on every pixel, so it cannot turn texture into speckle and never changes which pixel is brighter.
 // It rides the moon relay, so the moon plate cuts it: none under roofs, in caves or at a fire, soft at every edge,
 // and it fades with dusk and dawn. HAZE is the peak added value (0..1 of full white) in the haze tone; 0 turns it off.
-// Off by default: lifting every pixel read as a milky wash over the blacks. The moon glow below replaced it.
+// Off by default: lifting every pixel reads as a milky wash over the blacks; the moon glow below is used instead.
 #define SUMIARI_MOON_HAZE 0
 #define SUMIARI_MOON_HAZE_R 0.62
 #define SUMIARI_MOON_HAZE_G 0.5
@@ -208,7 +206,7 @@
 // lit world, keeps each pixel's brightness above GLOW_FLOOR, turns it into the haze tone, cuts it by the moon plate
 // (none under roofs, in caves or at a fire, faded with dusk and dawn) and adds it back softened, with a bloom halo.
 // So moonlit surfaces glow violet in proportion to how bright the moon makes them, while shadows and blacks stay
-// deep (the flat haze lifted them into a milky wash). Mob pixels are cut before the blur, so no mob gets an outline.
+// deep. Mob pixels are cut before the blur, so no mob gets an outline.
 // GLOW is the gain on brightness (0 turns the relay off); GLOW_SOFT the veil blur and GLOW_BLOOM the halo size, px.
 #define SUMIARI_MOON_GLOW 3.2
 #define SUMIARI_MOON_GLOW_FLOOR 0.02
@@ -235,20 +233,20 @@
 #define SUMIARI_GLINT_SPOT_MAX 40
 #define SUMIARI_GLINT_LAYER 2
 // Glints and halos draw on the fullscreen plane, under every fullscreen overlay (flash is layer 23) and
-// under the HUD. On the relay plane they came out dimmed and tinted by the composite above them. Both are client
+// under the HUD. On the relay plane they would come out dimmed and tinted by the composite above them. Both are client
 // images on a turf or a plant, so they move with the world. There is no screen-space night effect at all: the
 // moon look is only color on the world (the moon relay), cut by the moon mask.
 #define SUMIARI_BEAUTY_PLANE FULLSCREEN_PLANE
 // Moon fade: the whole moon look fades in across the dusk step and out across the first half hour of dawn,
-// next to the sky's own color fade, instead of snapping at 16:00 and 8:00 station time. Station time.
+// next to the sky's own color fade. Station time.
 // Feather on the moon mask's open-sky edge, in pixels (a blur on the sky copy): no hard line at a ledge or roof.
-// 4, not 8: the sky plate is already a per-corner gradient and the wall faces carry the ledges, so 8 only smeared
-// the grade across the view down through open space, which read as a blurred lower level.
+// Kept small: the sky plate is already a per-corner gradient and the wall faces carry the ledges; a wider blur
+// smears the grade down through open space, which reads as a blurred lower level.
 #define SUMIARI_MOON_EDGE_BLUR 4
 // Open-sky cut on the sun plane before it becomes the moon and the skylight. The vanilla sun plane is 1 on open sky
 // but also spreads indoors (outdoor_datum calc_sunlight_spread: GLOBAL_LIGHT_RANGE tiles through doorways, windows
-// and curtains, falloff 1 at the shared corner, ~0.53 one tile in, ~0.18 two in), so a roofed room by a window
-// used to take the moon look. The cut maps SKY_CUT..1 to 0..1: only open sky (1) passes, and the doorway or window
+// and curtains, falloff 1 at the shared corner, ~0.53 one tile in, ~0.18 two in), which would give a roofed room by a
+// window the moon look. The cut maps SKY_CUT..1 to 0..1: only open sky (1) passes, and the doorway or window
 // tile itself keeps a soft edge a few pixels wide; every roofed tile past it is 0, the plain cave look.
 #define SUMIARI_MOON_SKY_CUT 0.8
 #define SUMIARI_MOON_FADE_IN_START (15.5 HOURS)
@@ -278,8 +276,8 @@
 #define SUMIARI_SPARE_PLANE -46
 #define SUMIARI_SPARE_RENDER_TARGET "*sumiari_moon_spare"
 // Emitters looked for within this many tiles of the Sumiari, at most this many spared, each out to this radius.
-// The nearest are spared first. A kneestinger patch is dozens of small lights: at 16, picked in scan order, half a
-// courtyard of them stayed gray. Each spared emitter is one cached image, rebuilt only when its tiles change.
+// The nearest are spared first. A kneestinger patch is dozens of small lights, so the cap is
+// generous. Each spared emitter is one cached image, rebuilt only when its tiles change.
 #define SUMIARI_SPARE_SCAN 11
 #define SUMIARI_SPARE_MAX_EMITTERS 64
 #define SUMIARI_SPARE_RANGE_MAX 9
@@ -295,7 +293,7 @@
 
 // Moonlit wall faces. The moon mask reads the sky plane: every open or roofed tile draws its four lighting corners'
 // sunFalloff there (the vanilla per-corner sky light), but a closed turf (cliff, wall) draws nothing, so the moon
-// stopped dead on the top edge of every cliff face and wall. For these eyes only, each closed turf near the owner
+// would stop dead on the top edge of every cliff face and wall. For these eyes only, each closed turf near the owner
 // gets a client image of exactly what an open tile would have drawn there: the lighting gradient icon tinted by its
 // own four corners' sunFalloff, the corners it already shares with the sky tiles next to it. A face beside open sky
 // is moonlit at the top and fades down its height like the ground under a roof edge; rock with no sky near stays 0.
@@ -325,19 +323,19 @@
 // roofed tile near the owner whose vanilla sun overlay has a corner the bleed walk cannot reach gets a client image
 // on SUNLIGHTING_PLANE, above the vanilla overlay, drawing the same corners with the unreachable ones at 0. Reachable
 // corners (touching unshut open sky or a roofed tile the walk got to within SPILL_RANGE steps) keep the vanilla value,
-// so an open door or clear window still lets the day in exactly as before. Lamps and fires are their own lighting
+// so an open door or clear window still lets the day in exactly as vanilla does. Lamps and fires are their own lighting
 // objects, not the sun plane, and are untouched. Nobody else sees the images.
 #define SUMIARI_SKY_SPILL_CUT 1
 // Overhanging sprites follow their own tile. The wash is per pixel from the lighting plane, and vanilla never lights
 // an opaque turf (lighting_source skips opacity), so a wall tile above a lit room fades from lit at its foot to 0 at
-// its top corners. A wall mirror (pixel_y 32), a tall cabinet, a banner or a tree crown drawn up into that tile kept
-// its lower rows gray and its top rows in color: the tip cut off in color. For these eyes only, each object near the
+// its top corners. A wall mirror (pixel_y 32), a tall cabinet, a banner or a tree crown drawn up into that tile would
+// keep its lower rows gray and its top rows in color. For these eyes only, each object near the
 // owner that draws past its tile (pixel offset or an icon over 32 px) gets a client image on the hidden
 // SUMIARI_HANG_PLANE: its own sprite at alpha = sprite alpha * the wash of the tile it stands on. The gray mask
 // takes the max with it (and the dim plate the matching light), so every pixel of the sprite is at least as gray as
 // its own tile. Vanilla lighting is untouched and nobody else sees the images.
 #define SUMIARI_HANG_LIFT 1
-// -48: -44 is vanilla's GAME_PLANE_OWNER (the player's own sprite under the vision cone).
+// Not -44: that is GAME_PLANE_OWNER (the player's own sprite under the vision cone).
 #define SUMIARI_HANG_PLANE -48
 #define SUMIARI_HANG_RENDER_TARGET "*sumiari_hang"
 // Pixels a sprite has to reach past its tile (offset) to count as overhanging, and the most images per viewer.
@@ -414,15 +412,14 @@
 #define SUMIARI_SHORE_TONE "#2c2a32"
 // 2) Moon-edge highlights. A wall or cliff tile gets a soft catch-light where it meets open sky: along its north
 // side a faint outer pixel over a fainter inner one, and on a west or east side only a short sliver at the top that
-// fades out downward (a full-height side line read as a flat pale band beside the rock); trees, rocks, big mushrooms and bushes on open sky get a
+// fades out downward (a full-height side line reads as a flat pale band beside the rock); trees, rocks, big mushrooms and bushes on open sky get a
 // one-pixel rim on the edges of their own sprite that face the moon (up and left): the sprite, solid silver, minus
 // itself shifted one pixel away from the moon. The moon mask decides how bright each rim ends up.
-// Removed (Ryan): the wall/cliff catch-light read as a pale lilac line along a dark tile's top and side edges. With
-// the sprite rims also off (below), the whole moon-edge highlight effect is off.
+// Off: the wall/cliff catch-light reads as a pale lilac line along a dark tile's top and side edges. With the
+// sprite rims also off (below), the whole moon-edge highlight effect is off.
 #define SUMIARI_MOON_RIMS 0
-// The sprite rims (trees, rocks, big mushrooms, bushes) are removed (Ryan): the rim was built from the plant's
-// still sprite, so on a bush that sways for the viewer it stayed behind and drew a pale dotted arc out past the
-// leaning bush into the dark ground. (The wall/cliff catch-light is off too: SUMIARI_MOON_RIMS 0.)
+// Off: sprite rims (trees, rocks, big mushrooms, bushes) are built from the plant's still sprite, so on a bush that
+// sways for the viewer the rim stays behind and draws a pale dotted arc past the leaning bush.
 #define SUMIARI_MOON_SPRITE_RIMS 0
 #define SUMIARI_RIM_OUTER_ALPHA 85
 // Pixels of the side sliver, fading from RIM_SIDE_ALPHA at the top to nothing.
@@ -483,7 +480,7 @@
 #define SUMIARI_SWAY_MAX 110
 #define SUMIARI_SWAY_SKEW 0.045
 #define SUMIARI_SWAY_PERIOD 34
-// The silver shimmer over swaying plants is removed (Ryan: no pale shimmer on plants); the sway itself stays.
+// Off: the silver shimmer over swaying plants. The sway itself stays on.
 #define SUMIARI_SWAY_SHIMMER 0
 #define SUMIARI_SWAY_SHIMMER_LOW 14
 #define SUMIARI_SWAY_SHIMMER_HIGH 80
@@ -499,8 +496,7 @@
 // tile may carry one wisp: two or three thin horizontal ribbons, each a few pixels tall and fading out along its length,
 // centred low on the tile and spilling a tile to each side, drifting slowly sideways and thinning with the moon's
 // breath. About a third of the candidates (picked by position, so nothing flickers between scans), at most FOG_MAX.
-// Under mobs, so it curls around legs; never a blob, never screen-sized. (It was a 2-tile lilac ellipse at alpha 70,
-// on bank dirt too, and read as bright blobs on dry ground.)
+// Under mobs, so it curls around legs; never a blob, never screen-sized.
 #define SUMIARI_MOON_FOG 1
 #define SUMIARI_FOG_MAX 24
 #define SUMIARI_FOG_ALPHA 110
@@ -556,8 +552,8 @@
 // earth or grass. Nothing at dusk, growing from FROST_START to full at FROST_FULL (small hours), melting away from
 // FROST_MELT to FROST_GONE at dawn. Frost on a swaying tuft sways with it. Breathes faintly with the moon.
 #define SUMIARI_MOON_FROST 1
-// Frost lines along paving borders (the 1 px silver line and the fainter inner one) are removed (Ryan: no edge lines).
-// Frost on grass tips and stone tops stays.
+// Off: frost lines along paving borders (the 1 px silver line and the fainter inner one). Frost on grass tips and
+// stone tops stays on.
 #define SUMIARI_FROST_PAVING 0
 #define SUMIARI_FROST_MAX 140
 #define SUMIARI_FROST_ALPHA 170
@@ -663,12 +659,12 @@
 #define SUMIARI_WASH_INK "ink"
 #define SUMIARI_WASH_COLOR "color"
 // The mask, cookie, knee, dim and moon plates, each a master plus the child that draws the capture,
-// plus the ink, sun, dim and moon relays (39 today), with a little headroom.
+// plus the ink, sun, dim and moon relays, with a little headroom.
 #define SUMIARI_PIECE_CAP 42
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 // A wider client view (zoomed out) raises it by the view's extra radius (sumiari view_extra), up to VIEW_EXTRA_MAX.
 #define SUMIARI_SEE_IN_DARK 8
-// Every per-tile range around the viewer was tuned for the 15x15 view (radius 7): cliff/spill/overhang 9, effects 8,
+// Every per-tile range around the viewer is tuned for the 15x15 view (radius 7): cliff/spill/overhang 9, effects 8,
 // flora 8, glints 7, spare scan 11, spirits 4, see_in_dark 8. When the client's view is wider (zoomed out), each of
 // them grows by the view's extra radius, and the per-area caps (spots, sway, frost, reflections, overhang images...)
 // grow with the area, so the far tiles of a zoomed-out screen get the same look. VIEW_EXTRA_MAX caps it for
@@ -718,8 +714,8 @@
 #define SUMIARI_TARGET_COOKIE_BLUE "sumiari_cookie_b"
 #define SUMIARI_PLANE_KNEE -68
 #define SUMIARI_TARGET_KNEE "sumiari_knee"
-// Proportional darkvision. Without it every pixel drew at its sprite's own brightness whatever the light, so a
-// shadow a human sees as darker read as bright as lit ground (flat floor, no falloff). The dim plate is the raw
+// Proportional darkvision. Without it every pixel draws at its sprite's own brightness whatever the light, so a
+// shadow a human sees as darker reads as bright as lit ground (flat floor, no falloff). The dim plate is the raw
 // light a human sees as luma (static lighting plus the movable-light cookie, emitter sprites full, before the wash gain),
 // and the dim relay lays black over the whole view at alpha (1 - FLOOR) * (1 - light). Drawn brightness is then
 // sprite * (FLOOR + (1 - FLOOR) * light): pitch black keeps FLOOR (40%) of its brightness, in color, and every step
@@ -728,33 +724,27 @@
 #define SUMIARI_DARKVISION_FLOOR 0.4
 // Moonlit open sky at night keeps the full moon look (sat 1.75, lum 1.5): the skylight plate (sky plane plus cliff
 // faces, feathered like the moon mask, times the moon fade) is full light for the dim plate, so the dim is off under
-// the night sky and eases back in across dawn and dusk. A floor there (0.36 then, or a moonlight share of 0.45, or a
-// lamp-matched 0.8) left the moonlit night dull, and the moon look's 1.5x against the gray wash's 1x made lamp pools
-// darker rings in brighter moonlight. Caves, roofs and the whole day keep the proportional dim.
-// Lamp hand-off under the night sky. The moon look is LUMINANCE (1.5x) and the gray wash 1x, and the moon mask
-// stepped aside for lamp light, so a lamp pool read darker than the moonlight around it. With the hand-off the moon
-// mask no longer subtracts static or movable lamp light (emitter sprites still do), and a lamp relay adds the gray
-// wash again at (LUMINANCE - 1 + LIFT), masked by the wash and the night sky. Drawn brightness is then
+// the night sky and eases back in across dawn and dusk. Caves, roofs and the whole day keep the proportional dim.
+// Lamp hand-off under the night sky. The moon look is LUMINANCE (1.5x) and the gray wash 1x, so a lamp pool would
+// read darker than the moonlight around it. The moon mask does not subtract static or movable lamp light (emitter
+// sprites still do), and a lamp relay adds the gray wash again at (LUMINANCE - 1 + LIFT), masked by the wash and the night sky. Drawn brightness is then
 // 1.5 * (1 - w) + (1 + 0.5 + LIFT) * w = 1.5 + LIFT * w for wash w: never under the moonlight, rising with the light.
 #define SUMIARI_MOON_LAMP_HANDOFF 1
-// Fire-blind at night (Ryan): while the moon look is up, fire no longer touches these eyes on open sky. The ink
-// mask subtracts the night skylight (FIRE_BLIND_GAIN x, so any lamp wash under the open night sky goes to 0), so no
-// tile there turns gray and the lamp relay adds nothing; the moon mask already ignores lamp light (hand-off), and the
-// moon effects' lamp gate, the spares' fire cut and the flora halos' lamp check all stand down. A flame's own sprite
-// keeps its gray (the emitter max comes after the subtract). By day the skylight is 0, so fire is gray as before;
-// roofs and caves have no skylight, so fire is gray there too. Vanilla lighting is only read, never changed.
+// Fire-blind at night: while the moon look is up, fire does not gray open sky for these eyes. The ink mask is
+// multiplied by 1 - fade * the night sky shape (FIRE_BLIND_GAIN x, clamped), so any lamp wash under the open night
+// sky goes to 0 and the lamp relay adds nothing there; the moon mask already ignores lamp light (hand-off), and the
+// moon effects' lamp gate, the spares' fire cut and the flora halos' lamp check all stand down. The clear comes after
+// the emitter-sprite max, so a flame standing on open sky takes the moon look too. By day the fade is 0, and roofs
+// and caves have no sky, so fire is gray there. Vanilla lighting is only read, never changed.
 #define SUMIARI_MOON_FIRE_BLIND 1
 #define SUMIARI_MOON_FIRE_BLIND_GAIN 4
 #define SUMIARI_MOON_LAMP_LIFT 0.15
 #define SUMIARI_PLANE_SKYLIGHT -70
 #define SUMIARI_TARGET_SKYLIGHT "sumiari_skylight"
-// Dawn and dusk (iter33). The fire-blind clear used to subtract the faded skylight FIRE_BLIND_GAIN (4) times over,
-// which clamps: through most of the dawn fade it still wiped out all of the rising dawn sunlight, then in the last
-// minutes (fade under wash / 4) the whole gray wash of that sunlight came back at once, over a moon look that was
-// nearly gone - a fade, a jump back to bright, then nothing. Dusk mirrored it (the dusk sun's gray snapped away a
-// third of the way in). Now the clear reads this unfaded copy (the night skylight shape, GAIN times over, clamped
-// to 1 by the plate) and multiplies the ink mask by 1 - fade * shape, so the gray on open sky is wash * (1 - fade):
-// the exact night value at fade 1, the day value at fade 0, and a straight line between.
+// Unfaded night sky shape for the fire-blind clear (the skylight chain, GAIN times over, clamped to 1 by the plate).
+// The ink mask is multiplied by 1 - fade * shape, so the gray on open sky is wash * (1 - fade): the night value at
+// fade 1, the day value at fade 0, linear across dawn and dusk. Subtracting the faded skylight GAIN times over
+// instead would clamp, and the dawn sun's gray would hold at 0 and then return all at once near the end of the fade.
 #define SUMIARI_PLANE_SKYSHAPE -71
 #define SUMIARI_TARGET_SKYSHAPE "sumiari_skyshape"
 #define SUMIARI_PLANE_DIM -69
@@ -765,11 +755,11 @@
 
 // Static lights barely reach full on the lighting plane. set_light leaves inner range 0 and the falloff
 // curve is cubed, so a range-5 campfire peaks at about 0.43 of its color even on its own tile, and
-// #da5e21 puts that at 0.37 on the brightest channel. That read as 63% color right beside the fire.
+// #da5e21 puts that at 0.37 on the brightest channel.
 // The static part of the mask is divided by this, then clamped. 0.37 is the brightest a lone campfire
 // draws, so its own tile is fully gray and everything below is proportional to vanilla brightness:
-// half as bright as the fire is half color, true dark is full color. A lower value (0.3 before) clamped
-// most of a lit room to one flat gray plateau and pushed the half-gray line out past vanilla's half-light.
+// half as bright as the fire is half color, true dark is full color. A lower value clamps most
+// of a lit room to one flat gray plateau and pushes the half-gray line out past vanilla's half-light.
 #define SUMIARI_LIGHT_FULL 0.37
 #define SUMIARI_LIGHT_GAIN (1 / SUMIARI_LIGHT_FULL)
 // Every lit emitter on a turf draws its own sprite here through one shared vis_contents marker.
@@ -965,7 +955,7 @@ var/global/turf/sumiari_test_dark_turf
 		apply_wash_filters()
 		start_night_senses()
 		return
-	// The view grew or shrank. The old canvas would resample the lighting plane, which is the tile step.
+	// The view grew or shrank. A stale canvas would resample the lighting plane, which is the tile step.
 	if(vision_on && length(screen_pieces))
 		clear_screen_pieces()
 	vision_on = TRUE
@@ -1011,8 +1001,8 @@ var/global/turf/sumiari_test_dark_turf
 	sumiari_cone_over_relays(owner, TRUE)
 
 // The vision cone's dark wedge (hud_used.fov) sits on HUD_PLANE - 2, the very plane the relays use
-// (SUMIARI_RELAY_PLANE), at HUD_LAYER. The relays, a whole redrawn world at RELAY_LAYER_BASE and up, covered it,
-// so these eyes lost the wedge (bodies behind were still hidden by the blocker mask). While the eyes see, the wedge
+// (SUMIARI_RELAY_PLANE), at HUD_LAYER. The relays, a whole redrawn world at RELAY_LAYER_BASE and up, would cover it
+// (bodies behind stay hidden by the blocker mask either way). While the eyes see, the wedge
 // goes above the relays and the ink vignette, still under the night senses; it comes back to HUD_LAYER after.
 #define SUMIARI_CONE_LAYER (SUMIARI_RELAY_LAYER_BASE + 35)
 /proc/sumiari_cone_over_relays(mob/who, over)
@@ -1066,8 +1056,8 @@ var/global/turf/sumiari_test_dark_turf
 		cookie.alpha = LIGHTING_PLANE_ALPHA_VISIBLE
 		remember_render_target(cookie, SUMIARI_OLIGHT_SOURCE)
 	// The human hud adds a faint glow around the wearer to the lighting plane (up to 30/255).
-	// The lighting plane is hidden for these eyes, so that glow only fed the mask, and the gain
-	// would have washed the wearer's own tiles in true darkness.
+	// The lighting plane is hidden for these eyes, so that glow would only feed the mask, and the
+	// gain would wash the wearer's own tiles in true darkness.
 	var/atom/movable/screen/fullscreen/glow = owner.screens?["see_through_darkness"]
 	if(glow)
 		glow.alpha = 0
@@ -1110,7 +1100,7 @@ var/global/turf/sumiari_test_dark_turf
 
 // The asterisk capture stores atoms on the plane, not filters on the master. The child is that atom.
 // source_name is the child's render_source, so the sample is the plane's own pixels. The filters only
-// recolor or blend. A layer filter of the source onto a small icon is what made the tile steps.
+// recolor or blend. A layer filter of the source onto a small icon would make tile steps.
 /obj/item/organ/eyes/sumiari/proc/add_plate(plane, target_name, source_name, list/plate_filters)
 	var/list/span = sumiari_mask_span(owner?.client?.view)
 	var/atom/movable/screen/sumiari_plate/plate = new
@@ -1173,8 +1163,8 @@ var/global/turf/sumiari_test_dark_turf
 	))
 	// Cookie RGB is the light color, the icon alpha is the falloff, and set_power keeps that alpha at 255 whatever the
 	// power. A human sees a movable light as its color times that falloff: the cookie punches the darkness out and
-	// then multiplies the world by the light's color. Copying the alpha alone counted a dim red or violet light as
-	// full brightness over its whole radius, so a room a human sees near black went fully gray for these eyes.
+	// then multiplies the world by the light's color. Copying the alpha alone would count a dim red or violet light
+	// as full brightness over its whole radius, so a room a human sees near black would go fully gray.
 	// Brightness is max(R, G, B) of the color times the falloff (each channel flattened on black), the same
 	// max-channel reading the static lighting gets. A white-ish light (a kneestinger, a torch) is unchanged.
 	add_plate(SUMIARI_PLANE_COOKIE_RED, SUMIARI_TARGET_COOKIE_RED, SUMIARI_OLIGHT_SOURCE, sumiari_cookie_channel_filters(1))
@@ -1252,12 +1242,12 @@ var/global/turf/sumiari_test_dark_turf
 		// No lamp gray, fire or not, under the open night sky (see SUMIARI_MOON_FIRE_BLIND): after the emitter-sprite
 		// max, so a flame, lamp, torch or fire bowl standing on open sky is in full moon color too. Under a roof, in a
 		// cave or by day the skylight is 0 and the sprite stays gray.
-		// Multiplied by 1 - fade * night shape (iter33), so dawn and dusk blend the gray linearly with the fade.
+		// Multiplied by 1 - fade * night shape, so dawn and dusk blend the gray linearly with the fade.
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYSHAPE), blend_mode = BLEND_MULTIPLY, color = sumiari_matrix_fire_blind(fade)),
 #endif
 #if SUMIARI_MOON_SPARES_NONFIRE
 		// No lamp gray where the moon spares a non-fire light.
-		// Times the fade (iter33): the spares stop at the window's end, so their clear eases out with the moon.
+		// Times the fade: the spares stop at the window's end, so their clear eases out with the moon.
 		filter(type = "layer", render_source = SUMIARI_SPARE_RENDER_TARGET, blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_fade_scale(fade)),
 #endif
 		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
@@ -1402,8 +1392,8 @@ var/global/turf/sumiari_test_dark_turf
 #endif
 #endif
 #if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
-	// The knee comes off once, from its own plate. Five extra layers on this relay (one per kneed plane) pushed the
-	// filter list past what the client renders, and the whole moonlit world drew black.
+	// The knee comes off once, from its own plate. One extra layer per kneed plane on this relay pushes the
+	// filter list past what the client renders, and the whole moonlit world draws black.
 	if(knee_plate)
 		knee_plate.filters = sumiari_moon_knee_filters(knee_look, sumiari_moon_knee_matrix(mob_look, gain))
 		stacked += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_KNEE), blend_mode = BLEND_SUBTRACT)
@@ -1459,8 +1449,7 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 
 // The skin-safe moon grade for mobs, in the same light as the ground: the world's LUMINANCE, its silver sheen tint
 // and its violet shadow lift, at a slightly gentler saturation, plus the ember guard (red's excess over luma moves
-// EMBER of itself from the red output to the green) so skin never turns salmon. A mob used to get gain 0.94 against
-// the ground's 1.5, so it read dark and muddy on moonlit grass. Whites get the knee like the world (moon_stack_filters).
+// EMBER of itself from the red output to the green) so skin never turns salmon. Whites get the knee like the world (moon_stack_filters).
 /proc/sumiari_moon_mob_grade_matrix()
 	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
 	var/list/tint = list(SUMIARI_MOON_SHEEN_R, SUMIARI_MOON_SHEEN_G, SUMIARI_MOON_SHEEN_B)
@@ -1566,8 +1555,7 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 // After the lit world stack: mobs cut out, brightness above the floor in the haze tone, cut by the moon plate (roofs,
 // caves, fire, dusk and dawn), softened, bloomed.
 // Only the ground and walls glow. Every object plane is cut out first like the mobs, so bones, grass tufts, trees,
-// items and furniture keep their moonlit color but get no added violet light and no halo of their own (Ryan: the
-// bones looked artificially lit). The ground's soft glow still reaches a pixel or two past their edges.
+// items and furniture keep their moonlit color but get no added violet light and no halo of their own. The ground's soft glow still reaches a pixel or two past their edges.
 GLOBAL_LIST_INIT(sumiari_moon_glow_cut_planes, list(GAME_PLANE_LOWER, GAME_PLANE, GAME_PLANE_FOV_HIDDEN, GAME_PLANE_UPPER, GAME_PLANE_HIGHEST))
 var/global/sumiari_moon_glow_stages = 5
 /proc/sumiari_moon_glow_filters()
@@ -1728,7 +1716,7 @@ var/global/sumiari_moon_glow_stages = 5
 	eyes.capture_world_plane(src)
 	eyes.apply_wash_filters()
 
-// Reading a filter var it does not have is a runtime, and that runtime was aborting the strip.
+// Reading a filter var it does not have is a runtime error, which would abort the strip.
 // Blur and drop-shadow stay on the plane masters. Only layer, alpha, and color are ours to inspect.
 /proc/sumiari_filter_kind(sample)
 	if(!sample)
@@ -1799,8 +1787,8 @@ var/global/sumiari_moon_glow_stages = 5
 	return ..()
 
 // Drawn into the plate's asterisk capture. Not a plane master, so it cannot replace the plate.
-// render_source replaces this icon. The icon is still the size of the view: a 32×32 stand-in is what
-// resampled *lighting down to one pixel a tile. SCREEN_SOUTHWEST is the 516 anchor, bottom-left to bottom-left.
+// render_source replaces this icon. The icon is still the size of the view: a 32×32 stand-in would
+// resample *lighting down to one pixel a tile. SCREEN_SOUTHWEST is the 516 anchor, bottom-left to bottom-left.
 /atom/movable/screen/sumiari_sampler
 	icon = 'icons/mob/screen_gen.dmi'
 	icon_state = "blank"
@@ -2388,7 +2376,7 @@ var/global/sumiari_moon_fade_timer
 		raw_peak /= counted
 		falloff /= counted
 	// dynamic_lumcount is a flat stamp (0.5 on every turf in view of a held light). It is not the
-	// mask the player sees, so a pitch-black cave tile inside that radius was reading as half lit.
+	// mask the player sees, so a pitch-black cave tile inside that radius would read as half lit.
 	// Held lights contribute their visual falloff instead. Corner cache is the static-light overlay.
 	// Same gain the mask plate applies to the lighting plane, which carries both lamps and sun.
 	var/intensity = CLAMP01(((lamps + sun) * SUMIARI_LIGHT_GAIN) + movable)
@@ -2477,7 +2465,7 @@ var/global/sumiari_moon_fade_timer
 	return falloff
 
 // An emitter counts once. Hands, a mob's contents, and one level inside an object (a torch in a sconce).
-// range() only sees atoms sitting on the turf, so a torch in a hand was missing from lights= and from intensity.
+// range() only sees atoms sitting on the turf, so a torch in a hand would be missing from lights= and from intensity.
 /proc/sumiari_note_emitter(list/found, list/seen, atom/source)
 	if(!source || seen[source])
 		return
@@ -2542,8 +2530,8 @@ var/global/sumiari_moon_fade_timer
 
 // Column-major 4x4 plus RGBA constants, matching color_matrix_identity().
 // Full ink is Rec.709 luma, then a gentle slope and lift. Brightness stays with the sprite.
-// glare_override is accepted so old callers still compile. It does not lift or crush:
-// that lift was the white fog, because a normal pool is already full-bright on the lighting plane.
+// glare_override is accepted for existing callers and ignored. It does not lift or crush: a lift would be a white
+// fog, because a normal pool is already full-bright on the lighting plane.
 // The lighting-plane mask blends color and this gray, so a half-lit pixel is half color.
 /proc/sumiari_color_matrix(intensity, glare_override)
 	if(isnull(intensity))
@@ -3004,7 +2992,7 @@ var/global/sumiari_run_headless_test = FALSE
 	qdel(sconce)
 	return ok
 
-// Held items that are off never reach lights=. The live client logged on=1 at fire_act and then a turf with no torch.
+// Held items that are off never reach lights=.
 /proc/sumiari_hands_near(turf/T)
 	var/list/lines = list()
 	if(!isturf(T))
@@ -3764,9 +3752,8 @@ var/global/sumiari_run_headless_test = FALSE
 			return
 		return sample:blend_mode
 
-// iter33: dawn and dusk fade every moon piece together. The phase only falls across dawn and only rises across
-// dusk, and the ink gray on open sky (wash w times the clear factor 1 - fade * shape) is the straight line
-// w * (1 - fade) with no knee, where the old clamped w - 4 * fade held 0 until fade < w / 4 and then jumped.
+// Dawn and dusk fade every moon piece together. The phase only falls across dawn and only rises across dusk, and
+// the ink gray on open sky (wash w times the clear factor 1 - fade * shape) is the straight line w * (1 - fade).
 /proc/sumiari_fade_problem(obj/item/organ/eyes/sumiari/eyes)
 	var/last = 2
 	for(var/t in round(7.98 * 36000) to round(8.52 * 36000) step 100)
@@ -4705,7 +4692,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 		glint.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 		glint.color = SUMIARI_GLINT_COLOR
 		glint.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
-		// No filter here: a drop_shadow on this KEEP_APART image hid the whole twinkle in the client.
+		// No filter here: a drop_shadow on this KEEP_APART image hides the whole twinkle in the client.
 #if SUMIARI_GLINT_CORE
 		var/image/core = image('icons/effects/light_overlays/light_32.dmi', "light")
 		core.color = SUMIARI_GLINT_CORE_COLOR
@@ -4946,7 +4933,7 @@ GLOBAL_LIST_INIT(sumiari_fire_light_overrides, typecacheof(list(
 	return T?.outdoor_effect && T.outdoor_effect.state != SKY_BLOCKED
 
 // A tile the moon reaches: open sky, or a wall face beside open sky (the moon plate spills onto it). Without the wall
-// faces, a calm light against a cliff carved a dark gray disc out of the moonlit rock.
+// faces, a calm light against a cliff would carve a dark gray disc out of the moonlit rock.
 /proc/sumiari_spare_moonlit(turf/T)
 	if(!T)
 		return FALSE
@@ -5112,8 +5099,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 // Tiles a flame can light, each with how much flame light lands there (its falloff, summed over the flames): within
 // its range (plus half a tile) and in its view, so a wall candle behind a wall does not keep the open sky outside
 // gray. One view() per flame per tick. A tile only in reach of a flame's faint tail (a firebowl's range is 12) holds a
-// tiny value, not TRUE: it used to block every spare out there, and a kneestinger far from any fire cut a round gray
-// hole in the moon look. sumiari_spare_fire_keep() turns the value into how much of a spare survives.
+// tiny value, not TRUE, so a kneestinger far from any fire keeps its spare. sumiari_spare_fire_keep() turns the value into how much of a spare survives.
 /proc/sumiari_spare_fire_tiles(list/fires)
 	var/list/lit = list()
 	for(var/atom/fire as anything in fires)
@@ -5592,10 +5578,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 
 // A door, window or doorway in a wall line counts as the first roofed step whether or not the map put a roof over it.
 // Roofs are the turfs on the z above, and mappers roof a wall row differently on different sides of a building (often
-// the south wall row is left open to the sky and a west or east one roofed, or the other way round). An unroofed
-// opening was a SKY cell: the walk started one tile deeper, and vanilla drew that tile as full open sky, so light came
-// one tile farther in through it than through the same window on a roofed wall (Ryan: the west window spilled more
-// than the south one). A sky cell with walls (closed or shut) on both sides along one axis and a roofed floor on one
+// the south wall row is left open to the sky and a west or east one roofed, or the other way round). Left as a
+// SKY cell, an unroofed opening would start the walk one tile deeper and vanilla draws it as full open sky, so light
+// would reach one tile farther in than through the same window on a roofed wall. A sky cell with walls (closed or shut) on both sides along one axis and a roofed floor on one
 // side of the other axis becomes ROOF (SKY_SHUT becomes WALL). Changes grid in place; returns the changed indices.
 /proc/sumiari_moon_bleed_openings(list/grid, w, h)
 	. = list()
@@ -5789,7 +5774,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	qdel(hang_mirror)
 	qdel(hang_stone)
 	// Every plane master on its own plane: two on one plane share one key in hud plane_masters, and one of them is
-	// never drawn the way it was meant (the hang plane first sat on -44, vanilla's GAME_PLANE_OWNER).
+	// never drawn the way it was meant.
 	var/list/plane_target = list()
 	var/list/plane_owner = list()
 	for(var/master_type in subtypesof(/atom/movable/screen/plane_master))
@@ -6417,7 +6402,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	rim.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	rim.color = sumiari_solid_matrix(sumiari_fx_silver(255))
 	// Only edges with body behind them: the pixel two steps away from the moon must be sprite too. Without it every
-	// pixel of a dead tree's one- and two-pixel branches was an edge, and the tree wore a mesh of white scratches.
+	// pixel of a dead tree's one- and two-pixel branches is an edge, a mesh of white scratches.
 	var/icon/cutout = sumiari_flora_cutout(thing)
 	rim.filters = list(
 		filter(type = "alpha", icon = cutout, x = 1, y = -1, flags = MASK_INVERSE),
@@ -6595,12 +6580,12 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 
 // Moon effect checks that do not depend on the map or the time of day.
 // Lamp, fire and movable light on a tile (reads vanilla lighting only; the sun and moon do not count).
-// Only fire counts (Ryan): a kneestinger, glow moss or light orb never turns the moon effects off. Static light is
+// Only fire counts: a kneestinger, glow moss or light orb never turns the moon effects off. Static light is
 // weighed by the flame share of each corner's sources; movable light comes only from the flames spare_tick found.
 var/global/list/sumiari_fx_movable_fires = list()
 
 /proc/sumiari_fx_lamp_light(turf/T)
-	// Fire-blind: the moon effects only run while the moon look is up, and then fire no longer turns them off.
+	// Fire-blind: the moon effects only run while the moon look is up, and then fire does not turn them off.
 	if(sumiari_moon_fire_blind)
 		return 0
 	var/total = 0
@@ -6701,7 +6686,7 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 
 // An image that copies an object's appearance (atom.appearance carries the object's pixel offsets) but rides that
 // object: the object's own offsets already place it, so the copy's must be zero or the copy sits offset twice (a
-// tall bush with pixel_x -16 drew 16 px left of itself for these eyes).
+// tall bush with pixel_x -16 would draw 16 px left of itself).
 /proc/sumiari_clear_offsets(image/picture)
 	picture.pixel_x = 0
 	picture.pixel_y = 0
@@ -7298,8 +7283,8 @@ GLOBAL_LIST_INIT(sumiari_frost_types, typecacheof(list(
 )))
 
 // Not grass tufts, though they are roguegrass subtypes: a bush, hedge wall, thorn bush, maneater, pumpkin or jungle
-// bush is a full-tile block, so its sprite's top edge in silver drew a dashed pale line along the top border of the
-// tile (Ryan: the bluish dashes on the hedge under the mirror). No frost on them.
+// bush is a full-tile block, so its sprite's top edge in silver would draw a dashed pale line along the top border of
+// the tile. No frost on them.
 GLOBAL_LIST_INIT(sumiari_frost_skip, typecacheof(list(
 	/obj/structure/flora/roguegrass/bush,
 	/obj/structure/flora/roguegrass/thorn_bush,
@@ -7715,7 +7700,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	qdel(cross)
 #endif
 #if SUMIARI_MOON_SPIRITS
-	// Each wisp is its own jewel (distinct halos, a pale core) and about twice the old 11 px across.
+	// Each wisp is its own jewel (distinct halos, a pale core) and about two-thirds of a tile across.
 	var/list/spirit_halos = list()
 	var/spirit_span = 0
 	for(var/spirit_variant in 1 to length(sumiari_spirit_palette()))
