@@ -490,6 +490,13 @@
 #define SUMIARI_PETAL_FALL (4.5 SECONDS)
 #define SUMIARI_PETAL_REST (2 SECONDS)
 #define SUMIARI_PETAL_FADE (1.5 SECONDS)
+// Tree leaves: a larger blade (LEAF_LENGTH px tip to base, LEAF_WIDTH px across) with a moon-silver upper rim and a
+// deep jewel-shadow lower edge, so it reads over dark grass and pale snow alike; it starts LEAF_START_LOW..HIGH px
+// above its landing tile, up in the canopy, and draws over the tree tops.
+#define SUMIARI_LEAF_LENGTH 14
+#define SUMIARI_LEAF_WIDTH 7
+#define SUMIARI_LEAF_START_LOW 48
+#define SUMIARI_LEAF_START_HIGH 84
 // 11) Frost-silver edges: as the night deepens a faint frost of moon silver gathers on the tips of grass tufts (the
 // top edge of each blade), on the tops of loose stones and rocks, and along the edges of stone paving where it meets
 // earth or grass. Nothing at dusk, growing from FROST_START to full at FROST_FULL (small hours), melting away from
@@ -6048,12 +6055,15 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 // A tree lets go of leaves (emerald or warm umber, now and then an amethyst one), from up in its lower canopy over
 // the tile in front, so the leaf slips out from under the branches and drifts down in plain view. Flowers and
 // bushes shed petals from just above themselves.
+// A tree's leaf draws on the canopy effect plane (right after GAME_PLANE_UPPER, where flora and tree sprites sit),
+// so it falls in front of the branches instead of behind them, and starts up in the canopy (the 96 px tall tree
+// stands on the tile behind, so its crown is about LEAF_START px above the landing tile).
 /proc/sumiari_petal_image(turf/T, from_tree = FALSE)
 	var/variant = from_tree ? pick(3, 3, 4, 4, 5) : rand(1, 4)
-	var/image/petal = sumiari_fx_style(image(sumiari_petal_icon(variant), T), SUMIARI_FX_GAME_PLANE)
+	var/image/petal = sumiari_fx_style(image(sumiari_petal_icon(variant), T), from_tree ? SUMIARI_FX_UPPER_PLANE : SUMIARI_FX_GAME_PLANE)
 	var/start_x = rand(-10, 10)
 	petal.pixel_x = start_x
-	petal.pixel_y = from_tree ? rand(30, 42) : rand(14, 30)
+	petal.pixel_y = from_tree ? rand(SUMIARI_LEAF_START_LOW, SUMIARI_LEAF_START_HIGH) : rand(14, 30)
 	petal.alpha = 0
 	return petal
 
@@ -6073,9 +6083,9 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 	animate(alpha = 0, time = SUMIARI_PETAL_FADE, easing = SINE_EASING)
 
 // A small soft petal or leaf in the middle of a 32x32 icon: 1 amethyst petal, 2 lilac petal, 3 emerald leaf, 4 umber leaf,
-// 5 amethyst leaf. A petal is a 4x4 rounded body with a feathered tip; a leaf is a longer pointed blade (7x4) with a
-// stem and a pale midrib. Both wear a moon-silver rim on the upper edge so even the dark ones catch the moonlight
-// and read against grass.
+// 5 amethyst leaf. A petal is a 4x4 rounded body with a feathered tip; a leaf is a larger pointed blade (about
+// LEAF_LENGTH x LEAF_WIDTH) with a stem, a pale midrib and a deep shadow on its lower edge. Both wear a moon-silver
+// rim on the upper edge so even the dark ones catch the moonlight and read against grass and snow.
 /proc/sumiari_petal_icon(variant)
 	var/static/list/made = list()
 	if(made["[variant]"])
@@ -6084,20 +6094,40 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 	var/rim = (variant == 1 || variant == 5) ? SUMIARI_TONE_LILAC : rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B)
 	var/icon/petal = sumiari_blank_icon()
 	if(variant >= 3)
-		// Stem at the lower left, blade rising to a point at the upper right.
-		petal.DrawBox(sumiari_fx_tone(tone, 150), 11, 13)
-		petal.DrawBox(sumiari_fx_tone(tone, 170), 13, 14, 14, 14)
-		petal.DrawBox(sumiari_fx_tone(tone, 255), 12, 15, 17, 15)
-		petal.DrawBox(sumiari_fx_tone(tone, 255), 13, 16, 18, 16)
-		petal.DrawBox(sumiari_fx_tone(rim, 230), 15, 17, 18, 17)
-		petal.DrawBox(sumiari_fx_tone(rim, 140), 19, 18)
-		petal.DrawBox(sumiari_fx_tone(rim, 110), 14, 17)
-		// The midrib: a paler line along the blade, the leaf's tone mixed toward the rim.
-		var/list/a = rgb2num(tone)
-		var/list/b = rgb2num(rim)
-		var/midrib = rgb(round(a[1] * 0.55 + b[1] * 0.45), round(a[2] * 0.55 + b[2] * 0.45), round(a[3] * 0.55 + b[3] * 0.45))
-		petal.DrawBox(midrib, 13, 15, 14, 15)
-		petal.DrawBox(midrib, 15, 16, 17, 16)
+		// A pointed blade from the lower left (stem) to the upper right (tip), drawn pixel by pixel: jewel body,
+		// moon-silver (or lilac) rim along the upper edge, the jewel tone at 40% along the lower edge for contrast,
+		// a pale midrib down the middle and a short dark stem.
+		var/list/body = rgb2num(tone)
+		var/list/shine = rgb2num(rim)
+		var/shadow = rgb(round(body[1] * 0.4), round(body[2] * 0.4), round(body[3] * 0.4))
+		var/midrib = rgb(round(body[1] * 0.5 + shine[1] * 0.5), round(body[2] * 0.5 + shine[2] * 0.5), round(body[3] * 0.5 + shine[3] * 0.5))
+		var/half = SUMIARI_LEAF_LENGTH / 2
+		var/c = cos(35)
+		var/sn = sin(35)
+		for(var/x in 1 to 32)
+			for(var/y in 1 to 32)
+				var/dx = x - 16
+				var/dy = y - 16
+				var/u = dx * c + dy * sn
+				var/v = dy * c - dx * sn
+				if(u < -half - 3 || u > half)
+					continue
+				if(u < -half)
+					if(abs(v) < 0.6)
+						petal.DrawBox(sumiari_fx_tone(shadow, 230), x, y)
+					continue
+				var/t = (u + half) / (2 * half)
+				var/w = (SUMIARI_LEAF_WIDTH / 2) * (sin(180 * t) ** 0.8) * (1 - 0.3 * t) + 0.4
+				if(abs(v) > w)
+					continue
+				if(v > w - 1.1)
+					petal.DrawBox(sumiari_fx_tone(rim, 255), x, y)
+				else if(v < -(w - 1.1))
+					petal.DrawBox(sumiari_fx_tone(shadow, 255), x, y)
+				else if(abs(v) < 0.55 && t > 0.08 && t < 0.85)
+					petal.DrawBox(sumiari_fx_tone(midrib, 255), x, y)
+				else
+					petal.DrawBox(sumiari_fx_tone(tone, 255), x, y)
 		made["[variant]"] = petal
 		return petal
 	petal.DrawBox(sumiari_fx_tone(tone, 170), 15, 14, 16, 14)
@@ -6451,6 +6481,15 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	var/icon/petal_icon = sumiari_petal_icon(3)
 	if(petal.plane != SUMIARI_FX_GAME_PLANE || petal.alpha != 0 || petal_icon.GetPixel(16, 16) == null || petal_icon.GetPixel(2, 2) != null)
 		bad += "petal"
+	// Tree leaves: over the canopy, up in the crown, and a real blade (dozens of pixels, not a speck).
+	var/image/tree_leaf = sumiari_petal_image(spot, TRUE)
+	var/leaf_pixels = 0
+	for(var/lx in 1 to 32)
+		for(var/ly in 1 to 32)
+			if(petal_icon.GetPixel(lx, ly))
+				leaf_pixels++
+	if(tree_leaf.plane != SUMIARI_FX_UPPER_PLANE || tree_leaf.pixel_y < SUMIARI_LEAF_START_LOW || leaf_pixels < 40)
+		bad += "tree leaf plane=[tree_leaf.plane] y=[tree_leaf.pixel_y] pixels=[leaf_pixels]"
 	var/list/expiring = list()
 	expiring[petal] = world.time - 1
 	if(sumiari_fx_expire(null, expiring))
