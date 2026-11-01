@@ -4055,9 +4055,10 @@ var/global/list/sumiari_night_flora = list()
 		filter(type = "blur", size = SUMIARI_FLORA_BLUR),
 		filter(type = "alpha", icon = sumiari_flora_cutout(plant), flags = MASK_INVERSE),
 	)
-	halo.alpha = round(SUMIARI_FLORA_ALPHA * sumiari_moon_fade())
 	animate(halo, color = sumiari_solid_matrix(SUMIARI_FLORA_COLOR_B), time = SUMIARI_FLORA_PERIOD / 2, loop = -1, easing = SINE_EASING)
 	animate(color = sumiari_solid_matrix(SUMIARI_FLORA_COLOR_A), time = SUMIARI_FLORA_PERIOD / 2, easing = SINE_EASING)
+	// After the color animation: animating or assigning color resets a plain alpha to 255.
+	halo.alpha = round(SUMIARI_FLORA_ALPHA * sumiari_moon_fade())
 	return halo
 
 // Turfs that hold dew under the moon (grass and snow), for SUMIARI_GLINT_DEW.
@@ -4895,6 +4896,19 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	var/t = ((world.time + pulse - sumiari_fx_phase(T.x, T.y)) % pulse) / pulse
 	return 0.5 + 0.5 * cos(t * 360)
 
+// An image color (null, "#rrggbb[aa]" text, or a matrix) as a 20-entry matrix.
+/proc/sumiari_color_as_matrix(look)
+	if(islist(look))
+		var/list/m = look
+		if(length(m) >= 20)
+			return m
+		return null
+	if(istext(look) && length(look) >= 7)
+		var/list/c = rgb2num(look)
+		var/a = length(c) >= 4 ? c[4] / 255 : 1
+		return list(c[1] / 255, 0, 0, 0, 0, c[2] / 255, 0, 0, 0, 0, c[3] / 255, 0, 0, 0, 0, a, 0, 0, 0, 0)
+	return null
+
 // The opacity of a color matrix (or none) times k: its alpha column scaled. Color untouched.
 /proc/sumiari_fx_fade_matrix(look, k)
 	var/list/faded = islist(look) ? look:Copy() : list(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0)
@@ -4906,16 +4920,18 @@ var/global/sumiari_moon_steps_enabled = TRUE
 
 // Joins an effect image to the moon's breath: its opacity swells and ebbs with the shared pulse, at its tile's place
 // in the wave. Rides the color matrix, not alpha, so it stacks with the image's own fades and shimmers.
-// BYOND drops a plain alpha when a color matrix is assigned (alpha 40 then a matrix reads back 255 and draws
-// opaque), so with no matrix yet the image's own alpha is folded into the breath's matrix (fold_alpha). An image
-// that already carries a matrix has its alpha folded in by BYOND. Images that animate alpha themselves pass FALSE.
+// BYOND resets alpha to 255 whenever color is assigned (a matrix, or a plain color it simplifies to text): alpha
+// set before the assignment is lost, alpha set after it is kept. The breath assigns a matrix, so the image's own
+// alpha (and a plain color) is folded into the breath's matrices and alpha left at 255 (fold_alpha). Images that
+// animate alpha themselves pass FALSE and keep animating it on top.
 /proc/sumiari_fx_breathe(image/picture, turf/T, depth = SUMIARI_PULSE_DEPTH, salt = 0, fold_alpha = TRUE)
 	if(!T || depth <= 0)
 		return picture
 	var/pulse = max(sumiari_moon_pulse, 2)
-	var/own = (fold_alpha && !islist(picture.color)) ? picture.alpha / 255 : 1
-	var/list/full = sumiari_fx_fade_matrix(picture.color, own)
-	var/list/low = sumiari_fx_fade_matrix(picture.color, own * (1 - depth))
+	var/own = fold_alpha ? picture.alpha / 255 : 1
+	var/list/look = sumiari_color_as_matrix(picture.color)
+	var/list/full = sumiari_fx_fade_matrix(look, own)
+	var/list/low = sumiari_fx_fade_matrix(look, own * (1 - depth))
 	picture.color = full
 	if(own != 1)
 		picture.alpha = 255
@@ -5519,7 +5535,7 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	animate(shimmer, alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_LOW), time = gap, delay = rand(0, gap), loop = -1, flags = ANIMATION_PARALLEL)
 	animate(alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_HIGH), time = 9, easing = SINE_EASING)
 	animate(alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_LOW), time = 15, easing = SINE_EASING)
-	sumiari_fx_breathe(shimmer, T, SUMIARI_PULSE_DEPTH, 6)
+	sumiari_fx_breathe(shimmer, T, SUMIARI_PULSE_DEPTH, 6, fold_alpha = FALSE)
 	return list(swayed, shimmer)
 
 // 7) Moonlit fog.
@@ -5849,8 +5865,10 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	frost.dir = thing.dir
 	sumiari_fx_style(frost, sumiari_fx_plane_near(thing.plane))
 	frost.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
-	frost.color = sumiari_solid_matrix(sumiari_fx_silver(255))
-	frost.alpha = sumiari_fx_alpha(SUMIARI_FROST_ALPHA * level)
+	// Opacity rides the matrix: the color animation below would reset a plain alpha to 255.
+	var/list/frost_look = sumiari_solid_matrix(sumiari_fx_silver(255))
+	frost_look[16] *= sumiari_fx_alpha(SUMIARI_FROST_ALPHA * level) / 255
+	frost.color = frost_look
 	frost.filters = list(filter(type = "alpha", icon = sumiari_flora_cutout(thing), x = 0, y = -1, flags = MASK_INVERSE))
 	if(sway)
 		sumiari_sway_apply(frost, thing)
