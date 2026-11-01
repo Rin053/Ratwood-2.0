@@ -135,6 +135,24 @@
 #define SUMIARI_MOON_MOB_SATURATION 0.7
 #define SUMIARI_MOON_MOB_SILVER 0.15
 #define SUMIARI_MOON_MOB_GAIN 0.95
+// Mobs take the moon too (Ryan, 7:25 PM), skin-safe. Where a mob stands in moonlight it gets the same kind of grade as
+// the world: chroma up (MOB_GRADE_SATURATION around Rec.709 luma) and a MOB_GRADE_SHEEN share of the silver-lilac
+// moon tone (luma kept), but none of the world's hue pushes. Skin turns salmon or pink when its blue rises against its
+// green; plain saturation lowers blue against green on every warm tone, so skin goes richer and more golden, never
+// pinker. MOB_GRADE_EMBER is a small extra guard: red above luma lends a little to green. No cool shift on mobs.
+// Where: the same moon mask as the ground (open sky only, off roofs and caves with the soft roof-line feather, off
+// every fire, torch and lamp pool), so a mob walking under an eave or toward a fire fades out of the grade smoothly
+// as its sprite glides, pixel by pixel, with no server work at all. That covers the owner's own sprite too: the
+// GAME_PLANE_FOV_HIDDEN master layers in GAME_PLANE_OWNER (vision_cone.dm untouched).
+// 0 (or sumiari_moon_mob_grade_enabled off, applied when the moon relay is next rebuilt) = the neutral mob look above.
+#define SUMIARI_MOON_MOB_GRADE 1
+#define SUMIARI_MOB_GRADE_SATURATION 1.6
+#define SUMIARI_MOB_GRADE_SHEEN 0.2
+#define SUMIARI_MOB_GRADE_EMBER 0.05
+#define SUMIARI_MOB_GRADE_GAIN 0.94
+#define SUMIARI_MOB_GRADE_TONE_R 201
+#define SUMIARI_MOB_GRADE_TONE_G 192
+#define SUMIARI_MOB_GRADE_TONE_B 242
 
 // ---------------------------------------------------------------------------------------------
 // Night beauty. Midnight only. Everything below draws only on open moonlit sky that no lamp, fire, or sun lights,
@@ -902,6 +920,10 @@ var/global/turf/sumiari_test_dark_turf
 	var/list/world_look = sumiari_moon_layer_matrix()
 #if SUMIARI_MOON_MOB_NEUTRAL && SUMIARI_MOON_VIVID
 	var/list/mob_look = sumiari_moon_mob_matrix()
+#if SUMIARI_MOON_MOB_GRADE
+	if(sumiari_moon_mob_grade_enabled)
+		mob_look = sumiari_moon_mob_grade_matrix()
+#endif
 #else
 	var/list/mob_look = world_look
 #endif
@@ -976,6 +998,28 @@ GLOBAL_LIST_INIT(sumiari_moon_knee_planes, list(FLOOR_PLANE, WALL_PLANE, GAME_PL
 		var/tint = SUMIARI_MOON_MOB_GAIN * (1 + SUMIARI_MOON_MOB_SILVER * (silver[output] / silver_luma - 1))
 		for(var/input in 1 to 3)
 			look[(input - 1) * 4 + output] = tint * (luma[input] * (1 - SUMIARI_MOON_MOB_SATURATION) + (input == output ? SUMIARI_MOON_MOB_SATURATION : 0))
+		look[16 + output] = 0
+	return look
+
+var/global/sumiari_moon_mob_grade_enabled = TRUE
+
+// The skin-safe moon grade for mobs: gain * ((1 - sheen) * saturation + sheen * lilac tint) plus the ember guard
+// (red's excess over luma moves EMBER of itself from the red output to the green). Gray stays gray-lilac.
+/proc/sumiari_moon_mob_grade_matrix()
+	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
+	var/list/tone = list(SUMIARI_MOB_GRADE_TONE_R / 255, SUMIARI_MOB_GRADE_TONE_G / 255, SUMIARI_MOB_GRADE_TONE_B / 255)
+	var/tone_luma = tone[1] * luma[1] + tone[2] * luma[2] + tone[3] * luma[3]
+	var/list/look = color_matrix_identity()
+	look = look.Copy()
+	for(var/input in 1 to 3)
+		var/red_excess = (input == 1 ? 1 : 0) - luma[input]
+		for(var/output in 1 to 3)
+			var/saturated = luma[input] * (1 - SUMIARI_MOB_GRADE_SATURATION) + (input == output ? SUMIARI_MOB_GRADE_SATURATION : 0)
+			var/sheen = luma[input] * tone[output] / tone_luma
+			look[(input - 1) * 4 + output] = SUMIARI_MOB_GRADE_GAIN * ((1 - SUMIARI_MOB_GRADE_SHEEN) * saturated + SUMIARI_MOB_GRADE_SHEEN * sheen)
+		look[(input - 1) * 4 + 1] -= SUMIARI_MOB_GRADE_GAIN * SUMIARI_MOB_GRADE_EMBER * red_excess
+		look[(input - 1) * 4 + 2] += SUMIARI_MOB_GRADE_GAIN * SUMIARI_MOB_GRADE_EMBER * red_excess
+	for(var/output in 1 to 3)
 		look[16 + output] = 0
 	return look
 
@@ -3908,6 +3952,18 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 	var/list/mob_white = sumiari_apply_matrix(mob_look, 1, 1, 1)
 	if(max(mob_white[1], mob_white[2], mob_white[3]) > 1 || max(mob_white[1], mob_white[2], mob_white[3]) > min(mob_white[1], mob_white[2], mob_white[3]) * 1.06)
 		bad += "mob white cast=[mob_white[1]],[mob_white[2]],[mob_white[3]]"
+#endif
+#if SUMIARI_MOON_MOB_GRADE && SUMIARI_MOON_VIVID
+	// The mob grade: skin of every shade comes out richer (more chroma) but never pinker (blue against green may not
+	// rise past 1%), keeps red > green > blue; white stays near neutral and unclipped; a gray stays gray.
+	var/list/grade = sumiari_moon_mob_grade_matrix()
+	for(var/list/tone in list(list(0.95, 0.69, 0.6), list(0.75, 0.5, 0.35), list(0.45, 0.3, 0.22)))
+		var/list/graded = sumiari_apply_matrix(grade, tone[1], tone[2], tone[3])
+		if(graded[3] / graded[2] > (tone[3] / tone[2]) * 1.01 || !(graded[1] > graded[2] && graded[2] > graded[3]) || (graded[1] - graded[3]) < (tone[1] - tone[3]))
+			bad += "mob grade skin=[graded[1]],[graded[2]],[graded[3]]"
+	var/list/grade_white = sumiari_apply_matrix(grade, 1, 1, 1)
+	if(max(grade_white[1], grade_white[2], grade_white[3]) > 1 || max(grade_white[1], grade_white[2], grade_white[3]) > min(grade_white[1], grade_white[2], grade_white[3]) * 1.06)
+		bad += "mob grade white=[grade_white[1]],[grade_white[2]],[grade_white[3]]"
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL beauty [bad.Join(" ")]")
