@@ -5786,15 +5786,31 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	var/list/params = sumiari_sway_params(plant)
 	var/period = params[1]
 	var/skew = params[2]
+	var/half = sumiari_sprite_half_height(plant)
 	var/matrix/base = plant.transform ? matrix(plant.transform) : matrix()
-	picture.transform = base * sumiari_sway_matrix(-skew * 0.6)
-	animate(picture, transform = base * sumiari_sway_matrix(skew), time = period / 2, delay = period - ((world.time + params[3]) % period), loop = -1, easing = SINE_EASING)
-	animate(transform = base * sumiari_sway_matrix(-skew * 0.6), time = period / 2, easing = SINE_EASING)
+	picture.transform = base * sumiari_sway_matrix(-skew * 0.6, half)
+	animate(picture, transform = base * sumiari_sway_matrix(skew, half), time = period / 2, delay = period - ((world.time + params[3]) % period), loop = -1, easing = SINE_EASING)
+	animate(transform = base * sumiari_sway_matrix(-skew * 0.6, half), time = period / 2, easing = SINE_EASING)
 	return picture
 
-// The base-pivoted lean: x shifts by skew * (y + 16), so the bottom row stays put.
-/proc/sumiari_sway_matrix(skew)
-	return matrix(1, skew, skew * 16, 0, 1, 0)
+// The base-pivoted lean: x shifts by skew * (y + half), so the sprite's bottom row stays put. A transform pivots at
+// the icon's middle, so half is half the sprite's own height (48 for a 96 px tall bush, not 16).
+/proc/sumiari_sway_matrix(skew, half = 16)
+	return matrix(1, skew, skew * half, 0, 1, 0)
+
+/proc/sumiari_sprite_half_height(obj/thing)
+	var/icon/shape = sumiari_flora_cutout(thing)
+	return shape ? shape.Height() / 2 : world.icon_size / 2
+
+// An image that copies an object's appearance (atom.appearance carries the object's pixel offsets) but rides that
+// object: the object's own offsets already place it, so the copy's must be zero or the copy sits offset twice (a
+// tall bush with pixel_x -16 drew 16 px left of itself for these eyes).
+/proc/sumiari_clear_offsets(image/picture)
+	picture.pixel_x = 0
+	picture.pixel_y = 0
+	picture.pixel_w = 0
+	picture.pixel_z = 0
+	return picture
 
 // Moon silver-lilac: the sprite's luma times the lilac tone (alpha kept).
 /proc/sumiari_sway_shimmer_matrix()
@@ -5813,6 +5829,7 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	swayed.appearance = plant.appearance
 	swayed.override = TRUE
 	swayed.loc = plant
+	sumiari_clear_offsets(swayed)
 	var/image/shimmer = image(plant.icon, plant, plant.icon_state)
 	shimmer.dir = plant.dir
 	sumiari_fx_style(shimmer, sumiari_fx_plane_near(plant.plane))
@@ -6028,6 +6045,7 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 	var/image/aura = image(loc = holy)
 	aura.appearance = holy.appearance
 	aura.loc = holy
+	sumiari_clear_offsets(aura)
 	aura.name = ""
 	// Behind everything standing in the world: the effect plane under GAME_PLANE, so the shrine itself covers the copy
 	// and any body before, beside or behind it draws over the glow. Only the light spilling past its outline shows.
@@ -6592,6 +6610,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	var/image/glow = image(loc = decal)
 	glow.appearance = decal.appearance
 	glow.loc = decal
+	sumiari_clear_offsets(glow)
 	glow.name = ""
 	glow.plane = SUMIARI_FX_FLOOR_PLANE
 	glow.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
@@ -6703,6 +6722,16 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	if(!swayed.override || swayed.loc != tuft || sway_glow.plane != sumiari_fx_plane_near(tuft.plane) || abs(lean.c - 0.8) > 0.001 || length(sway_glow.color) != 20)
 		bad += "sway"
 	qdel(tuft)
+	// A redrawn plant sits exactly on the real one: an offset plant (the 64x96 tall bush, pixel_x -16 plus a random -3..3) gets a copy with
+	// no offsets of its own (it rides the plant's), and its lean pivots on its own bottom row.
+	var/obj/structure/flora/roguegrass/bush/wall/tall/tall_bush = new(spot)
+	var/list/tall_pair = sumiari_sway_images(tall_bush)
+	var/image/tall_swayed = tall_pair[1]
+	var/tall_half = sumiari_sprite_half_height(tall_bush)
+	var/matrix/tall_lean = sumiari_sway_matrix(0.05, tall_half)
+	if(abs(tall_bush.pixel_x + 16) > 3 || tall_swayed.pixel_x || tall_swayed.pixel_y || tall_swayed.pixel_w || tall_swayed.pixel_z || tall_swayed.loc != tall_bush || tall_half != 48 || abs(tall_lean.b * -tall_half + tall_lean.c) > 0.001)
+		bad += "sway offsets plant=[tall_bush.pixel_x] copy=[tall_swayed.pixel_x],[tall_swayed.pixel_y],[tall_swayed.pixel_w],[tall_swayed.pixel_z] half=[tall_half]"
+	qdel(tall_bush)
 #endif
 #if SUMIARI_MOON_FOG
 	var/icon/wisp_icon = sumiari_fog_icon(1)
