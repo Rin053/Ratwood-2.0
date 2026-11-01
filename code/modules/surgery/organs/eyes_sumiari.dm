@@ -246,6 +246,43 @@
 // A face whose brightest corner is under this draws nothing.
 #define SUMIARI_CLIFF_MIN 0.02
 
+// Moon effects. Night-only touches for these eyes: client images on tiles and plants (so each one moves with the
+// map), drawn on four hidden planes that only the moon relay shows. Each hidden plane is layered into the relay's
+// world stack right after the world plane it belongs with: ground after the floor, structures after the low game
+// plane, water after the game plane, canopy after the upper plane. Walls, mobs and canopies cover an effect as they
+// would cover the real thing. The relay is cut by the moon mask (open-sky corner light, minus lamp and fire light,
+// times the dusk/dawn fade, feathered), so an effect is exactly as strong as the moon look on its own pixel: none in
+// caves, indoors, by day or by a fire, and a soft fade at every edge. Nothing here is screen-sized: no overlay, wash
+// or grain. The tiles are scanned only near the owner (FX_RANGE), on each step and every FX_RESCAN beauty ticks,
+// and an image is only rebuilt when its tile's state changes. Each effect has a define (compiled in or not) and a
+// global (View Variables can flip it live); sumiari_night_beauty_enabled turns all of them off at once.
+#define SUMIARI_MOON_FX 1
+#define SUMIARI_FX_RANGE 8
+#define SUMIARI_FX_RESCAN 5
+#define SUMIARI_FX_FLOOR_PLANE -61
+#define SUMIARI_FX_LOWER_PLANE -62
+#define SUMIARI_FX_GAME_PLANE -63
+#define SUMIARI_FX_UPPER_PLANE -64
+#define SUMIARI_FX_FLOOR_TARGET "*sumiari_fx_floor"
+#define SUMIARI_FX_LOWER_TARGET "*sumiari_fx_lower"
+#define SUMIARI_FX_GAME_TARGET "*sumiari_fx_game"
+#define SUMIARI_FX_UPPER_TARGET "*sumiari_fx_upper"
+// Pale moon silver, the color of every highlight (water, rims, dew).
+#define SUMIARI_FX_SILVER_R 214
+#define SUMIARI_FX_SILVER_G 226
+#define SUMIARI_FX_SILVER_B 255
+// 1) Moonlit water: a few thin silver ripple dashes on each open-sky water tile, drifting a pixel or two and
+// breathing between two alphas. Neighbouring tiles use different dash layouts and periods, so the surface shimmers
+// instead of pulsing in step. Above the water overlays, under any mob in the water.
+#define SUMIARI_MOON_WATER 1
+#define SUMIARI_WATER_VARIANTS 3
+#define SUMIARI_WATER_ALPHA_LOW 70
+#define SUMIARI_WATER_ALPHA_HIGH 190
+// Ripple cycle (deciseconds); each tile adds 0-16 more.
+#define SUMIARI_WATER_PERIOD 34
+#define SUMIARI_WATER_CORE_ALPHA 150
+#define SUMIARI_WATER_END_ALPHA 60
+
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -421,6 +458,12 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/client/cliff_client
 	var/list/cliff_images
 	var/list/cliff_keys
+	// Moon effects: the client the images were shown to, key -> image, key -> state, and the scan bookkeeping.
+	var/client/fx_client
+	var/list/fx_images
+	var/list/fx_states
+	var/turf/fx_center
+	var/fx_age = 0
 	var/beauty_timer
 	var/list/glint_images
 	var/list/glint_spots
@@ -760,6 +803,12 @@ var/global/turf/sumiari_test_dark_turf
 		if(!source)
 			continue
 		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = (plane == GAME_PLANE_FOV_HIDDEN) ? mob_look : world_look)
+#if SUMIARI_MOON_FX
+		// The moon effects that belong with this plane, right on top of it, in their own colors (no moon grade).
+		var/fx_plane = sumiari_fx_plane_for(plane)
+		if(fx_plane)
+			stacked += filter(type = "layer", render_source = sumiari_fx_target(fx_plane), blend_mode = BLEND_OVERLAY)
+#endif
 	return stacked
 
 // Moonlight on a mob: out = gain * tint * (luma + saturation * (color - luma)). Tint is the silver ratio pulled
@@ -2449,6 +2498,8 @@ var/global/sumiari_run_headless_test = FALSE
 		failed = TRUE
 	if(!sumiari_sweep_nonfire(eyes))
 		failed = TRUE
+	if(!sumiari_sweep_moon_fx(eyes))
+		failed = TRUE
 #endif
 #if SUMIARI_INK_VIGNETTE
 	var/found_vignette = FALSE
@@ -3203,6 +3254,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	sense_tick()
 	place_beauty()
 	cliff_tick()
+	fx_tick(TRUE)
 
 /obj/item/organ/eyes/sumiari/proc/clear_sensed()
 	for(var/mob/living/L as anything in sensed_images)
@@ -3516,6 +3568,7 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 	clear_beauty()
 	clear_spare()
 	clear_cliffs()
+	clear_fx()
 
 /obj/item/organ/eyes/sumiari/proc/clear_beauty()
 	for(var/image/glint as anything in glint_images)
@@ -3535,6 +3588,7 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 		return
 	spare_tick()
 	cliff_tick()
+	fx_tick()
 	if(beauty_client && beauty_client != owner?.client)
 		clear_beauty()
 	if(!sumiari_night_beauty_enabled || sense_blocked() || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
@@ -4099,4 +4153,233 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		log_world("SUMIARI TEST FAIL nonfire [bad.Join(" ")]")
 		return FALSE
 	log_world("SUMIARI TEST nonfire PASS spares=[SUMIARI_MOON_SPARES_NONFIRE] fire_types=[length(GLOB.sumiari_fire_light_types)] calm_overrides=[length(GLOB.sumiari_nonfire_light_types)]")
+	return TRUE
+
+
+// ---------------------------------------------------------------------------------------------
+// Moon effects. See SUMIARI_MOON_FX at the top.
+
+var/global/sumiari_moon_water_enabled = TRUE
+
+/atom/movable/screen/plane_master/sumiari_fx_floor
+	name = "sumiari moon effects (ground) plane master"
+	plane = SUMIARI_FX_FLOOR_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_FX_FLOOR_TARGET
+
+/atom/movable/screen/plane_master/sumiari_fx_lower
+	name = "sumiari moon effects (structures) plane master"
+	plane = SUMIARI_FX_LOWER_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_FX_LOWER_TARGET
+
+/atom/movable/screen/plane_master/sumiari_fx_game
+	name = "sumiari moon effects (water) plane master"
+	plane = SUMIARI_FX_GAME_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_FX_GAME_TARGET
+
+/atom/movable/screen/plane_master/sumiari_fx_upper
+	name = "sumiari moon effects (canopy) plane master"
+	plane = SUMIARI_FX_UPPER_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_FX_UPPER_TARGET
+
+// The hidden effect plane layered right after a world plane, or null.
+/proc/sumiari_fx_plane_for(host_plane)
+	switch(host_plane)
+		if(FLOOR_PLANE)
+			return SUMIARI_FX_FLOOR_PLANE
+		if(GAME_PLANE_LOWER)
+			return SUMIARI_FX_LOWER_PLANE
+		if(GAME_PLANE)
+			return SUMIARI_FX_GAME_PLANE
+		if(GAME_PLANE_UPPER)
+			return SUMIARI_FX_UPPER_PLANE
+	return null
+
+// The effect plane for something drawn on host_plane: the nearest one at or below it in the world stack.
+/proc/sumiari_fx_plane_near(host_plane)
+	if(host_plane <= FLOOR_PLANE)
+		return SUMIARI_FX_FLOOR_PLANE
+	if(host_plane < GAME_PLANE)
+		return SUMIARI_FX_LOWER_PLANE
+	if(host_plane < GAME_PLANE_UPPER)
+		return SUMIARI_FX_GAME_PLANE
+	return SUMIARI_FX_UPPER_PLANE
+
+/proc/sumiari_fx_target(fx_plane)
+	switch(fx_plane)
+		if(SUMIARI_FX_FLOOR_PLANE)
+			return SUMIARI_FX_FLOOR_TARGET
+		if(SUMIARI_FX_LOWER_PLANE)
+			return SUMIARI_FX_LOWER_TARGET
+		if(SUMIARI_FX_GAME_PLANE)
+			return SUMIARI_FX_GAME_TARGET
+		if(SUMIARI_FX_UPPER_PLANE)
+			return SUMIARI_FX_UPPER_TARGET
+	return null
+
+// Common look of an effect image: on its hidden plane, never tinted, faded or scaled by what it sits on, never clicked.
+/proc/sumiari_fx_style(image/picture, fx_plane)
+	picture.name = ""
+	picture.plane = fx_plane
+	picture.layer = 1
+	picture.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	picture.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
+	return picture
+
+// A fully transparent 32x32 icon to draw on (the lighting gradient with every channel mapped to 0).
+/proc/sumiari_blank_icon()
+	var/icon/blank = icon(LIGHTING_ICON, "")
+	blank.MapColors(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	return blank
+
+/proc/sumiari_fx_silver(alpha)
+	return rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B, alpha)
+
+/obj/item/organ/eyes/sumiari/proc/clear_fx()
+	for(var/key in fx_images)
+		fx_client?.images -= fx_images[key]
+	fx_images = null
+	fx_states = null
+	fx_center = null
+	fx_age = 0
+	fx_client = null
+
+// Every beauty tick, and on every step (moved). Rescans the tiles around the owner when they changed tile or every
+// FX_RESCAN ticks; the per-tick live parts (dew, bloom) run on the timer only.
+/obj/item/organ/eyes/sumiari/proc/fx_tick(moved = FALSE)
+#if SUMIARI_MOON_FX
+	if(fx_client && fx_client != owner?.client)
+		clear_fx()
+	var/turf/center = get_turf(owner)
+	if(!sumiari_night_beauty_enabled || !center || sense_blocked() || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
+		clear_fx()
+		return
+	if(fx_center && fx_center.z != center.z)
+		clear_fx()
+	fx_client = owner.client
+	if(fx_center != center || ++fx_age >= SUMIARI_FX_RESCAN)
+		fx_center = center
+		fx_age = 0
+		fx_scan(center)
+	if(!moved)
+		fx_live(center)
+#endif
+
+/obj/item/organ/eyes/sumiari/proc/fx_scan(turf/center)
+	var/list/wanted = list()
+	var/turf/low = locate(max(center.x - SUMIARI_FX_RANGE, 1), max(center.y - SUMIARI_FX_RANGE, 1), center.z)
+	var/turf/high = locate(min(center.x + SUMIARI_FX_RANGE, world.maxx), min(center.y + SUMIARI_FX_RANGE, world.maxy), center.z)
+	for(var/turf/T as anything in block(low, high))
+#if SUMIARI_MOON_WATER
+		if(sumiari_moon_water_enabled)
+			fx_water(T, wanted)
+#endif
+	for(var/key in fx_images)
+		if(!wanted[key])
+			fx_drop(key)
+
+// Effects that change between scans. Each effect adds its own part here.
+/obj/item/organ/eyes/sumiari/proc/fx_live(turf/center)
+	return
+
+// Marks key as wanted this scan; TRUE when its image must be (re)built because the state changed.
+/obj/item/organ/eyes/sumiari/proc/fx_want(key, state, list/wanted)
+	wanted[key] = TRUE
+	return fx_states?[key] != state
+
+/obj/item/organ/eyes/sumiari/proc/fx_put(key, state, image/picture)
+	if(fx_images?[key])
+		fx_client.images -= fx_images[key]
+	LAZYSET(fx_images, key, picture)
+	LAZYSET(fx_states, key, state)
+	fx_client.images += picture
+
+/obj/item/organ/eyes/sumiari/proc/fx_drop(key)
+	fx_client?.images -= fx_images?[key]
+	LAZYREMOVE(fx_images, key)
+	LAZYREMOVE(fx_states, key)
+
+// 1) Moonlit water.
+/obj/item/organ/eyes/sumiari/proc/fx_water(turf/T, list/wanted)
+	if(!istype(T, /turf/open/water) || !sumiari_spare_turf_open(T))
+		return
+	var/key = "w[T.x],[T.y]"
+	if(fx_want(key, "1", wanted))
+		fx_put(key, "1", sumiari_water_image(T))
+
+/proc/sumiari_water_image(turf/T)
+	var/variant = ((T.x * 7 + T.y * 13) % SUMIARI_WATER_VARIANTS) + 1
+	var/image/ripple = sumiari_fx_style(image(sumiari_water_icon(variant), T), SUMIARI_FX_GAME_PLANE)
+	var/period = SUMIARI_WATER_PERIOD + ((T.x * 31 + T.y * 17) % 5) * 4
+	var/drift = (variant == 2) ? -1 : 1
+	ripple.alpha = SUMIARI_WATER_ALPHA_LOW
+	animate(ripple, alpha = SUMIARI_WATER_ALPHA_HIGH, pixel_x = 2 * drift, time = period / 2, loop = -1, easing = SINE_EASING)
+	animate(alpha = SUMIARI_WATER_ALPHA_LOW, pixel_x = -drift, time = period / 2, easing = SINE_EASING)
+	return ripple
+
+// Dashes as list(x, y, length), inside 3..29 so a two-pixel drift never leaves the tile.
+/proc/sumiari_water_dashes(variant)
+	switch(variant)
+		if(1)
+			return list(list(5, 22, 7), list(16, 13, 9), list(8, 6, 5))
+		if(2)
+			return list(list(14, 25, 6), list(4, 15, 8), list(19, 7, 7))
+	return list(list(9, 19, 9), list(20, 26, 5), list(13, 9, 6))
+
+/proc/sumiari_water_icon(variant)
+	var/static/list/made = list()
+	if(made["[variant]"])
+		return made["[variant]"]
+	var/icon/ripples = sumiari_blank_icon()
+	for(var/list/dash as anything in sumiari_water_dashes(variant))
+		var/x = dash[1]
+		var/y = dash[2]
+		var/length = dash[3]
+		ripples.DrawBox(sumiari_fx_silver(SUMIARI_WATER_END_ALPHA), x, y)
+		ripples.DrawBox(sumiari_fx_silver(SUMIARI_WATER_CORE_ALPHA), x + 1, y, x + length - 2, y)
+		ripples.DrawBox(sumiari_fx_silver(SUMIARI_WATER_END_ALPHA), x + length - 1, y)
+	made["[variant]"] = ripples
+	return ripples
+
+// Moon effect checks that do not depend on the map or the time of day.
+/proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
+	var/list/bad = list()
+#if SUMIARI_MOON_FX
+	for(var/host in list(FLOOR_PLANE, GAME_PLANE_LOWER, GAME_PLANE, GAME_PLANE_UPPER))
+		var/fx_plane = sumiari_fx_plane_for(host)
+		var/atom/movable/screen/plane_master/master = eyes.owner?.hud_used?.plane_masters["[fx_plane]"]
+		if(!master || master.render_target != sumiari_fx_target(fx_plane))
+			bad += "fx plane master [host]"
+	var/atom/movable/screen/sumiari_relay/moon = sumiari_find_piece(eyes, "sumiari moon")
+	var/fx_layers = 0
+	for(var/sample in moon?.filters)
+		var/source = sumiari_filter_field(list(sample), 1, "render_source")
+		if(source == SUMIARI_FX_FLOOR_TARGET || source == SUMIARI_FX_LOWER_TARGET || source == SUMIARI_FX_GAME_TARGET || source == SUMIARI_FX_UPPER_TARGET)
+			fx_layers++
+	if(eyes.wash_mode == SUMIARI_WASH_LIVE && moon && fx_layers != 4)
+		bad += "moon relay fx layers=[fx_layers]"
+	if(sumiari_fx_plane_near(FLOOR_PLANE) != SUMIARI_FX_FLOOR_PLANE || sumiari_fx_plane_near(WALL_PLANE) != SUMIARI_FX_LOWER_PLANE || sumiari_fx_plane_near(GAME_PLANE_FOV_HIDDEN) != SUMIARI_FX_GAME_PLANE || sumiari_fx_plane_near(GAME_PLANE_HIGHEST) != SUMIARI_FX_UPPER_PLANE)
+		bad += "fx plane near"
+	var/turf/spot = get_turf(eyes.owner)
+#if SUMIARI_MOON_WATER
+	var/image/ripple = sumiari_water_image(spot)
+	if(ripple.plane != SUMIARI_FX_GAME_PLANE || ripple.loc != spot || !ripple.icon)
+		bad += "water image"
+#endif
+#endif
+	if(length(bad))
+		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
+		return FALSE
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER]")
 	return TRUE
