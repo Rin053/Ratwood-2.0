@@ -309,6 +309,21 @@
 #define SUMIARI_CLIFF_RANGE 9
 // A face whose brightest corner is under this draws nothing.
 #define SUMIARI_CLIFF_MIN 0.02
+// Moon bleed through open openings. The sky cut (SUMIARI_MOON_SKY_CUT) drops the vanilla sun spread, which ignores
+// closed curtains, so roofed rooms are the cave look. This puts a Sumiari-only spill back on the same cliff plane
+// (added after the cut): from every open-sky tile that is not itself shut (sumiari_moon_shut) into the roofed
+// tiles next to it, walking cardinally tile by tile through roofed floor that is not shut, up to BLEED_RANGE tiles.
+// A tile d steps in is 1 - (d - 0.5) / BLEED_RANGE at its middle (0.83, 0.5, 0.17), drawn as the same corner
+// gradient as the sky so it fades smoothly. An open door, open curtain, open or broken window lets it in; a closed
+// door, closed curtain, shutter, glass, or anything opaque stops it dead, so a shut room stays the cave look.
+// Wall faces take their corners from the same map (open sky 1, bled floor its value), not from the vanilla spread.
+#define SUMIARI_MOON_BLEED 1
+#define SUMIARI_BLEED_RANGE 3
+// Grid cells for sumiari_moon_bleed_grid.
+#define SUMIARI_BLEED_WALL 0
+#define SUMIARI_BLEED_SKY 1
+#define SUMIARI_BLEED_SKY_SHUT 2
+#define SUMIARI_BLEED_ROOF 3
 
 // Moon effects. Night-only touches for these eyes: client images on tiles and plants (so each one moves with the
 // map), drawn on four hidden planes that only the moon relay shows. Each hidden plane is layered into the relay's
@@ -4939,21 +4954,24 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/list/keep = list()
 	var/turf/low = locate(max(center.x - SUMIARI_CLIFF_RANGE, 1), max(center.y - SUMIARI_CLIFF_RANGE, 1), center.z)
 	var/turf/high = locate(min(center.x + SUMIARI_CLIFF_RANGE, world.maxx), min(center.y + SUMIARI_CLIFF_RANGE, world.maxy), center.z)
+	// The grid reaches BLEED_RANGE + 1 past the drawn square, so a spill from just off screen still walks in.
+	var/margin = SUMIARI_BLEED_RANGE + 1
+	var/gx0 = max(low.x - margin, 1)
+	var/gy0 = max(low.y - margin, 1)
+	var/gw = min(high.x + margin, world.maxx) - gx0 + 1
+	var/gh = min(high.y + margin, world.maxy) - gy0 + 1
+	var/list/grid = sumiari_moon_bleed_cells(gx0, gy0, gw, gh, center.z)
+	var/list/steps = sumiari_moon_bleed_grid(grid, gw, gh)
 	for(var/turf/T as anything in block(low, high))
-		if(!isclosedturf(T) || T.outdoor_effect)
+		var/wall = isclosedturf(T) && !T.outdoor_effect
+		var/index = (T.y - gy0) * gw + (T.x - gx0) + 1
+		if(!wall && !(grid[index] == SUMIARI_BLEED_ROOF && steps[index]))
 			continue
-		var/list/corners = T.corners
-		if(!corners)
-			continue
-		// The same corner order the sky overlay uses (update_outdoor_effect_overlays).
-		var/datum/lighting_corner/cr = corners[3]
-		var/datum/lighting_corner/cg = corners[2]
-		var/datum/lighting_corner/cb = corners[4]
-		var/datum/lighting_corner/ca = corners[1]
-		var/fr = cr ? cr.sunFalloff : 0
-		var/fg = cg ? cg.sunFalloff : 0
-		var/fb = cb ? cb.sunFalloff : 0
-		var/fa = ca ? ca.sunFalloff : 0
+		// The same corner order the sky overlay uses (update_outdoor_effect_overlays): r SW, g SE, b NW, a NE.
+		var/fr = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, -1, -1, wall)
+		var/fg = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, 1, -1, wall)
+		var/fb = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, -1, 1, wall)
+		var/fa = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, 1, 1, wall)
 		if(max(fr, fg, fb, fa) < SUMIARI_CLIFF_MIN)
 			continue
 		keep[T] = TRUE
@@ -4988,6 +5006,101 @@ var/global/sumiari_moon_spares_enabled = TRUE
 /proc/sumiari_cliff_matrix(fr, fg, fb, fa)
 	return list(fr, fr, fr, 0, fg, fg, fg, 0, fb, fb, fb, 0, fa, fa, fa, 0, 0, 0, 0, 1)
 
+// Does this tile stop moonlight passing (see SUMIARI_MOON_BLEED)? A closed turf, anything opaque (a closed door or
+// curtain sets opacity), a closed door (door_opened, even a see-through one), a closed curtain (open), a window that is
+// neither opened (climbable) nor broken (brokenstate, obj_broken), a closed shutter (density).
+/proc/sumiari_moon_shut(turf/T)
+	if(!T || isclosedturf(T) || T.opacity)
+		return TRUE
+	for(var/atom/movable/thing as anything in T)
+		if(thing.opacity)
+			return TRUE
+		if(istype(thing, /obj/structure/mineral_door))
+			var/obj/structure/mineral_door/door = thing
+			if(!door.door_opened)
+				return TRUE
+		else if(istype(thing, /obj/structure/curtain))
+			var/obj/structure/curtain/curtain = thing
+			if(!curtain.open)
+				return TRUE
+		else if(istype(thing, /obj/structure/roguewindow))
+			var/obj/structure/roguewindow/window = thing
+			if(!window.brokenstate && !window.obj_broken && !window.climbable)
+				return TRUE
+		else if(istype(thing, /obj/structure/bars/passage/shutter))
+			if(thing.density)
+				return TRUE
+	return FALSE
+
+// Cells for the bleed walk over a w x h block from (x0, y0), row-major from the south-west.
+/proc/sumiari_moon_bleed_cells(x0, y0, w, h, z)
+	var/list/grid = new /list(w * h)
+	var/index = 0
+	for(var/y in y0 to y0 + h - 1)
+		for(var/x in x0 to x0 + w - 1)
+			index++
+			var/turf/T = locate(x, y, z)
+			if(!T || isclosedturf(T))
+				grid[index] = SUMIARI_BLEED_WALL
+			else if(sumiari_spare_turf_open(T))
+				grid[index] = sumiari_moon_shut(T) ? SUMIARI_BLEED_SKY_SHUT : SUMIARI_BLEED_SKY
+			else
+				grid[index] = sumiari_moon_shut(T) ? SUMIARI_BLEED_WALL : SUMIARI_BLEED_ROOF
+	return grid
+
+// Steps in from open sky (1..BLEED_RANGE, 0 = not reached) for every ROOF cell: a cardinal walk from SKY cells
+// (not SKY_SHUT) through ROOF cells only.
+/proc/sumiari_moon_bleed_grid(list/grid, w, h)
+	var/list/steps = new /list(w * h)
+	var/list/frontier = list()
+	for(var/index in 1 to w * h)
+		steps[index] = 0
+	for(var/index in 1 to w * h)
+		if(grid[index] == SUMIARI_BLEED_SKY)
+			frontier += index
+	for(var/step in 1 to SUMIARI_BLEED_RANGE)
+		var/list/next = list()
+		for(var/index in frontier)
+			var/x = (index - 1) % w
+			var/y = round((index - 1) / w)
+			for(var/list/offset in list(list(1, 0), list(-1, 0), list(0, 1), list(0, -1)))
+				var/nx = x + offset[1]
+				var/ny = y + offset[2]
+				if(nx < 0 || ny < 0 || nx >= w || ny >= h)
+					continue
+				var/n = ny * w + nx + 1
+				if(grid[n] != SUMIARI_BLEED_ROOF || steps[n])
+					continue
+				steps[n] = step
+				next += n
+		frontier = next
+		if(!length(frontier))
+			break
+	return steps
+
+// Moon at a tile's middle d steps in.
+/proc/sumiari_moon_bleed_value(step)
+	if(step <= 0)
+		return 0
+	return round(clamp(1 - (step - 0.5) / SUMIARI_BLEED_RANGE, 0, 1), 0.01)
+
+// One corner (dx, dy = +-1) of the 1-based grid cell (cx, cy): the brightest of the four cells meeting there. Open sky
+// counts 1 (for floor only unshut sky, so a closed door under the sky does not light the tile behind it), bled floor
+// its value, the rest 0.
+/proc/sumiari_moon_bleed_corner(list/grid, list/steps, w, h, cx, cy, dx, dy, wall)
+	. = 0
+	for(var/list/offset in list(list(0, 0), list(dx, 0), list(0, dy), list(dx, dy)))
+		var/x = cx + offset[1]
+		var/y = cy + offset[2]
+		if(x < 1 || y < 1 || x > w || y > h)
+			continue
+		var/n = (y - 1) * w + x
+		var/cell = grid[n]
+		if(cell == SUMIARI_BLEED_SKY || (wall && cell == SUMIARI_BLEED_SKY_SHUT))
+			return 1
+		if(cell == SUMIARI_BLEED_ROOF)
+			. = max(., sumiari_moon_bleed_value(steps[n]))
+
 // Classification, plumbing, and one live spare image.
 /proc/sumiari_sweep_nonfire(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
@@ -5019,6 +5132,47 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/list/half = sumiari_cliff_matrix(1, 0.5, 0, 0)
 	if(half[1] != 1 || half[5] != 0.5 || half[20] != 1)
 		bad += "cliff matrix"
+	// Bleed walk, a row west to east: sky, the doorway, then the room. Open door: the room fades in over three tiles.
+	var/list/open_row = list(SUMIARI_BLEED_SKY, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF)
+	var/list/open_steps = sumiari_moon_bleed_grid(open_row, 6, 1)
+	if(open_steps[2] != 1 || open_steps[3] != 2 || open_steps[4] != 3 || open_steps[5] != 0 || sumiari_moon_bleed_value(1) <= sumiari_moon_bleed_value(2) || sumiari_moon_bleed_value(3) <= 0 || sumiari_moon_bleed_value(0) != 0)
+		bad += "bleed open [open_steps.Join(",")]"
+	if(sumiari_moon_bleed_corner(open_row, open_steps, 6, 1, 2, 1, -1, 1, FALSE) != 1 || sumiari_moon_bleed_corner(open_row, open_steps, 6, 1, 5, 1, 1, 1, FALSE) != 0)
+		bad += "bleed corners"
+	// Closed door (shut cell in the roofed doorway, or a shut door under the sky): nothing gets in, not even a corner.
+	var/list/shut_row = list(SUMIARI_BLEED_SKY, SUMIARI_BLEED_WALL, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF)
+	var/list/shut_steps = sumiari_moon_bleed_grid(shut_row, 4, 1)
+	var/list/sky_shut_row = list(SUMIARI_BLEED_SKY_SHUT, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF)
+	var/list/sky_shut_steps = sumiari_moon_bleed_grid(sky_shut_row, 3, 1)
+	if(shut_steps[3] || shut_steps[4] || sky_shut_steps[2] || sumiari_moon_bleed_corner(sky_shut_row, sky_shut_steps, 3, 1, 2, 1, -1, 1, FALSE) != 0 || sumiari_moon_bleed_corner(sky_shut_row, sky_shut_steps, 3, 1, 2, 1, -1, 1, TRUE) != 1)
+		bad += "bleed shut [shut_steps.Join(",")] [sky_shut_steps.Join(",")]"
+	// Real openings on a floor tile: open door, curtain and window let it through; closed ones stop it.
+	var/turf/opening_spot = null
+	// The sweep body may stand in the void, so take the first clear floor tile anywhere (the test map has plenty).
+	for(var/turf/open/candidate in world)
+		if(!sumiari_moon_shut(candidate))
+			opening_spot = candidate
+			break
+	var/shut_before = !opening_spot || sumiari_moon_shut(opening_spot)
+	var/obj/structure/curtain/test_curtain = new(opening_spot)
+	var/curtain_open = sumiari_moon_shut(opening_spot)
+	test_curtain.open = FALSE
+	var/curtain_closed = sumiari_moon_shut(opening_spot)
+	qdel(test_curtain)
+	var/obj/structure/mineral_door/test_door = new(opening_spot)
+	test_door.door_opened = FALSE
+	test_door.set_opacity(FALSE)
+	var/door_closed = sumiari_moon_shut(opening_spot)
+	test_door.door_opened = TRUE
+	var/door_open = sumiari_moon_shut(opening_spot)
+	qdel(test_door)
+	var/obj/structure/roguewindow/test_window = new(opening_spot)
+	var/window_closed = sumiari_moon_shut(opening_spot)
+	test_window.climbable = TRUE
+	var/window_open = sumiari_moon_shut(opening_spot)
+	qdel(test_window)
+	if(shut_before || curtain_open || !curtain_closed || !door_closed || door_open || !window_closed || window_open)
+		bad += "openings before=[shut_before] curtain=[curtain_open]/[curtain_closed] door=[door_open]/[door_closed] window=[window_open]/[window_closed]"
 #endif
 	var/atom/movable/screen/sumiari_sampler/mask = null
 	for(var/atom/movable/screen/sumiari_sampler/sampler in eyes.screen_pieces)
