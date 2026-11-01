@@ -426,6 +426,18 @@
 #define SUMIARI_REFLECT_MAX 40
 #define SUMIARI_REFLECT_ALPHA 105
 #define SUMIARI_REFLECT_PERIOD 26
+// 10) Drifting petals and leaves: now and then a single petal (amethyst or lilac) or leaf (emerald or warm umber) lets
+// go from a moonlit tree, bush or flower and drifts down, swaying side to side and turning as it falls, settles on the
+// ground for a moment and fades away. A PETAL_CHANCE percent chance each beauty tick (more at the top of the moon's
+// breath), at most PETAL_MAX at once: a rare, quiet event. Above the ground objects, under mobs and the canopy.
+#define SUMIARI_MOON_PETALS 1
+#define SUMIARI_PETAL_MAX 5
+#define SUMIARI_PETAL_CHANCE 30
+#define SUMIARI_PETAL_SOURCES_MAX 40
+#define SUMIARI_PETAL_ALPHA 220
+#define SUMIARI_PETAL_FALL (4.5 SECONDS)
+#define SUMIARI_PETAL_REST (2 SECONDS)
+#define SUMIARI_PETAL_FADE (1.5 SECONDS)
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -625,6 +637,9 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/fx_beam_count = 0
 	// Reflections this scan.
 	var/fx_reflect_count = 0
+	// Petals: trees and flowers found by the last scan, and the petals in the air (image -> expiry).
+	var/list/fx_petal_sources
+	var/list/fx_petals
 	// Bloom: how open the night flowers are drawn right now (null until the first scan).
 	var/fx_bloom
 	var/beauty_timer
@@ -4504,6 +4519,7 @@ var/global/sumiari_moon_sway_enabled = TRUE
 var/global/sumiari_moon_fog_enabled = TRUE
 var/global/sumiari_moon_beams_enabled = TRUE
 var/global/sumiari_moon_reflect_enabled = TRUE
+var/global/sumiari_moon_petals_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4644,6 +4660,10 @@ var/global/sumiari_moon_reflect_enabled = TRUE
 		fx_client?.images -= dew
 	fx_dew_images = null
 	fx_dew_spots = null
+	for(var/image/petal as anything in fx_petals)
+		fx_client?.images -= petal
+	fx_petals = null
+	fx_petal_sources = null
 	fx_bloom = null
 	fx_images = null
 	fx_states = null
@@ -4678,6 +4698,7 @@ var/global/sumiari_moon_reflect_enabled = TRUE
 	var/list/blockers = list()
 	fx_dew_spots = null
 	fx_scan_counters_reset()
+	fx_petal_sources = null
 	if(isnull(fx_bloom))
 		fx_bloom = sumiari_bloom_level()
 	var/turf/low = locate(max(center.x - SUMIARI_FX_RANGE, 1), max(center.y - SUMIARI_FX_RANGE, 1), center.z)
@@ -4719,6 +4740,10 @@ var/global/sumiari_moon_reflect_enabled = TRUE
 		if(sumiari_moon_reflect_enabled)
 			fx_reflect(T, wanted)
 #endif
+#if SUMIARI_MOON_PETALS
+		if(sumiari_moon_petals_enabled && LAZYLEN(fx_petal_sources) < SUMIARI_PETAL_SOURCES_MAX)
+			fx_petal_source(T)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
@@ -4738,7 +4763,22 @@ var/global/sumiari_moon_reflect_enabled = TRUE
 #if SUMIARI_MOON_BLOOM
 	fx_bloom_ease()
 #endif
+#if SUMIARI_MOON_PETALS
+	fx_live_petals()
+#endif
 
+#if SUMIARI_MOON_PETALS
+/obj/item/organ/eyes/sumiari/proc/fx_live_petals()
+	fx_petals = sumiari_fx_expire(fx_client, fx_petals)
+	if(!sumiari_moon_petals_enabled || !length(fx_petal_sources) || LAZYLEN(fx_petals) >= SUMIARI_PETAL_MAX)
+		return
+	var/turf/T = pick(fx_petal_sources)
+	if(!prob(SUMIARI_PETAL_CHANCE * (0.6 + 0.8 * sumiari_fx_breath_now(T))))
+		return
+	var/image/petal = sumiari_petal_image(T)
+	LAZYSET(fx_petals, petal, world.time + SUMIARI_PETAL_FALL + SUMIARI_PETAL_REST + SUMIARI_PETAL_FADE + 2)
+	fx_client.images += petal
+#endif
 // Marks key as wanted this scan; TRUE when its image must be (re)built because the state changed.
 /obj/item/organ/eyes/sumiari/proc/fx_want(key, state, list/wanted)
 	wanted[key] = TRUE
@@ -5285,6 +5325,63 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 	made[key] = flipped
 	return flipped
 
+// Shown one-off images past their expiry leave the client; returns what is left (null when empty).
+/proc/sumiari_fx_expire(client/viewer, list/live)
+	for(var/image/old as anything in live)
+		if(live[old] <= world.time)
+			viewer?.images -= old
+			live -= old
+	return length(live) ? live : null
+
+// 10) Drifting petals and leaves.
+/obj/item/organ/eyes/sumiari/proc/fx_petal_source(turf/T)
+	if(isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_fx_lamp_lit(T))
+		return
+	if(sumiari_turf_has_tree(T))
+		LAZYADD(fx_petal_sources, T)
+		return
+	for(var/obj/plant in T)
+		if(is_type_in_typecache(plant, GLOB.sumiari_bloom_types) || istype(plant, /obj/structure/flora/roguegrass/bush))
+			LAZYADD(fx_petal_sources, T)
+			return
+
+/proc/sumiari_petal_image(turf/T)
+	var/variant = rand(1, 4)
+	var/image/petal = sumiari_fx_style(image(sumiari_petal_icon(variant), T), SUMIARI_FX_GAME_PLANE)
+	var/start_x = rand(-10, 10)
+	var/drift = pick(-1, 1) * rand(4, 8)
+	petal.pixel_x = start_x
+	petal.pixel_y = rand(14, 30)
+	petal.alpha = 0
+	var/land_y = rand(-14, -4)
+	var/third = SUMIARI_PETAL_FALL / 3
+	var/drop = (land_y - petal.pixel_y) / 3
+	var/peak = sumiari_fx_alpha(SUMIARI_PETAL_ALPHA)
+	animate(petal, alpha = peak, pixel_x = start_x + drift, pixel_y = petal.pixel_y + drop, transform = turn(matrix(), 70), time = third, easing = SINE_EASING)
+	animate(pixel_x = start_x - drift / 2, pixel_y = petal.pixel_y + drop * 2, transform = turn(matrix(), -40), time = third, easing = SINE_EASING)
+	animate(pixel_x = start_x + drift / 2, pixel_y = land_y, transform = turn(matrix(), 15), time = third, easing = SINE_EASING)
+	animate(alpha = peak, time = SUMIARI_PETAL_REST)
+	animate(alpha = 0, time = SUMIARI_PETAL_FADE, easing = SINE_EASING)
+	return petal
+
+// A small soft petal or leaf in the middle of a 32x32 icon: 1 amethyst petal, 2 lilac petal, 3 emerald leaf, 4 umber leaf.
+/proc/sumiari_petal_icon(variant)
+	var/static/list/made = list()
+	if(made["[variant]"])
+		return made["[variant]"]
+	var/tone = list(SUMIARI_TONE_AMETHYST, SUMIARI_TONE_LILAC, SUMIARI_TONE_EMERALD, SUMIARI_TONE_UMBER)[variant]
+	var/icon/petal = sumiari_blank_icon()
+	petal.DrawBox(sumiari_fx_tone(tone, 255), 15, 16, 17, 16)
+	petal.DrawBox(sumiari_fx_tone(tone, 255), 16, 15, 16, 17)
+	petal.DrawBox(sumiari_fx_tone(tone, 150), 18, 16)
+	petal.DrawBox(sumiari_fx_tone(tone, 110), 16, 18)
+	petal.DrawBox(sumiari_fx_tone(tone, 110), 14, 15)
+	if(variant >= 3)
+		petal.DrawBox(sumiari_fx_tone(tone, 200), 17, 17)
+		petal.DrawBox(sumiari_fx_tone(tone, 200), 15, 14)
+	made["[variant]"] = petal
+	return petal
+
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
 #if SUMIARI_MOON_FX
@@ -5408,9 +5505,19 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 		bad += "reflect"
 	qdel(mirror_rock)
 #endif
+#if SUMIARI_MOON_PETALS
+	var/image/petal = sumiari_petal_image(spot)
+	var/icon/petal_icon = sumiari_petal_icon(3)
+	if(petal.plane != SUMIARI_FX_GAME_PLANE || petal.alpha != 0 || petal_icon.GetPixel(16, 16) == null || petal_icon.GetPixel(2, 2) != null)
+		bad += "petal"
+	var/list/expiring = list()
+	expiring[petal] = world.time - 1
+	if(sumiari_fx_expire(null, expiring))
+		bad += "petal expiry"
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS]")
 	return TRUE
