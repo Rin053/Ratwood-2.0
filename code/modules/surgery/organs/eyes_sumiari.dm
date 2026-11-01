@@ -282,6 +282,24 @@
 #define SUMIARI_FX_LOWER_TARGET "*sumiari_fx_lower"
 #define SUMIARI_FX_GAME_TARGET "*sumiari_fx_game"
 #define SUMIARI_FX_UPPER_TARGET "*sumiari_fx_upper"
+// One blessing, not separate tricks. Every moon effect breathes with one slow moon pulse and draws from one palette.
+// MOON_INTENSITY scales every effect's strength at once (1 is the balanced look; 0.5 subtle, 1.5 lavish); MOON_PULSE is
+// the breath's period. The breath is a slow wave rolling across the land (PULSE_WAVE tiles per period, with a little
+// per-tile jitter), so nothing pulses in step. Each effect's own alphas below are balanced against each other at 1.
+// The live globals sumiari_moon_intensity and sumiari_moon_pulse (View Variables) retune everything on the next scan.
+#define SUMIARI_MOON_INTENSITY 1
+#define SUMIARI_MOON_PULSE (10 SECONDS)
+#define SUMIARI_PULSE_WAVE 14
+#define SUMIARI_PULSE_JITTER 0.2
+// How far an effect dims at the bottom of the breath (0 steady, 1 out completely).
+#define SUMIARI_PULSE_DEPTH 0.4
+// The palette: pale moon silver for highlights, silver-lilac for mist and glow, and the deep jewel tones for things
+// that carry color (petals, leaves): amethyst, emerald, sapphire, warm umber. Nothing neon.
+#define SUMIARI_TONE_LILAC "#c9c0f2"
+#define SUMIARI_TONE_AMETHYST "#8a5fc4"
+#define SUMIARI_TONE_EMERALD "#2f9e74"
+#define SUMIARI_TONE_SAPPHIRE "#3d68c9"
+#define SUMIARI_TONE_UMBER "#9a6a3e"
 // Pale moon silver, the color of every highlight (water, rims, dew).
 #define SUMIARI_FX_SILVER_R 214
 #define SUMIARI_FX_SILVER_G 226
@@ -4373,6 +4391,8 @@ var/global/sumiari_moon_rims_enabled = TRUE
 var/global/sumiari_moon_dew_enabled = TRUE
 var/global/sumiari_moon_bloom_enabled = TRUE
 var/global/sumiari_moon_shade_enabled = TRUE
+var/global/sumiari_moon_intensity = SUMIARI_MOON_INTENSITY
+var/global/sumiari_moon_pulse = SUMIARI_MOON_PULSE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4459,6 +4479,53 @@ var/global/sumiari_moon_shade_enabled = TRUE
 /proc/sumiari_fx_silver(alpha)
 	return rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B, alpha)
 
+// The shared look (intensity and pulse); part of every effect image's state, so a retune rebuilds them.
+/proc/sumiari_fx_look_key()
+	return "[sumiari_moon_intensity]/[sumiari_moon_pulse]"
+
+// An effect alpha at the master intensity.
+/proc/sumiari_fx_alpha(alpha)
+	return clamp(round(alpha * sumiari_moon_intensity), 0, 255)
+
+// Where a tile sits in the moon's breath, in deciseconds 0..pulse: a slow wave across the map plus a little jitter.
+/proc/sumiari_fx_phase(x, y, salt = 0)
+	var/pulse = max(sumiari_moon_pulse, 1)
+	var/wave = ((x + y * 0.6) / SUMIARI_PULSE_WAVE) * pulse
+	var/jitter = (((x * 73 + y * 151 + salt * 37) % 101) / 101) * SUMIARI_PULSE_JITTER * pulse
+	return round(wave + jitter) % pulse
+
+// The breath at a tile right now, 0 (bottom) .. 1 (full), for one-off effects that pick their strength when born.
+/proc/sumiari_fx_breath_now(turf/T)
+	var/pulse = max(sumiari_moon_pulse, 1)
+	var/t = ((world.time + pulse - sumiari_fx_phase(T.x, T.y)) % pulse) / pulse
+	return 0.5 + 0.5 * cos(t * 360)
+
+// The opacity of a color matrix (or none) times k: its alpha column scaled. Color untouched.
+/proc/sumiari_fx_fade_matrix(look, k)
+	var/list/faded = islist(look) ? look:Copy() : list(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+	if(length(faded) < 20)
+		faded = list(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+	for(var/i in list(4, 8, 12, 16, 20))
+		faded[i] *= k
+	return faded
+
+// Joins an effect image to the moon's breath: its opacity swells and ebbs with the shared pulse, at its tile's place
+// in the wave. Rides the color matrix, not alpha, so it stacks with the image's own fades and shimmers.
+/proc/sumiari_fx_breathe(image/picture, turf/T, depth = SUMIARI_PULSE_DEPTH, salt = 0)
+	if(!T || depth <= 0)
+		return picture
+	var/pulse = max(sumiari_moon_pulse, 2)
+	var/list/full = sumiari_fx_fade_matrix(picture.color, 1)
+	var/list/low = sumiari_fx_fade_matrix(picture.color, 1 - depth)
+	picture.color = full
+	animate(picture, color = low, time = pulse / 2, delay = sumiari_fx_phase(T.x, T.y, salt), loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+	animate(color = full, time = pulse / 2, easing = SINE_EASING)
+	return picture
+
+/proc/sumiari_fx_tone(tone, alpha)
+	var/list/rgb = rgb2num(tone)
+	return rgb(rgb[1], rgb[2], rgb[3], alpha)
+
 /obj/item/organ/eyes/sumiari/proc/clear_fx()
 	for(var/key in fx_images)
 		fx_client?.images -= fx_images[key]
@@ -4540,13 +4607,13 @@ var/global/sumiari_moon_shade_enabled = TRUE
 // Marks key as wanted this scan; TRUE when its image must be (re)built because the state changed.
 /obj/item/organ/eyes/sumiari/proc/fx_want(key, state, list/wanted)
 	wanted[key] = TRUE
-	return fx_states?[key] != state
+	return fx_states?[key] != "[state]|[sumiari_fx_look_key()]"
 
 /obj/item/organ/eyes/sumiari/proc/fx_put(key, state, image/picture)
 	if(fx_images?[key])
 		fx_client.images -= fx_images[key]
 	LAZYSET(fx_images, key, picture)
-	LAZYSET(fx_states, key, state)
+	LAZYSET(fx_states, key, "[state]|[sumiari_fx_look_key()]")
 	fx_client.images += picture
 
 /obj/item/organ/eyes/sumiari/proc/fx_drop(key)
@@ -4567,10 +4634,10 @@ var/global/sumiari_moon_shade_enabled = TRUE
 	var/image/ripple = sumiari_fx_style(image(sumiari_water_icon(variant), T), SUMIARI_FX_GAME_PLANE)
 	var/period = SUMIARI_WATER_PERIOD + ((T.x * 31 + T.y * 17) % 5) * 4
 	var/drift = (variant == 2) ? -1 : 1
-	ripple.alpha = SUMIARI_WATER_ALPHA_LOW
-	animate(ripple, alpha = SUMIARI_WATER_ALPHA_HIGH, pixel_x = 2 * drift, time = period / 2, loop = -1, easing = SINE_EASING)
-	animate(alpha = SUMIARI_WATER_ALPHA_LOW, pixel_x = -drift, time = period / 2, easing = SINE_EASING)
-	return ripple
+	ripple.alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_LOW)
+	animate(ripple, alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_HIGH), pixel_x = 2 * drift, time = period / 2, loop = -1, easing = SINE_EASING)
+	animate(alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_LOW), pixel_x = -drift, time = period / 2, easing = SINE_EASING)
+	return sumiari_fx_breathe(ripple, T)
 
 // Dashes as list(x, y, length), inside 3..29 so a two-pixel drift never leaves the tile.
 /proc/sumiari_water_dashes(variant)
@@ -4615,7 +4682,9 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 			return
 		var/key = "e[T.x],[T.y]"
 		if(fx_want(key, "[sides]", wanted))
-			fx_put(key, "[sides]", sumiari_fx_style(image(sumiari_rim_icon(sides), T), SUMIARI_FX_LOWER_PLANE))
+			var/image/edge = sumiari_fx_style(image(sumiari_rim_icon(sides), T), SUMIARI_FX_LOWER_PLANE)
+			edge.alpha = sumiari_fx_alpha(255)
+			fx_put(key, "[sides]", sumiari_fx_breathe(edge, T, SUMIARI_PULSE_DEPTH * 0.5, 3))
 		return
 	if(!sumiari_spare_turf_open(T))
 		return
@@ -4657,8 +4726,16 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	sumiari_fx_style(rim, sumiari_fx_plane_near(thing.plane))
 	rim.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	rim.color = sumiari_solid_matrix(sumiari_fx_silver(255))
-	rim.alpha = SUMIARI_RIM_SPRITE_ALPHA
+	rim.alpha = sumiari_fx_alpha(SUMIARI_RIM_SPRITE_ALPHA)
 	rim.filters = list(filter(type = "alpha", icon = sumiari_flora_cutout(thing), x = 1, y = -1, flags = MASK_INVERSE))
+	// Breathe as a solid-color matrix: only its alpha column changes.
+	var/list/solid = rim.color
+	var/list/solid_low = solid.Copy()
+	solid_low[16] *= 1 - SUMIARI_PULSE_DEPTH * 0.5
+	var/turf/T = get_turf(thing)
+	if(T)
+		animate(rim, color = solid_low, time = max(sumiari_moon_pulse, 2) / 2, delay = sumiari_fx_phase(T.x, T.y, 3), loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+		animate(color = solid, time = max(sumiari_moon_pulse, 2) / 2, easing = SINE_EASING)
 	return rim
 
 // 3) Dew sparkle.
@@ -4681,7 +4758,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	dew.pixel_x = rand(-12, 12)
 	dew.pixel_y = rand(-12, 12)
 	dew.alpha = 0
-	animate(dew, alpha = SUMIARI_DEW_ALPHA, time = SUMIARI_DEW_RISE, easing = SINE_EASING)
+	animate(dew, alpha = sumiari_fx_alpha(SUMIARI_DEW_ALPHA * (1 - SUMIARI_PULSE_DEPTH + SUMIARI_PULSE_DEPTH * sumiari_fx_breath_now(T))), time = SUMIARI_DEW_RISE, easing = SINE_EASING)
 	animate(alpha = 0, time = SUMIARI_DEW_FALL, easing = SINE_EASING)
 	return dew
 
@@ -4752,7 +4829,7 @@ GLOBAL_LIST_INIT(sumiari_bloom_types, typecacheof(list(
 	sumiari_fx_style(bloom, sumiari_fx_plane_near(plant.plane))
 	bloom.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	bloom.color = sumiari_bloom_matrix()
-	bloom.alpha = round(SUMIARI_BLOOM_ALPHA * level)
+	bloom.alpha = sumiari_fx_alpha(SUMIARI_BLOOM_ALPHA * level)
 	return bloom
 
 // The night moved on: ease every open flower to the new bloom.
@@ -4761,7 +4838,7 @@ GLOBAL_LIST_INIT(sumiari_bloom_types, typecacheof(list(
 	if(!isnull(fx_bloom) && abs(level - fx_bloom) < SUMIARI_BLOOM_STEP)
 		return
 	fx_bloom = level
-	var/target = round(SUMIARI_BLOOM_ALPHA * level)
+	var/target = sumiari_fx_alpha(SUMIARI_BLOOM_ALPHA * level)
 	for(var/key in fx_images)
 		if(copytext(key, 1, 2) == "b")
 			animate(fx_images[key], alpha = target, time = SUMIARI_BLOOM_EASE)
@@ -4818,7 +4895,7 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 // them). Out: the shade color, alpha the corner-weighted shade.
 /proc/sumiari_shade_matrix(sw, se, nw, ne)
 	var/list/rgb = rgb2num(SUMIARI_SHADE_COLOR)
-	var/strength = SUMIARI_SHADE_ALPHA
+	var/strength = SUMIARI_SHADE_ALPHA * sumiari_moon_intensity
 	return list(0, 0, 0, sw * strength, 0, 0, 0, se * strength, 0, 0, 0, nw * strength, 0, 0, 0, ne * strength, rgb[1] / 255, rgb[2] / 255, rgb[3] / 255, 0)
 
 // Moon effect checks that do not depend on the map or the time of day.
@@ -4876,7 +4953,7 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 		bad += "bloom matrix leaf=[leaf[1]],[leaf[2]],[leaf[3]]"
 	var/obj/structure/flora/tinymushrooms/shroom = new(spot)
 	var/image/bloom = sumiari_bloom_image(shroom, 0.5)
-	if(bloom.alpha != round(SUMIARI_BLOOM_ALPHA * 0.5) || bloom.loc != shroom || bloom.plane != sumiari_fx_plane_near(shroom.plane))
+	if(bloom.alpha != sumiari_fx_alpha(SUMIARI_BLOOM_ALPHA * 0.5) || bloom.loc != shroom || bloom.plane != sumiari_fx_plane_near(shroom.plane))
 		bad += "bloom image alpha=[bloom.alpha] plane=[bloom.plane]"
 	qdel(shroom)
 #endif
@@ -4902,9 +4979,18 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 	if(shade_matrix[4] != SUMIARI_SHADE_ALPHA || shade_matrix[8] != 0 || shade_matrix[20] != 0)
 		bad += "shade matrix"
 #endif
+	// The shared breath: phases stay inside one period and neighbours differ; the breath reads 0..1.
+	var/phase_a = sumiari_fx_phase(10, 10)
+	var/phase_b = sumiari_fx_phase(11, 10)
+	var/breath = sumiari_fx_breath_now(spot)
+	if(phase_a < 0 || phase_a >= sumiari_moon_pulse || phase_a == phase_b || breath < 0 || breath > 1 || sumiari_fx_alpha(100) != round(100 * sumiari_moon_intensity))
+		bad += "pulse phase=[phase_a],[phase_b] breath=[breath]"
+	var/list/faded = sumiari_fx_fade_matrix(null, 0.5)
+	if(faded[16] != 0.5 || faded[1] != 1)
+		bad += "pulse fade matrix"
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse]")
 	return TRUE
