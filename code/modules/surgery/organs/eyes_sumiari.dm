@@ -134,7 +134,7 @@
 // 1) Starlight glints: a tiny slow four-point twinkle on open-sky water, wet ground, or a metal item. One beauty
 //    tick samples a few random tiles in view (no full scan) and keeps at most GLINT_MAX glints alive.
 #define SUMIARI_NIGHT_GLINTS 1
-#define SUMIARI_GLINT_MAX 6
+#define SUMIARI_GLINT_MAX 8
 #define SUMIARI_GLINT_TRIES 8
 // Percent chance per beauty tick to start a new glint when below the cap.
 #define SUMIARI_GLINT_CHANCE 80
@@ -142,12 +142,15 @@
 // twinkle never showed: the client drew a brand-new image's first moments of animation as nothing.
 #define SUMIARI_GLINT_LIFE (6 SECONDS)
 #define SUMIARI_GLINT_CYCLE (2 SECONDS)
-#define SUMIARI_GLINT_SCALE 2.2
+#define SUMIARI_GLINT_SCALE 2.8
+// Between twinkles a glint only dims to this alpha and this scale, so it never vanishes and stays easy to spot.
+#define SUMIARI_GLINT_LOW_ALPHA 70
+#define SUMIARI_GLINT_LOW_SCALE 1.2
 // The game glint is a 3-7px cross, too small to read at full-frame zoom, so a soft moonlit core (the light_32 lamp
 // sprite, scaled down and tinted) sits under it and swells with it. It is the twinkle's halo.
-#define SUMIARI_GLINT_CORE_SCALE 0.32
+#define SUMIARI_GLINT_CORE_SCALE 0.4
 #define SUMIARI_GLINT_CORE_COLOR "#d4c8ff"
-#define SUMIARI_GLINT_CORE_ALPHA 200
+#define SUMIARI_GLINT_CORE_ALPHA 230
 #define SUMIARI_GLINT_COLOR "#eef2ff"
 #define SUMIARI_GLINT_ALPHA 255
 // Dew: moonlit grass (and moss) may twinkle too, not only water and metal. 0 = shiny tiles only.
@@ -168,9 +171,9 @@
 //     little). Highlights melt into a luminous haze and midtones lift through glow, not a flat gain: the
 //     painted-dreamscape pass. It rides the moon relay, so it only exists on open moonlit sky.
 #define SUMIARI_NIGHT_GLOW 1
-#define SUMIARI_GLOW_THRESHOLD "#14141c"
-#define SUMIARI_GLOW_SIZE 8
-#define SUMIARI_GLOW_ALPHA 120
+#define SUMIARI_GLOW_THRESHOLD "#2a2a36"
+#define SUMIARI_GLOW_SIZE 6
+#define SUMIARI_GLOW_ALPHA 100
 // The glow breathes more gently than the small blooms (its alpha only dips to this fraction).
 #define SUMIARI_GLOW_BREATH_LOW 0.8
 // Extra: the two blooms breathe, slowly (one breath per SUMIARI_BREATH_PERIOD) between their alpha and this fraction of it.
@@ -223,10 +226,10 @@
 // premultiplied into the icon), so the moonlit scene has a luminous direction instead of an even dim.
 #define SUMIARI_NIGHT_MOONWASH 1
 #define SUMIARI_MOONWASH_COLOR "#b4a8ff"
-#define SUMIARI_MOONWASH_ALPHA 0.3
+#define SUMIARI_MOONWASH_ALPHA 0.18
 #define SUMIARI_MOONWASH_X 0.25
 #define SUMIARI_MOONWASH_Y 0.85
-#define SUMIARI_MOONWASH_REACH 1.4
+#define SUMIARI_MOONWASH_REACH 1.1
 // Extra: soft moon vignette. The moon layer's edges sink slightly toward night blue, so the eye rests on the middle.
 #define SUMIARI_NIGHT_VIGNETTE 1
 #define SUMIARI_NIGHT_VIGNETTE_ALPHA 0.40
@@ -3629,11 +3632,11 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 		LAZYSET(beauty_anchors, glint, list(T, rand(-10, 10), rand(-10, 10)))
 		place_beauty_image(glint)
 		glint.alpha = 0
-		glint.transform = matrix() * 0.5
+		glint.transform = matrix() * SUMIARI_GLINT_LOW_SCALE
 		var/half = SUMIARI_GLINT_CYCLE / 2
 		// Looping twinkle; the image is dropped after SUMIARI_GLINT_LIFE.
 		animate(glint, alpha = SUMIARI_GLINT_ALPHA, transform = matrix() * SUMIARI_GLINT_SCALE, time = half, loop = -1, easing = SINE_EASING)
-		animate(alpha = 0, transform = matrix() * 0.6, time = half, easing = SINE_EASING)
+		animate(alpha = SUMIARI_GLINT_LOW_ALPHA, transform = matrix() * SUMIARI_GLINT_LOW_SCALE, time = half, easing = SINE_EASING)
 		LAZYSET(glint_images, glint, world.time + SUMIARI_GLINT_LIFE)
 		beauty_client.images += glint
 		return
