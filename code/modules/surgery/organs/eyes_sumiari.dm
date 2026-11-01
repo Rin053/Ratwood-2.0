@@ -800,6 +800,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/applied_fade = null
 	// Client view radius beyond the 15x15 one (0..VIEW_EXTRA_MAX), refreshed each beauty tick (refresh_view_reach).
 	var/view_extra = 0
+	// The z the vision was last worked out for (view_turf), so a look up or down a level recaptures the planes.
+	var/last_view_z = null
 	var/list/saved_render_targets
 	var/list/screen_pieces
 	// The glare sampler's color matrix is rebuilt when the sun moves, so night haze can ease without a new composite.
@@ -4610,6 +4612,25 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 /obj/item/organ/eyes/sumiari/proc/reach(base)
 	return base + view_extra
 
+// Where the owner is looking from. Shift+right-click on open space (look_down) or on their own tile under an open
+// ceiling (look_up) moves the client's eye to a turf on another level (reset_perspective: EYE_PERSPECTIVE, eye =
+// that turf); the vision is then worked out for that level and spot, as if the owner stood there: moon look, bleed
+// walk, day cut, seals, wall faces, effects, spirits, glints and halos. Back to their own turf when the view returns.
+/obj/item/organ/eyes/sumiari/proc/view_turf()
+	var/client/viewer = owner?.client
+	if(viewer && viewer.perspective == EYE_PERSPECTIVE && viewer.eye && viewer.eye != owner)
+		var/turf/eye_turf = get_turf(viewer.eye)
+		if(eye_turf)
+			return eye_turf
+	return get_turf(owner)
+
+// The tiles the owner sees around center. From their own body this is view() (their sight, see_in_dark, walls).
+// From a looked-at turf view() would see with no see_in_dark (dark moonlit tiles drop out), so the square is used.
+/obj/item/organ/eyes/sumiari/proc/seen_turfs(dist, turf/center)
+	if(!owner || center == get_turf(owner))
+		return view(dist, owner)
+	return range(dist, center)
+
 // A per-area cap tuned for the 15x15 view, scaled by how much more area the current view covers.
 /obj/item/organ/eyes/sumiari/proc/area_cap(base)
 	var/wide = (SUMIARI_VIEW_BASE_RADIUS + view_extra) * 2 + 1
@@ -4631,12 +4652,37 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	owner?.update_sight()
 	return TRUE
 
+// A look up or down a level (or its return) moved the eye to another z: recapture the planes the way a z change of
+// the owner does. Every pass below then works from view_turf(), and their keep lists drop the old level's images.
+/obj/item/organ/eyes/sumiari/proc/refresh_view_level()
+	var/turf/looking = view_turf()
+	var/new_z = looking?.z
+	if(new_z == last_view_z)
+		return FALSE
+	var/old_z = last_view_z
+	last_view_z = new_z
+	if(isnull(old_z) || !vision_on)
+		return FALSE
+	bleed_cache = null
+	glint_center = null
+	fx_center = null
+	// Glints live on the old level's tiles; the halos, effects, wall faces and cuts drop theirs on the next pass.
+	for(var/image/glint as anything in glint_images)
+		beauty_client?.images -= glint
+		LAZYREMOVE(beauty_anchors, glint)
+	glint_images = null
+	hold_lighting_capture()
+	capture_world_planes()
+	apply_wash_filters()
+	return TRUE
+
 /obj/item/organ/eyes/sumiari/proc/beauty_tick()
 	if(QDELETED(src) || !vision_on)
 		stop_night_beauty()
 		return
 	sync_time_look()
 	refresh_view_reach()
+	refresh_view_level()
 	// Keep the cone's wedge over the relays (and so over the violet glow) even if the HUD was rebuilt since the
 	// pieces were presented: a wedge left at HUD_LAYER sits under the redrawn world and the glow shows through.
 	sumiari_cone_over_relays(owner, TRUE)
@@ -4650,7 +4696,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 		clear_beauty()
 		return
 	beauty_client = owner.client
-	var/turf/center = get_turf(owner)
+	var/turf/center = view_turf()
 	if(!center)
 		clear_beauty()
 		return
@@ -4673,7 +4719,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 		glint_age = 0
 		glint_spots = list()
 		// view(), not range(): the glints draw above the walls, so only tiles the owner sees may glint.
-		for(var/turf/T in view(reach(SUMIARI_GLINT_RADIUS), owner))
+		for(var/turf/T in seen_turfs(reach(SUMIARI_GLINT_RADIUS), center))
 			if(sumiari_glint_spot(T))
 				glint_spots += T
 				if(length(glint_spots) >= area_cap(SUMIARI_GLINT_SPOT_MAX))
@@ -4721,7 +4767,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 		if(QDELETED(plant) || get_dist(plant, center) > reach(SUMIARI_FLORA_RANGE) || !sumiari_flora_shows(plant))
 			continue
 		// The halos draw above the walls, so a plant behind one shows none. One view() per tick, only when needed.
-		seen ||= view(reach(SUMIARI_FLORA_RANGE), owner)
+		seen ||= seen_turfs(reach(SUMIARI_FLORA_RANGE), center)
 		if(!(plant in seen))
 			continue
 		near[plant] = TRUE
@@ -4981,7 +5027,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 #if SUMIARI_MOON_SPARES_NONFIRE
 	if(spare_client && spare_client != owner?.client)
 		clear_spare()
-	var/turf/center = get_turf(owner)
+	var/turf/center = view_turf()
 	if(!sumiari_moon_spares_enabled || !owner?.client || !center || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
 		clear_spare()
 		return
@@ -5265,7 +5311,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 #if SUMIARI_SKY_SPILL_CUT
 	if(spill_client && spill_client != owner?.client)
 		clear_spill()
-	var/turf/center = get_turf(owner)
+	var/turf/center = view_turf()
 	if(!vision_on || !owner?.client || !center)
 		clear_spill()
 		return
@@ -5371,7 +5417,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 #if SUMIARI_MOON_CLIFFS
 	if(cliff_client && cliff_client != owner?.client)
 		clear_cliffs()
-	var/turf/center = get_turf(owner)
+	var/turf/center = view_turf()
 	if(!vision_on || !owner?.client || !center || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
 		clear_cliffs()
 		return
@@ -5673,6 +5719,23 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		|| SUMIARI_CLIFF_RANGE + sumiari_view_extra("25x25", pan_px * SUMIARI_PAN_MAX, 0) < 12 + SUMIARI_PAN_MAX + 2 \
 		|| SUMIARI_SEE_IN_DARK + sumiari_view_extra("15x15", pan_px * SUMIARI_PAN_MAX, 0) < SUMIARI_VIEW_BASE_RADIUS + SUMIARI_PAN_MAX)
 		bad += "pan reach 11=[sumiari_view_extra("15x15", pan_px * 11, 0)] wide=[sumiari_view_extra("25x25", pan_px * 11, -pan_px * 11)]"
+	// Look up or down a level: with no eye of its own the vision works from the owner's tile; another tile is seen
+	// as its square; a change of the viewed level drops the cached scans and is noted once.
+	var/turf/own_turf = get_turf(eyes.owner)
+	var/turf/far_turf = locate(clamp(own_turf.x + 3, 1, world.maxx), own_turf.y, own_turf.z)
+	var/list/far_seen = eyes.seen_turfs(2, far_turf)
+	var/turf/far_edge = locate(far_turf.x + 2, far_turf.y, far_turf.z)
+	var/old_view_z = eyes.last_view_z
+	eyes.last_view_z = own_turf.z + 1
+	eyes.fx_center = own_turf
+	var/level_changed = eyes.refresh_view_level()
+	var/level_cleared = isnull(eyes.fx_center)
+	var/level_again = eyes.refresh_view_level()
+	var/level_z = eyes.last_view_z
+	eyes.last_view_z = old_view_z
+	if(eyes.view_turf() != own_turf || !(far_turf in far_seen) || !(far_edge in far_seen) \
+		|| (eyes.vision_on && (!level_changed || !level_cleared)) || level_again || level_z != own_turf.z)
+		bad += "look level view=[eyes.view_turf()] changed=[level_changed]/[level_cleared] again=[level_again] z=[level_z]"
 	// Midday: the look the vision gets when it is attached (spawn, login, eye insert) has no moon at all from the
 	// first frame, and a stale night look is put right by the next beauty tick.
 	if(eyes.vision_on && eyes.wash_mode == SUMIARI_WASH_LIVE && !sumiari_moon_fade_timer)
@@ -6053,7 +6116,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 #if SUMIARI_MOON_FX
 	if(fx_client && fx_client != owner?.client)
 		clear_fx()
-	var/turf/center = get_turf(owner)
+	var/turf/center = view_turf()
 	if(!sumiari_night_beauty_enabled || !center || sense_blocked() || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
 		clear_fx()
 		return
