@@ -394,7 +394,7 @@
 #define SUMIARI_WASH_COLOR "color"
 // 11 plates (the 10 mask plates plus the moon mask), each a master plus the child that draws the capture,
 // plus the ink, sun, and moon relays.
-#define SUMIARI_PIECE_CAP 26
+#define SUMIARI_PIECE_CAP 32
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 #define SUMIARI_SEE_IN_DARK 8
 // Darkness-sneak raises invisibility to SEE_INVISIBLE_LIVING + skill*0.55 + 1 (about 29 at legendary).
@@ -431,6 +431,13 @@
 #define SUMIARI_TARGET_COOKIE "sumiari_cookie"
 #define SUMIARI_TARGET_DARK "sumiari_dark"
 #define SUMIARI_TARGET_MOON "sumiari_moon"
+// The movable-light cookie split into its R, G and B brightness (color times falloff, flattened on black).
+#define SUMIARI_PLANE_COOKIE_RED -65
+#define SUMIARI_PLANE_COOKIE_GREEN -66
+#define SUMIARI_PLANE_COOKIE_BLUE -67
+#define SUMIARI_TARGET_COOKIE_RED "sumiari_cookie_r"
+#define SUMIARI_TARGET_COOKIE_GREEN "sumiari_cookie_g"
+#define SUMIARI_TARGET_COOKIE_BLUE "sumiari_cookie_b"
 
 // Stored in place of a null render_target. BYOND drops a list entry whose value is null.
 #define SUMIARI_NO_TARGET ""
@@ -780,9 +787,22 @@ var/global/turf/sumiari_test_dark_turf
 		filter(type = "color", color = sumiari_matrix_invert_gray()),
 		filter(type = "color", color = sumiari_matrix_light_gain()),
 	))
-	// Cookie RGB is the light color. The falloff is the icon alpha, and set_power keeps that alpha at 255.
-	// Copying alpha, not max(R, G, B), keeps a dim orange torch the same radius as the vanilla pool.
-	add_plate(SUMIARI_PLANE_COOKIE, SUMIARI_TARGET_COOKIE, SUMIARI_OLIGHT_SOURCE, sumiari_lighting_channel_filters(4))
+	// Cookie RGB is the light color, the icon alpha is the falloff, and set_power keeps that alpha at 255 whatever the
+	// power. A human sees a movable light as its color times that falloff: the cookie punches the darkness out and
+	// then multiplies the world by the light's color. Copying the alpha alone counted a dim red or violet light as
+	// full brightness over its whole radius, so a room a human sees near black went fully gray for these eyes.
+	// Brightness is max(R, G, B) of the color times the falloff (each channel flattened on black), the same
+	// max-channel reading the static lighting gets. A white-ish light (a kneestinger, a torch) is unchanged.
+	add_plate(SUMIARI_PLANE_COOKIE_RED, SUMIARI_TARGET_COOKIE_RED, SUMIARI_OLIGHT_SOURCE, sumiari_cookie_channel_filters(1))
+	add_plate(SUMIARI_PLANE_COOKIE_GREEN, SUMIARI_TARGET_COOKIE_GREEN, SUMIARI_OLIGHT_SOURCE, sumiari_cookie_channel_filters(2))
+	add_plate(SUMIARI_PLANE_COOKIE_BLUE, SUMIARI_TARGET_COOKIE_BLUE, SUMIARI_OLIGHT_SOURCE, sumiari_cookie_channel_filters(3))
+	add_plate(SUMIARI_PLANE_COOKIE, SUMIARI_TARGET_COOKIE, sumiari_offscreen(SUMIARI_TARGET_COOKIE_GREEN), list(
+		filter(type = "color", color = sumiari_matrix_force_alpha()),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE_RED), blend_mode = BLEND_SUBTRACT),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE_RED), blend_mode = BLEND_ADD),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE_BLUE), blend_mode = BLEND_SUBTRACT),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE_BLUE), blend_mode = BLEND_ADD),
+	))
 	// The emitters' own sprites. Alpha into gray, so a sprite pixel is a full wash whatever its tile reads.
 	add_plate(SUMIARI_PLANE_SOURCE, SUMIARI_TARGET_SOURCE, SUMIARI_SOURCE_RENDER_TARGET, sumiari_lighting_channel_filters(4))
 	// Max with the cookie. Add alone would wash a sconce twice, once for the fixture and once for its torch.
@@ -1192,6 +1212,17 @@ var/global/turf/sumiari_test_dark_turf
 /proc/sumiari_lighting_channel_filters(channel)
 	return list(
 		filter(type = "color", color = sumiari_matrix_channel(channel)),
+	)
+
+// One cookie channel as brightness: that channel into gray with the falloff alpha kept, then laid over opaque
+// black (the static alpha plate with every color zeroed), so the plate holds channel * falloff at alpha 1.
+/proc/sumiari_cookie_channel_filters(channel)
+	var/list/keep = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+	for(var/output in 1 to 3)
+		keep[(channel - 1) * 4 + output] = 1
+	return list(
+		filter(type = "color", color = keep),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_ALPHA), flags = FILTER_UNDERLAY, color = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)),
 	)
 
 // channel 1/2/3 copies that color into gray and forces alpha to 1. Channel 4 copies alpha into gray.
@@ -2415,7 +2446,7 @@ var/global/sumiari_run_headless_test = FALSE
 
 // Which object carries which picture. The wash test prints this so it can be checked against the screen.
 /proc/sumiari_plane_legend()
-	return "planes: world color is the map planes themselves (sumiari_w*, no asterisk, drawn). Lighting plane [LIGHTING_PLANE] is [SUMIARI_LIGHTING_SOURCE] alpha 255, not drawn. Movable-light plane [O_LIGHTING_VISUAL_PLANE] is [SUMIARI_OLIGHT_SOURCE] alpha 255, not drawn, so a torch cookie does not tint the world. The mask is the max of the lighting capture and that cookie's alpha ([sumiari_offscreen(SUMIARI_TARGET_COOKIE)]), copied at view resolution (render_source, SCREEN_SOUTHWEST, no 32×32 resample) into [sumiari_offscreen(SUMIARI_TARGET_MASK)]. [sumiari_offscreen(SUMIARI_TARGET_GLARE)] copies [SUNLIGHTING_RENDER_TARGET], not the lighting plane. Live ink is the sumiari ink relay on plane [SUMIARI_RELAY_PLANE]: every world capture, the ink matrix, then [sumiari_offscreen(SUMIARI_TARGET_MASK)]. Sun haze is the sumiari sun relay above it, masked by [sumiari_offscreen(SUMIARI_TARGET_GLARE)]. Force ink is the ink matrix on every world plane master and hides both relays. HUD is plane [HUD_PLANE]."
+	return "planes: world color is the map planes themselves (sumiari_w*, no asterisk, drawn). Lighting plane [LIGHTING_PLANE] is [SUMIARI_LIGHTING_SOURCE] alpha 255, not drawn. Movable-light plane [O_LIGHTING_VISUAL_PLANE] is [SUMIARI_OLIGHT_SOURCE] alpha 255, not drawn, so a torch cookie does not tint the world. The mask is the max of the lighting capture and that cookie's brightness, max(R, G, B) of its color times its falloff ([sumiari_offscreen(SUMIARI_TARGET_COOKIE)]), copied at view resolution (render_source, SCREEN_SOUTHWEST, no 32×32 resample) into [sumiari_offscreen(SUMIARI_TARGET_MASK)]. [sumiari_offscreen(SUMIARI_TARGET_GLARE)] copies [SUNLIGHTING_RENDER_TARGET], not the lighting plane. Live ink is the sumiari ink relay on plane [SUMIARI_RELAY_PLANE]: every world capture, the ink matrix, then [sumiari_offscreen(SUMIARI_TARGET_MASK)]. Sun haze is the sumiari sun relay above it, masked by [sumiari_offscreen(SUMIARI_TARGET_GLARE)]. Force ink is the ink matrix on every world plane master and hides both relays. HUD is plane [HUD_PLANE]."
 
 // in_screen, plane, every world layer, and the mask. world_matrices counts ink matrices on the plane masters.
 // Live mode keeps that count at 0: the matrix sits on the relay, and the layer list is the thing to read.
@@ -2832,8 +2863,14 @@ var/global/sumiari_run_headless_test = FALSE
 		bad += "cookie plate=[cookie_plate?.render_target || "none"]"
 	else if(cookie_plate.plane >= OPENSPACE_PLANE)
 		bad += "cookie plate plane [cookie_plate.plane] can cover the map"
-	if(!cookie_sample || cookie_sample.render_source != SUMIARI_OLIGHT_SOURCE)
+	if(!cookie_sample || cookie_sample.render_source != sumiari_offscreen(SUMIARI_TARGET_COOKIE_GREEN))
 		bad += "cookie source=[cookie_sample?.render_source || "none"]"
+	for(var/channel_target in list(SUMIARI_TARGET_COOKIE_RED, SUMIARI_TARGET_COOKIE_GREEN, SUMIARI_TARGET_COOKIE_BLUE))
+		var/atom/movable/screen/sumiari_sampler/channel_sample = sumiari_find_piece(eyes, "[channel_target] sample")
+		if(!channel_sample || channel_sample.render_source != SUMIARI_OLIGHT_SOURCE)
+			bad += "cookie channel [channel_target] source=[channel_sample?.render_source || "none"]"
+		else if(length(channel_sample.filters) < 2 || sumiari_filter_field(channel_sample.filters, 2, "render_source") != sumiari_offscreen(SUMIARI_TARGET_ALPHA))
+			bad += "cookie channel [channel_target] not flattened on black"
 	if(cookie_sample && cookie_sample.screen_loc != "SCREEN_SOUTHWEST")
 		bad += "cookie anchor=[cookie_sample.screen_loc || "none"]"
 	if(!cookie_sample || cookie_sample.sumiari_pixels_x != span[1] || cookie_sample.sumiari_pixels_y != span[2])
