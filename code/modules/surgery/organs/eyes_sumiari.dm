@@ -328,6 +328,21 @@
 // so an open door or clear window still lets the day in exactly as before. Lamps and fires are their own lighting
 // objects, not the sun plane, and are untouched. Nobody else sees the images.
 #define SUMIARI_SKY_SPILL_CUT 1
+// Overhanging sprites follow their own tile. The wash is per pixel from the lighting plane, and vanilla never lights
+// an opaque turf (lighting_source skips opacity), so a wall tile above a lit room fades from lit at its foot to 0 at
+// its top corners. A wall mirror (pixel_y 32), a tall cabinet, a banner or a tree crown drawn up into that tile kept
+// its lower rows gray and its top rows in color: the tip cut off in color. For these eyes only, each object near the
+// owner that draws past its tile (pixel offset or an icon over 32 px) gets a client image on the hidden
+// SUMIARI_HANG_PLANE: its own sprite at alpha = sprite alpha * the wash of the tile it stands on. The gray mask
+// takes the max with it (and the dim plate the matching light), so every pixel of the sprite is at least as gray as
+// its own tile. Vanilla lighting is untouched and nobody else sees the images.
+#define SUMIARI_HANG_LIFT 1
+// -48: -44 is vanilla's GAME_PLANE_OWNER (the player's own sprite under the vision cone).
+#define SUMIARI_HANG_PLANE -48
+#define SUMIARI_HANG_RENDER_TARGET "*sumiari_hang"
+// Pixels a sprite has to reach past its tile (offset) to count as overhanging, and the most images per viewer.
+#define SUMIARI_HANG_MIN_OFFSET 6
+#define SUMIARI_HANG_MAX 120
 #define SUMIARI_SPILL_RANGE 5
 // Grid cells for sumiari_moon_bleed_grid.
 #define SUMIARI_BLEED_WALL 0
@@ -797,6 +812,10 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/client/spill_client
 	var/list/spill_images
 	var/list/spill_keys
+	// Overhang lift (SUMIARI_HANG_LIFT): object -> image on SUMIARI_HANG_PLANE, object -> "appearance|wash" key.
+	var/client/hang_client
+	var/list/hang_images
+	var/list/hang_keys
 	// One bleed walk per tick, shared by the cliff (moon bleed) and spill passes: list(key, grid, steps, x0, y0, w, h).
 	var/list/bleed_cache
 	// Night senses: body -> image shown to sense_client, and body -> the dir/lying the image was copied at.
@@ -1149,6 +1168,11 @@ var/global/turf/sumiari_test_dark_turf
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_ADD),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
+#if SUMIARI_HANG_LIFT
+		// Overhanging sprites: max with their own tile's wash (alpha into gray), before the night-sky clear.
+		filter(type = "layer", render_source = SUMIARI_HANG_RENDER_TARGET, blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_alpha_to_gray()),
+		filter(type = "layer", render_source = SUMIARI_HANG_RENDER_TARGET, blend_mode = BLEND_ADD, color = sumiari_matrix_alpha_to_gray()),
+#endif
 #if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION && SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
 		// No lamp gray, fire or not, under the open night sky (see SUMIARI_MOON_FIRE_BLIND): after the emitter-sprite
 		// max, so a flame, lamp, torch or fire bowl standing on open sky is in full moon color too. Under a roof, in a
@@ -1180,6 +1204,11 @@ var/global/turf/sumiari_test_dark_turf
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
 	)
+#if SUMIARI_HANG_LIFT
+	// The same lift in human light: the hang alpha is the gained wash, so take it back down by the gain.
+	dim_filters += filter(type = "layer", render_source = SUMIARI_HANG_RENDER_TARGET, blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_hang_light())
+	dim_filters += filter(type = "layer", render_source = SUMIARI_HANG_RENDER_TARGET, blend_mode = BLEND_ADD, color = sumiari_matrix_hang_light())
+#endif
 #if SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
 	// Night sky: max with the skylight (full under open sky at night, 0 by day).
 	dim_filters += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_alpha_to_gray())
@@ -1873,6 +1902,11 @@ var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 /proc/sumiari_matrix_dim_alpha()
 	var/depth = 1 - SUMIARI_DARKVISION_FLOOR
 	return list(0, 0, 0, -depth, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, depth)
+
+// Hang alpha (the gained wash) back into light: gray = alpha / GAIN, opaque.
+/proc/sumiari_matrix_hang_light()
+	var/back = 1 / SUMIARI_LIGHT_GAIN
+	return list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, back, back, back, 0, 0, 0, 0, 1)
 
 // White RGB, alpha = R. The alpha mask filter reads that alpha.
 /proc/sumiari_matrix_gray_to_alpha()
@@ -4056,6 +4090,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	place_beauty()
 	cliff_tick()
 	spill_tick()
+	hang_tick()
 	fx_tick(TRUE)
 
 /obj/item/organ/eyes/sumiari/proc/clear_sensed()
@@ -4386,6 +4421,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	clear_spare()
 	clear_cliffs()
 	clear_spill()
+	clear_hang()
 	clear_fx()
 
 /obj/item/organ/eyes/sumiari/proc/clear_beauty()
@@ -4411,6 +4447,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	spare_tick()
 	cliff_tick()
 	spill_tick()
+	hang_tick()
 	fx_tick()
 	if(beauty_client && beauty_client != owner?.client)
 		clear_beauty()
@@ -5051,6 +5088,125 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			spill_keys -= T
 #endif
 
+/atom/movable/screen/plane_master/sumiari_hang
+	name = "sumiari hang plane master"
+	plane = SUMIARI_HANG_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_HANG_RENDER_TARGET
+
+/obj/item/organ/eyes/sumiari/proc/clear_hang()
+	for(var/obj/thing as anything in hang_images)
+		hang_client?.images -= hang_images[thing]
+	hang_images = null
+	hang_keys = null
+	hang_client = null
+
+// Every step and every beauty tick while the vision is on: overhanging objects around the owner get their own
+// tile's wash as a hang image (see SUMIARI_HANG_LIFT).
+/obj/item/organ/eyes/sumiari/proc/hang_tick()
+#if SUMIARI_HANG_LIFT
+	if(hang_client && hang_client != owner?.client)
+		clear_hang()
+	var/turf/center = get_turf(owner)
+	if(!vision_on || !owner?.client || !center)
+		clear_hang()
+		return
+	hang_client = owner.client
+	var/list/keep = list()
+	var/count = 0
+	var/turf/low = locate(max(center.x - SUMIARI_CLIFF_RANGE, 1), max(center.y - SUMIARI_CLIFF_RANGE, 1), center.z)
+	var/turf/high = locate(min(center.x + SUMIARI_CLIFF_RANGE, world.maxx), min(center.y + SUMIARI_CLIFF_RANGE, world.maxy), center.z)
+	for(var/turf/T as anything in block(low, high))
+		var/wash = -1
+		for(var/obj/thing in T)
+			if(count >= SUMIARI_HANG_MAX)
+				break
+			if(!sumiari_overhangs(thing))
+				continue
+			if(wash < 0)
+				wash = sumiari_hang_wash(T, spill_keys ? spill_keys[T] : null)
+			if(wash < 0.02)
+				continue
+			count++
+			keep[thing] = TRUE
+			var/key = "[REF(thing.appearance)]|[wash]"
+			if(hang_keys?[thing] == key)
+				continue
+			if(hang_images?[thing])
+				hang_client.images -= hang_images[thing]
+			var/image/lift = sumiari_hang_image(thing, wash)
+			LAZYSET(hang_images, thing, lift)
+			LAZYSET(hang_keys, thing, key)
+			hang_client.images += lift
+	for(var/obj/thing as anything in hang_images)
+		if(!keep[thing])
+			hang_client.images -= hang_images[thing]
+			hang_images -= thing
+			hang_keys -= thing
+#endif
+
+// Does this object draw past its own tile? A pixel offset of HANG_MIN_OFFSET or more, or an icon over 32 px.
+/proc/sumiari_overhangs(obj/thing)
+	if(!thing || thing.invisibility || !thing.icon || !thing.icon_state || iseffect(thing) || thing.plane > GAME_PLANE_UPPER)
+		return FALSE
+	if(abs(thing.pixel_x + thing.pixel_w) >= SUMIARI_HANG_MIN_OFFSET || abs(thing.pixel_y + thing.pixel_z) >= SUMIARI_HANG_MIN_OFFSET)
+		return TRUE
+	if(!isfile(thing.icon))
+		return FALSE
+	var/list/size = get_icon_dimensions(thing.icon)
+	return size["width"] > world.icon_size || size["height"] > world.icon_size
+
+// The wash the gray mask gives this tile, from what vanilla draws there: the static-light corners plus the sun spill
+// (this viewer's cut corners when spill_key is set), with the mask's gain. Movable lights are left out: their cookie
+// is radial, not per tile, and already reaches past the tile on its own.
+/proc/sumiari_hang_wash(turf/T, spill_key)
+	if(!isturf(T))
+		return 0
+	if(!T.has_dynamic_lighting())
+		return 1
+	var/lamps = 0
+	var/counted = 0
+	for(var/datum/lighting_corner/corner as anything in T.corners)
+		if(!corner)
+			continue
+		counted++
+		lamps += sumiari_corner_drawn(corner)
+	if(counted)
+		lamps /= counted
+	var/sky = sumiari_sun_mask(T)
+	if(spill_key)
+		var/list/cut = splittext(spill_key, "|")
+		sky = 0
+		for(var/value in cut)
+			sky += text2num(value) / length(cut)
+	return round(CLAMP01((lamps + sky * sumiari_sun_strength()) * SUMIARI_LIGHT_GAIN), 0.05)
+
+// The object's own look at alpha = its alpha * wash, on the hidden hang plane. The image rides the object, so
+// its offsets and transform are already the object's: zeroed here so they are not applied twice.
+/proc/sumiari_hang_image(obj/thing, wash)
+	var/image/lift = image(loc = thing)
+	lift.appearance = thing.appearance
+	lift.loc = thing
+	lift.plane = SUMIARI_HANG_PLANE
+	lift.layer = thing.layer
+	lift.pixel_x = 0
+	lift.pixel_y = 0
+	lift.pixel_w = 0
+	lift.pixel_z = 0
+	lift.transform = null
+	lift.alpha = 255
+	lift.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
+	lift.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	// RGB = the sprite's alpha (unused; the mask reads only alpha) so BYOND cannot fold the matrix into a plain color,
+	// which would reset alpha to 255 and lose the wash.
+	lift.color = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, wash, 0, 0, 0, 0)
+	// Only the base sprite: an overlay on its own plane (emissive, lighting) would draw this black there.
+	lift.overlays.Cut()
+	lift.underlays.Cut()
+	return lift
+
 // Can outdoor light reach this corner (dx, dy = +-1) of the 1-based grid cell (cx, cy)? Yes if any of the four cells
 // meeting there is unshut open sky or roofed floor the walk reached.
 /proc/sumiari_spill_corner_open(list/grid, list/steps, w, h, cx, cy, dx, dy)
@@ -5286,6 +5442,44 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/list/spill_matrix = spill_cut.color
 	if(spill_cut.plane != SUNLIGHTING_PLANE || spill_cut.layer <= TURF_LAYER || spill_cut.blend_mode != BLEND_OVERLAY || !islist(spill_matrix) || spill_matrix[1] != 1 || spill_matrix[5] != 0 || spill_matrix[9] != 0.5 || spill_matrix[20] != 1)
 		bad += "spill image plane=[spill_cut.plane] layer=[spill_cut.layer]"
+	// Overhang lift: a wall mirror (pixel_y 32) overhangs, a plain stone does not; the hang image is its own sprite on
+	// the hidden hang plane, offsets zeroed, alpha = wash; the gray mask and dim plate take the max with that plane.
+	var/turf/hang_turf = get_turf(eyes.owner)
+	var/obj/structure/mirror/hang_mirror = new(hang_turf)
+	var/obj/item/natural/stone/hang_stone = new(hang_turf)
+	hang_stone.pixel_x = 0
+	hang_stone.pixel_y = 0
+	var/image/hang_lift = sumiari_hang_image(hang_mirror, 0.6)
+	var/list/hang_matrix = hang_lift.color
+	var/atom/movable/screen/plane_master/hang_master = eyes.owner?.hud_used?.plane_masters["[SUMIARI_HANG_PLANE]"]
+	var/atom/movable/screen/sumiari_sampler/hang_mask = sumiari_find_piece(eyes, "[SUMIARI_TARGET_MASK] sample")
+	var/hang_in_mask = 0
+	var/hang_sky = 0
+	for(var/hang_index in 1 to length(hang_mask?.filters))
+		var/hang_source = sumiari_filter_field(hang_mask.filters, hang_index, "render_source")
+		if(hang_source == SUMIARI_HANG_RENDER_TARGET)
+			hang_in_mask = hang_index
+		else if(hang_source == sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT) && !hang_sky)
+			hang_sky = hang_index
+	if(!sumiari_overhangs(hang_mirror) || sumiari_overhangs(hang_stone) || hang_lift.plane != SUMIARI_HANG_PLANE || hang_lift.pixel_y || hang_lift.pixel_x \
+		|| !islist(hang_matrix) || hang_matrix[16] != 0.6 || hang_matrix[1] || !hang_master || hang_master.render_target != SUMIARI_HANG_RENDER_TARGET \
+		|| !hang_in_mask || (hang_sky && hang_sky < hang_in_mask) || sumiari_hang_wash(hang_turf) < 0 || sumiari_hang_wash(hang_turf) > 1)
+		bad += "hang lift mirror=[sumiari_overhangs(hang_mirror)] stone=[sumiari_overhangs(hang_stone)] plane=[hang_lift.plane] px=[hang_lift.pixel_x],[hang_lift.pixel_y] color=[islist(hang_matrix) ? jointext(hang_matrix, ",") : hang_lift.color] wash=[sumiari_hang_wash(hang_turf)] mask=[hang_in_mask]/[hang_sky] master=[hang_master?.render_target]"
+	qdel(hang_mirror)
+	qdel(hang_stone)
+	// Every plane master on its own plane: two on one plane share one key in hud plane_masters, and one of them is
+	// never drawn the way it was meant (the hang plane first sat on -44, vanilla's GAME_PLANE_OWNER).
+	var/list/plane_target = list()
+	var/list/plane_owner = list()
+	for(var/master_type in subtypesof(/atom/movable/screen/plane_master))
+		var/atom/movable/screen/plane_master/master_path = master_type
+		var/master_plane = "[initial(master_path.plane)]"
+		var/master_target = "[initial(master_path.render_target)]"
+		if(!plane_owner[master_plane])
+			plane_owner[master_plane] = master_type
+			plane_target[master_plane] = master_target
+		else if(plane_target[master_plane] != master_target && (findtext("[master_type]", "sumiari") || findtext("[plane_owner[master_plane]]", "sumiari")))
+			bad += "plane clash [master_plane] [plane_owner[master_plane]] [master_type]"
 	// Closed door (shut cell in the roofed doorway, or a shut door under the sky): nothing gets in, not even a corner.
 	var/list/shut_row = list(SUMIARI_BLEED_SKY, SUMIARI_BLEED_WALL, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF)
 	var/list/shut_steps = sumiari_moon_bleed_grid(shut_row, 4, 1)
