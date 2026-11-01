@@ -4909,12 +4909,14 @@ var/global/sumiari_moon_steps_enabled = TRUE
 		return list(c[1] / 255, 0, 0, 0, 0, c[2] / 255, 0, 0, 0, 0, c[3] / 255, 0, 0, 0, 0, a, 0, 0, 0, 0)
 	return null
 
-// The opacity of a color matrix (or none) times k: its alpha column scaled. Color untouched.
+// The opacity of a color matrix (or none) times k: every entry scaled, so color and alpha fade together.
 /proc/sumiari_fx_fade_matrix(look, k)
 	var/list/faded = islist(look) ? look:Copy() : list(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0)
 	if(length(faded) < 20)
 		faded = list(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0)
-	for(var/i in list(4, 8, 12, 16, 20))
+	// The client blends premultiplied: scaling only the alpha column leaves the color at full strength, which
+	// lands as a near-additive glare. Every entry is scaled, so the color fades with its opacity.
+	for(var/i in 1 to 20)
 		faded[i] *= k
 	return faded
 
@@ -5867,8 +5869,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	frost.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	// Opacity rides the matrix: the color animation below would reset a plain alpha to 255.
 	var/list/frost_look = sumiari_solid_matrix(sumiari_fx_silver(255))
-	frost_look[16] *= sumiari_fx_alpha(SUMIARI_FROST_ALPHA * level) / 255
-	frost.color = frost_look
+	frost.color = sumiari_fx_fade_matrix(frost_look, sumiari_fx_alpha(SUMIARI_FROST_ALPHA * level) / 255)
 	frost.filters = list(filter(type = "alpha", icon = sumiari_flora_cutout(thing), x = 0, y = -1, flags = MASK_INVERSE))
 	if(sway)
 		sumiari_sway_apply(frost, thing)
@@ -6072,7 +6073,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	if(phase_a < 0 || phase_a >= sumiari_moon_pulse || phase_a == phase_b || breath < 0 || breath > 1 || sumiari_fx_alpha(100) != round(100 * sumiari_moon_intensity))
 		bad += "pulse phase=[phase_a],[phase_b] breath=[breath]"
 	var/list/faded = sumiari_fx_fade_matrix(null, 0.5)
-	if(faded[16] != 0.5 || faded[1] != 1)
+	if(faded[16] != 0.5 || faded[1] != 0.5 || faded[2] != 0)
 		bad += "pulse fade matrix"
 #if SUMIARI_MOON_SWAY
 	var/obj/structure/flora/roguegrass/tuft = new(spot)
