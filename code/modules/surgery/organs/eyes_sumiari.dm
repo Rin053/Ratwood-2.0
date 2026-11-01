@@ -157,46 +157,6 @@
 #define SUMIARI_GLINT_ALPHA 255
 // Dew: moonlit grass (and moss) may twinkle too, not only water and metal. 0 = shiny tiles only.
 #define SUMIARI_GLINT_DEW 1
-// 2) Moon-glow on plants: a soft green-only bloom on the moon layer. The threshold is high on red and blue, so
-//    only the green channel of moss, grass, leaves, and flower stems blooms, a faint emerald inner light.
-#define SUMIARI_NIGHT_PLANT_GLOW 0
-#define SUMIARI_PLANT_GLOW_THRESHOLD "#ff22ff"
-#define SUMIARI_PLANT_GLOW_SIZE 3
-#define SUMIARI_PLANT_GLOW_ALPHA 140
-// 3) Soft bloom on bright spots: pale stone, bone, water edges, and moonlit cloth get a gentle halo.
-#define SUMIARI_NIGHT_BLOOM 0
-#define SUMIARI_BLOOM_THRESHOLD "#73737d"
-#define SUMIARI_BLOOM_SIZE 3
-#define SUMIARI_BLOOM_OFFSET 1
-#define SUMIARI_BLOOM_ALPHA 110
-// 3b) Moon glow: a wide, soft bloom over the whole moonlit scene (a low threshold, so almost every pixel gives a
-//     little). Highlights melt into a luminous haze and midtones lift through glow, not a flat gain: the
-//     painted-dreamscape pass. It rides the moon relay, so it only exists on open moonlit sky.
-#define SUMIARI_NIGHT_GLOW 0
-#define SUMIARI_GLOW_THRESHOLD "#2a2a36"
-#define SUMIARI_GLOW_SIZE 4
-#define SUMIARI_GLOW_ALPHA 100
-// The glow breathes more gently than the small blooms (its alpha only dips to this fraction).
-#define SUMIARI_GLOW_BREATH_LOW 0.8
-// Extra: the two blooms breathe, slowly (one breath per SUMIARI_BREATH_PERIOD) between their alpha and this fraction of it.
-#define SUMIARI_NIGHT_BREATH 0
-#define SUMIARI_BREATH_PERIOD (9 SECONDS)
-#define SUMIARI_BREATH_LOW 0.55
-// 4) Drifting motes: a few faint silver specks drifting through moonlit open air. One particle screen piece,
-//    masked by the moon plate, at most MOTES_MAX alive at once.
-#define SUMIARI_NIGHT_MOTES 0
-#define SUMIARI_MOTES_MAX 48
-#define SUMIARI_MOTES_SPAWN 0.3
-// Half-size of the square they spawn in, in pixels (the 15-tile view is 480 across), and their size (x 32 px).
-#define SUMIARI_MOTES_SPREAD 270
-#define SUMIARI_MOTES_SCALE_MIN 0.28
-#define SUMIARI_MOTES_SCALE_MAX 0.55
-// No halo filter: a drop_shadow on the motes piece made the client skip every other image on the fullscreen plane
-// (glints, flora halos). The light_32 sprite is already soft-edged.
-#define SUMIARI_MOTES_COLOR "#e4ecff"
-// Motes drift between these two tints (silver-blue and lilac).
-#define SUMIARI_MOTES_COLOR_B "#c9b4ff"
-#define SUMIARI_MOTES_LAYER 1
 // 5) Moon-cast shadows: the moon matrix adds a cool indigo that is strongest on black and gone at white
 //    (k * indigo * (1 - luma)). Only a trace of red (blue >> green > red): a larger red share on top of the cool
 //    sheen turned dim brown brick pink.
@@ -221,20 +181,11 @@
 #define SUMIARI_GLINT_RESCAN 5
 #define SUMIARI_GLINT_SPOT_MAX 40
 #define SUMIARI_GLINT_LAYER 2
-// Glints, halos and motes draw on the fullscreen plane, under every fullscreen overlay (flash is layer 23) and
-// under the HUD. On the relay plane they came out dimmed and tinted by the composite above them.
+// Glints and halos draw on the fullscreen plane, under every fullscreen overlay (flash is layer 23) and
+// under the HUD. On the relay plane they came out dimmed and tinted by the composite above them. Both are client
+// images on a turf or a plant, so they move with the world. There is no screen-space night effect at all: the
+// moon look is only color on the world (the moon relay), cut by the moon mask.
 #define SUMIARI_BEAUTY_PLANE FULLSCREEN_PLANE
-// Extra: moonwash. A broad silver-lilac light added over the moon layer from one side of the sky (BLEND_ADD,
-// premultiplied into the icon), so the moonlit scene has a luminous direction instead of an even dim.
-#define SUMIARI_NIGHT_MOONWASH 0
-#define SUMIARI_MOONWASH_COLOR "#b4a8ff"
-#define SUMIARI_MOONWASH_ALPHA 0.18
-#define SUMIARI_MOONWASH_X 0.25
-#define SUMIARI_MOONWASH_Y 0.85
-#define SUMIARI_MOONWASH_REACH 1.1
-// Extra: soft moon vignette. The moon layer's edges sink slightly toward night blue, so the eye rests on the middle.
-#define SUMIARI_NIGHT_VIGNETTE 0
-#define SUMIARI_NIGHT_VIGNETTE_ALPHA 0.40
 // Moon fade: the whole moon look fades in across the dusk step and out across the first half hour of dawn,
 // next to the sky's own color fade, instead of snapping at 16:00 and 8:00 station time. Station time.
 // Feather on the moon mask's open-sky edge, in pixels (a blur on the sky copy): no hard line at a ledge or roof.
@@ -243,7 +194,7 @@
 #define SUMIARI_MOON_FADE_IN_END (16 HOURS)
 #define SUMIARI_MOON_FADE_OUT_START (8 HOURS)
 #define SUMIARI_MOON_FADE_OUT_END (8.5 HOURS)
-// While a fade runs, the moon relay, motes, glints and halos are animated toward the next sample every tick.
+// While a fade runs, the moon mask and the halos are animated toward the next sample every tick.
 // Real time. Only ticks inside a fade window.
 #define SUMIARI_MOON_FADE_TICK (2 SECONDS)
 // How often the client-image features (1 and 6) refresh.
@@ -831,9 +782,6 @@ var/global/turf/sumiari_test_dark_turf
 		if(moon)
 			moon.alpha = 0
 			moon.filters = null
-		var/atom/movable/screen/sumiari_motes/hidden_motes = sumiari_find_piece(src, "sumiari motes")
-		if(hidden_motes)
-			hidden_motes.alpha = 0
 		return
 	if(ink)
 		var/list/ink_filters = world_stack_filters()
@@ -849,17 +797,12 @@ var/global/turf/sumiari_test_dark_turf
 		sun.alpha = 255
 	if(moon)
 		var/list/moon_filters = moon_stack_filters()
-		moon_filters += sumiari_moon_beauty_filters()
 		moon_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON))
 		moon.filters = moon_filters
 		moon.alpha = 255
-		sumiari_breathe_moon(moon)
-	var/atom/movable/screen/sumiari_motes/motes = sumiari_find_piece(src, "sumiari motes")
-	if(motes)
-		motes.alpha = (wash_mode == SUMIARI_WASH_LIVE && sumiari_night_beauty_enabled) ? 255 : 0
 
 // Fades the moon look to a moon fade value over time_ds (0 snaps). The fade rides the moon plate's last color step
-// (the mask every moon effect is cut by: vivid color, sheen, blooms, moonwash, vignette, shadows, motes and the
+// (the mask every moon effect is cut by: vivid color, sheen, shadows and the
 // non-fire spares), plus the alpha of the flora halos, which sit outside the plate. Glints take the fade when made.
 /obj/item/organ/eyes/sumiari/proc/apply_moon_fade(fade, time_ds)
 	if(!vision_on || wash_mode != SUMIARI_WASH_LIVE)
@@ -909,11 +852,6 @@ var/global/turf/sumiari_test_dark_turf
 	moon.alpha = 0
 	moon.blockscharging = FALSE
 	screen_pieces += moon
-#if SUMIARI_NIGHT_MOTES
-	var/atom/movable/screen/sumiari_motes/motes = new
-	motes.filters = list(filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON)))
-	screen_pieces += motes
-#endif
 #endif
 #if SUMIARI_INK_VIGNETTE
 	var/atom/movable/screen/sumiari_vignette/vignette = new
@@ -3433,8 +3371,8 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 
 
 // ---------------------------------------------------------------------------------------------
-// Night beauty. See SUMIARI_NIGHT_* at the top. Filters ride the moon relay (masked to open moonlit sky with no
-// lamp), the motes are one masked particle piece, and glints and night-bloom halos are client images that only
+// Night beauty. See SUMIARI_NIGHT_* at the top. The moon shadows ride the moon relay's color (masked to open
+// moonlit sky with no lamp); glints and night-bloom halos are client images on their turf or plant that only
 // the owner's client holds. None of it runs by day, and none of it touches another viewer.
 
 // Runtime switch for every night-beauty feature at once (the defines pick which exist). An admin can flip it
@@ -3443,133 +3381,6 @@ var/global/sumiari_night_beauty_enabled = TRUE
 
 /proc/sumiari_is_moon_night()
 	return sumiari_moon_strength() > 0
-
-// Bloom filters on the moon relay, between its color matrix and its moon mask.
-/proc/sumiari_moon_beauty_filters()
-	. = list()
-	if(!sumiari_night_beauty_enabled)
-		return
-#if SUMIARI_NIGHT_GLOW
-	. += filter(type = "bloom", threshold = SUMIARI_GLOW_THRESHOLD, size = SUMIARI_GLOW_SIZE, offset = 0, alpha = SUMIARI_GLOW_ALPHA)
-#endif
-#if SUMIARI_NIGHT_PLANT_GLOW
-	. += filter(type = "bloom", threshold = SUMIARI_PLANT_GLOW_THRESHOLD, size = SUMIARI_PLANT_GLOW_SIZE, offset = 0, alpha = SUMIARI_PLANT_GLOW_ALPHA)
-#endif
-#if SUMIARI_NIGHT_BLOOM
-	. += filter(type = "bloom", threshold = SUMIARI_BLOOM_THRESHOLD, size = SUMIARI_BLOOM_SIZE, offset = SUMIARI_BLOOM_OFFSET, alpha = SUMIARI_BLOOM_ALPHA)
-#endif
-#if SUMIARI_NIGHT_MOONWASH
-	. += filter(type = "layer", icon = sumiari_night_moonwash_icon(), blend_mode = BLEND_ADD)
-#endif
-#if SUMIARI_NIGHT_VIGNETTE
-	. += filter(type = "layer", icon = sumiari_night_vignette_icon(), blend_mode = BLEND_OVERLAY)
-#endif
-
-// Slow breathing on the bloom filters. Client-side animation: no server tick.
-/proc/sumiari_breathe_moon(atom/movable/screen/sumiari_relay/moon)
-#if SUMIARI_NIGHT_BREATH
-	if(!moon || !length(moon.filters))
-		return
-	for(var/index in 1 to length(moon.filters))
-		var/sample = moon.filters[index]
-		if(sumiari_filter_kind(sample) != "bloom")
-			continue
-		var/peak = sample:alpha
-		var/low = SUMIARI_BREATH_LOW
-#if SUMIARI_NIGHT_GLOW
-		if(sample:size == SUMIARI_GLOW_SIZE)
-			low = SUMIARI_GLOW_BREATH_LOW
-#endif
-		animate(moon.filters[index], alpha = round(peak * low), time = SUMIARI_BREATH_PERIOD / 2, loop = -1, easing = SINE_EASING)
-		animate(alpha = peak, time = SUMIARI_BREATH_PERIOD / 2, easing = SINE_EASING)
-#endif
-
-// Moonwash: a wide, soft silver-lilac light added from the moon's side of the sky, strongest at MOONWASH_X/Y (a
-// fraction of the view, from the bottom left) and gone by MOONWASH_REACH of the view's width away.
-/proc/sumiari_night_moonwash_icon()
-	var/static/icon/cached
-	if(cached)
-		return cached
-	var/icon/canvas = icon('icons/mob/screen_gen.dmi', "blank")
-	var/side = 96
-	canvas.Scale(side, side)
-	canvas.MapColors(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-	var/list/tone = rgb2num(SUMIARI_MOONWASH_COLOR)
-	for(var/x in 1 to side)
-		for(var/y in 1 to side)
-			var/dist = sqrt(((x / side - SUMIARI_MOONWASH_X) ** 2) + ((y / side - SUMIARI_MOONWASH_Y) ** 2)) / SUMIARI_MOONWASH_REACH
-			if(dist >= 1)
-				continue
-			var/strength = SUMIARI_MOONWASH_ALPHA * ((1 - dist) ** 1.6)
-			canvas.DrawBox(rgb(round(tone[1] * strength), round(tone[2] * strength), round(tone[3] * strength)), x, y)
-	canvas.Scale(480, 480)
-	cached = canvas
-	return cached
-
-// Soft moon vignette: night blue at the rim, clear in the middle. Same size as the ink vignette canvas.
-/proc/sumiari_night_vignette_icon()
-	var/static/icon/cached
-	if(cached)
-		return cached
-	var/icon/canvas = icon('icons/mob/screen_gen.dmi', "blank")
-	canvas.Scale(96, 96)
-	canvas.MapColors(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-	var/side = 96
-	var/bands = 22
-	for(var/band in 1 to bands)
-		var/alpha = round(255 * SUMIARI_NIGHT_VIGNETTE_ALPHA * ((bands - band + 1) / bands) ** 2)
-		var/tone = rgb(8, 10, 30, alpha)
-		canvas.DrawBox(tone, band, band, side - band + 1, band)
-		canvas.DrawBox(tone, band, side - band + 1, side - band + 1, side - band + 1)
-		canvas.DrawBox(tone, band, band, band, side - band + 1)
-		canvas.DrawBox(tone, side - band + 1, band, side - band + 1, side - band + 1)
-	canvas.Scale(480, 480)
-	cached = canvas
-	return cached
-
-/particles/sumiari_motes
-	width = 900
-	height = 900
-	count = SUMIARI_MOTES_MAX
-	spawning = SUMIARI_MOTES_SPAWN
-	lifespan = 150
-	fadein = 40
-	fade = 60
-	color = generator("color", SUMIARI_MOTES_COLOR, SUMIARI_MOTES_COLOR_B)
-	// A soft round light (the lighting system's own 32px glow), shrunk to a few pixels.
-	icon = 'icons/effects/light_overlays/light_32.dmi'
-	icon_state = "light"
-	position = generator("box", list(-SUMIARI_MOTES_SPREAD, -SUMIARI_MOTES_SPREAD, 0), list(SUMIARI_MOTES_SPREAD, SUMIARI_MOTES_SPREAD, 0))
-	velocity = generator("box", list(-0.2, -0.05, 0), list(0.2, 0.25, 0))
-	drift = generator("sphere", 0, 0.02)
-	friction = 0.01
-	scale = generator("num", SUMIARI_MOTES_SCALE_MIN, SUMIARI_MOTES_SCALE_MAX)
-
-// The motes piece. Same anchor as the relays, so the moon mask lines up with it the same way.
-/atom/movable/screen/sumiari_motes
-	name = "sumiari motes"
-	icon = 'icons/mob/screen_gen.dmi'
-	icon_state = ""
-	screen_loc = "CENTER-2:-16,CENTER"
-	plane = SUMIARI_BEAUTY_PLANE
-	layer = SUMIARI_MOTES_LAYER
-	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
-	appearance_flags = PASS_MOUSE | KEEP_TOGETHER
-	// Not BLEND_ADD: the fullscreen plane is mostly empty, and adding onto empty pixels draws nothing.
-	blend_mode = BLEND_DEFAULT
-	blockscharging = FALSE
-
-/atom/movable/screen/sumiari_motes/Initialize(mapload)
-	. = ..()
-	sumiari_screen_live++
-	particles = new /particles/sumiari_motes
-	// The relays draw from their own center; the box above is centered on the view the same way.
-	particles.position = generator("box", list(-SUMIARI_MOTES_SPREAD + 80, -SUMIARI_MOTES_SPREAD + 16, 0), list(SUMIARI_MOTES_SPREAD + 80, SUMIARI_MOTES_SPREAD + 16, 0))
-
-/atom/movable/screen/sumiari_motes/Destroy()
-	sumiari_screen_live--
-	QDEL_NULL(particles)
-	return ..()
 
 // Night-bloom registry, by z. Plants never move, so only spawn and delete touch it.
 var/global/list/sumiari_night_flora = list()
@@ -3792,13 +3603,7 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 // Night beauty checks that do not depend on the map or the time of day.
 /proc/sumiari_sweep_beauty(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
-	var/expected = SUMIARI_NIGHT_GLOW + SUMIARI_NIGHT_PLANT_GLOW + SUMIARI_NIGHT_BLOOM + SUMIARI_NIGHT_MOONWASH + SUMIARI_NIGHT_VIGNETTE
-	var/list/beauty = sumiari_moon_beauty_filters()
-	if(length(beauty) != expected)
-		bad += "filters=[length(beauty)]/[expected]"
 	sumiari_night_beauty_enabled = FALSE
-	if(length(sumiari_moon_beauty_filters()))
-		bad += "switch off still filters"
 #if SUMIARI_NIGHT_SHADOWS
 	var/list/plain = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0, 0, 0)
 #endif
@@ -3817,18 +3622,9 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 	if(!(shadow[3] > plain[3]) || !(shadow[3] > shadow[2] && shadow[2] >= shadow[1]) || abs(white[1] - white[2]) > 0.15)
 		bad += "shadow black=[shadow[1]],[shadow[2]],[shadow[3]] white=[white[1]],[white[2]],[white[3]]"
 #endif
-#if SUMIARI_NIGHT_MOTES
-	var/atom/movable/screen/sumiari_motes/motes = sumiari_find_piece(eyes, "sumiari motes")
-	if(!motes || !motes.particles || motes.particles.count > SUMIARI_MOTES_MAX)
-		bad += "motes=[motes ? "yes" : "no"]"
-	else if(sumiari_filter_field(motes.filters, 1, "render_source") != sumiari_offscreen(SUMIARI_TARGET_MOON))
-		bad += "motes unmasked"
-	else if(length(motes.filters) != 1)
-		bad += "motes filters=[length(motes.filters)] (a halo filter hides the glints)"
-#endif
 	if(length(eyes.screen_pieces) > SUMIARI_PIECE_CAP)
 		bad += "pieces=[length(eyes.screen_pieces)]"
-	if(!sumiari_night_vignette_icon() || !("glint" in icon_states('icons/roguetown/items/misc.dmi')) || !("light" in icon_states('icons/effects/light_overlays/light_32.dmi')))
+	if(!("glint" in icon_states('icons/roguetown/items/misc.dmi')) || !("light" in icon_states('icons/effects/light_overlays/light_32.dmi')))
 		bad += "icons"
 	var/turf/spot = get_turf(eyes.owner)
 	var/obj/structure/glowshroom/shroom = new(spot)
@@ -3854,7 +3650,7 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL beauty [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST beauty PASS filters=[length(beauty)] glints=[SUMIARI_NIGHT_GLINTS] plants=[SUMIARI_NIGHT_PLANT_GLOW] bloom=[SUMIARI_NIGHT_BLOOM] motes=[SUMIARI_NIGHT_MOTES] shadows=[SUMIARI_NIGHT_SHADOWS] flora=[SUMIARI_NIGHT_FLORA] breath=[SUMIARI_NIGHT_BREATH] vignette=[SUMIARI_NIGHT_VIGNETTE] pieces=[length(eyes.screen_pieces)]")
+	log_world("SUMIARI TEST beauty PASS glints=[SUMIARI_NIGHT_GLINTS] shadows=[SUMIARI_NIGHT_SHADOWS] flora=[SUMIARI_NIGHT_FLORA] pieces=[length(eyes.screen_pieces)]")
 	return TRUE
 
 // Beauty images ride on the owner: offset each one to its anchor tile again.
