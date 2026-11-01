@@ -159,7 +159,8 @@
 // 1) Starlight glints: a tiny slow four-point twinkle on open-sky water, wet ground, or a metal item. One beauty
 //    tick samples a few random tiles in view (no full scan) and keeps at most GLINT_MAX glints alive.
 #define SUMIARI_NIGHT_GLINTS 1
-#define SUMIARI_GLINT_MAX 8
+// Calmer since the moon world itself is lit: a few at a time, smaller, softer (8 at 1.6x full white read as busy).
+#define SUMIARI_GLINT_MAX 4
 #define SUMIARI_GLINT_TRIES 8
 // Percent chance per beauty tick to start a new glint when below the cap.
 #define SUMIARI_GLINT_CHANCE 80
@@ -167,9 +168,9 @@
 // twinkle never showed: the client drew a brand-new image's first moments of animation as nothing.
 #define SUMIARI_GLINT_LIFE (6 SECONDS)
 #define SUMIARI_GLINT_CYCLE (2 SECONDS)
-#define SUMIARI_GLINT_SCALE 1.6
+#define SUMIARI_GLINT_SCALE 1.15
 // Between twinkles a glint only dims to this alpha and this scale, so it never vanishes and stays easy to spot.
-#define SUMIARI_GLINT_LOW_ALPHA 50
+#define SUMIARI_GLINT_LOW_ALPHA 30
 #define SUMIARI_GLINT_LOW_SCALE 1
 // The game glint is a 3-7px cross, too small to read at full-frame zoom, so a soft moonlit core (the light_32 lamp
 // sprite, scaled down and tinted) sits under it and swells with it. It is the twinkle's halo.
@@ -179,7 +180,7 @@
 #define SUMIARI_GLINT_CORE_COLOR "#d4c8ff"
 #define SUMIARI_GLINT_CORE_ALPHA 230
 #define SUMIARI_GLINT_COLOR "#eef2ff"
-#define SUMIARI_GLINT_ALPHA 255
+#define SUMIARI_GLINT_ALPHA 190
 // Dew: moonlit grass (and moss) may twinkle too, not only water and metal. 0 = shiny tiles only.
 // Off while the moon-effect dew (SUMIARI_MOON_DEW) runs: that one is finer and lives on the ground.
 #define SUMIARI_GLINT_DEW (1 - SUMIARI_MOON_DEW)
@@ -329,12 +330,12 @@
 // instead of pulsing in step. Above the water overlays, under any mob in the water.
 #define SUMIARI_MOON_WATER 1
 #define SUMIARI_WATER_VARIANTS 3
-#define SUMIARI_WATER_ALPHA_LOW 70
-#define SUMIARI_WATER_ALPHA_HIGH 190
+#define SUMIARI_WATER_ALPHA_LOW 45
+#define SUMIARI_WATER_ALPHA_HIGH 120
 // Ripple cycle (deciseconds); each tile adds 0-16 more.
 #define SUMIARI_WATER_PERIOD 34
-#define SUMIARI_WATER_CORE_ALPHA 150
-#define SUMIARI_WATER_END_ALPHA 60
+#define SUMIARI_WATER_CORE_ALPHA 120
+#define SUMIARI_WATER_END_ALPHA 40
 // 2) Moon-edge highlights. A wall or cliff tile gets a soft catch-light where it meets open sky: along its north
 // side a faint outer pixel over a fainter inner one, and on a west or east side only a short sliver at the top that
 // fades out downward (a full-height side line read as a flat pale band beside the rock); trees, rocks, big mushrooms and bushes on open sky get a
