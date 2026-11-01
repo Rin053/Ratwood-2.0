@@ -336,6 +336,14 @@
 #define SUMIARI_WATER_PERIOD 34
 #define SUMIARI_WATER_CORE_ALPHA 120
 #define SUMIARI_WATER_END_ALPHA 40
+// 1b) Wet shore. The moon grade turns dull browns and dark grass a soft violet-gray while it deepens water's blue,
+// so a shoreline read as a ruled line between gray land and vivid water. A water tile on open sky gets a feather of
+// dark slate on each side that meets open land: SHORE_ALPHA at the bank, gone SHORE_DEPTH pixels into the water
+// (squared falloff). It tones the water's chroma down toward the bank's, so the two meet softly, like wet margin.
+#define SUMIARI_MOON_SHORE 1
+#define SUMIARI_SHORE_ALPHA 150
+#define SUMIARI_SHORE_DEPTH 14
+#define SUMIARI_SHORE_TONE "#2c2a32"
 // 2) Moon-edge highlights. A wall or cliff tile gets a soft catch-light where it meets open sky: along its north
 // side a faint outer pixel over a fainter inner one, and on a west or east side only a short sliver at the top that
 // fades out downward (a full-height side line read as a flat pale band beside the rock); trees, rocks, big mushrooms and bushes on open sky get a
@@ -4766,6 +4774,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 // Moon effects. See SUMIARI_MOON_FX at the top.
 
 var/global/sumiari_moon_water_enabled = TRUE
+var/global/sumiari_moon_shore_enabled = TRUE
 var/global/sumiari_moon_rims_enabled = TRUE
 var/global/sumiari_moon_dew_enabled = TRUE
 var/global/sumiari_moon_bloom_enabled = TRUE
@@ -5096,6 +5105,49 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	var/key = "w[T.x],[T.y]"
 	if(fx_want(key, "1", wanted))
 		fx_put(key, "1", sumiari_water_image(T))
+#if SUMIARI_MOON_SHORE
+	if(!sumiari_moon_shore_enabled)
+		return
+	var/sides = 0
+	for(var/side in GLOB.cardinals)
+		var/turf/bank = get_step(T, side)
+		if(bank && isopenturf(bank) && !istype(bank, /turf/open/water) && sumiari_spare_turf_open(bank))
+			sides |= side
+	if(!sides)
+		return
+	key = "o[T.x],[T.y]"
+	if(fx_want(key, "[sides]", wanted))
+		var/image/shore = sumiari_fx_style(image(sumiari_shore_icon(sides), T), SUMIARI_FX_GAME_PLANE)
+		fx_put(key, "[sides]", sumiari_fx_fade_in(shore, sumiari_fx_alpha(255)))
+#endif
+
+#if SUMIARI_MOON_SHORE
+// The shore feather for a set of bank sides: per pixel the strongest of the sides' falloffs, so corners blend.
+/proc/sumiari_shore_icon(sides)
+	var/static/list/made = list()
+	if(made["[sides]"])
+		return made["[sides]"]
+	var/icon/shore = sumiari_blank_icon()
+	var/list/tone = rgb2num(SUMIARI_SHORE_TONE)
+	for(var/px in 1 to 32)
+		for(var/py in 1 to 32)
+			var/near = SUMIARI_SHORE_DEPTH
+			if(sides & NORTH)
+				near = min(near, 32 - py)
+			if(sides & SOUTH)
+				near = min(near, py - 1)
+			if(sides & EAST)
+				near = min(near, 32 - px)
+			if(sides & WEST)
+				near = min(near, px - 1)
+			if(near >= SUMIARI_SHORE_DEPTH)
+				continue
+			var/a = round(SUMIARI_SHORE_ALPHA * (1 - near / SUMIARI_SHORE_DEPTH) ** 2)
+			if(a > 0)
+				shore.DrawBox(rgb(tone[1], tone[2], tone[3], a), px, py)
+	made["[sides]"] = shore
+	return shore
+#endif
 
 /proc/sumiari_water_image(turf/T)
 	var/variant = ((T.x * 7 + T.y * 13) % SUMIARI_WATER_VARIANTS) + 1
