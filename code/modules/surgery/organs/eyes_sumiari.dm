@@ -3665,6 +3665,13 @@ var/global/sumiari_run_headless_test = FALSE
 		log_world("SUMIARI TEST FAIL moon lamp hand-off relay=[lamp ? "[lamp.layer]/[lamp.blend_mode]/[length(lamp.filters)]" : "none"]")
 		return FALSE
 #endif
+	// The violet glow is part of the redrawn world: same plane as the cone's dark wedge and under it, so the wedge's
+	// soft graded edge darkens glow and ground by the same factor (nothing cone-shaped is drawn over the wedge).
+	var/atom/movable/screen/sumiari_relay/glow = sumiari_find_piece(eyes, "sumiari glow")
+	var/atom/movable/screen/wedge = eyes.owner?.hud_used?.fov
+	if(!glow || glow.plane != SUMIARI_RELAY_PLANE || glow.layer >= SUMIARI_CONE_LAYER || (wedge && eyes.vision_on && (wedge.plane != glow.plane || wedge.layer != SUMIARI_CONE_LAYER)))
+		log_world("SUMIARI TEST FAIL moon glow under the cone wedge glow=[glow ? "[glow.plane]/[glow.layer]" : "none"] wedge=[wedge ? "[wedge.plane]/[wedge.layer]" : "none"]")
+		return FALSE
 #else
 	if(moon.plane != SUMIARI_RELAY_PLANE || moon.plane >= HUD_PLANE || moon.layer <= SUMIARI_RELAY_LAYER_BASE)
 		log_world("SUMIARI TEST FAIL moon relay plane=[moon.plane] layer=[moon.layer]")
@@ -4267,6 +4274,9 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	if(QDELETED(src) || !vision_on)
 		stop_night_beauty()
 		return
+	// Keep the cone's wedge over the relays (and so over the violet glow) even if the HUD was rebuilt since the
+	// pieces were presented: a wedge left at HUD_LAYER sits under the redrawn world and the glow shows through.
+	sumiari_cone_over_relays(owner, TRUE)
 	spare_tick()
 	cliff_tick()
 	fx_tick()
