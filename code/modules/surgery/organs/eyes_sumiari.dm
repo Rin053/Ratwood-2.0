@@ -383,6 +383,20 @@
 // A tile whose darkest corner is under this draws nothing.
 #define SUMIARI_SHADE_MIN 0.03
 
+// 6) Swaying, shimmering plants: grass, bushes, herbs and flowers on open sky sway gently, each on its own random
+// period, depth and lean, and now and then a soft silver shimmer runs over them. The sway is a per-client override of
+// the plant's own look (the real plant does not move for anyone else), pivoting at its base by at most SWAY_SKEW of
+// its height (about a pixel and a half at the tip), only where no lamp or fire reaches the tile. The shimmer is a
+// silver-lilac copy on the effect plane that sways in step, breathing with the moon and flaring every SHIMMER_GAP or so.
+#define SUMIARI_MOON_SWAY 1
+#define SUMIARI_SWAY_MAX 110
+#define SUMIARI_SWAY_SKEW 0.045
+#define SUMIARI_SWAY_PERIOD 34
+#define SUMIARI_SWAY_SHIMMER_LOW 14
+#define SUMIARI_SWAY_SHIMMER_HIGH 80
+#define SUMIARI_SWAY_SHIMMER_GAP 70
+// A tile whose lamp light (static corners plus movable lights, no sun) is above this counts as lit by a lamp or fire.
+#define SUMIARI_FX_LAMP_LIT 0.08
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -574,6 +588,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	// Dew: grass tiles found by the last scan, and the live sparkles (image -> expiry).
 	var/list/fx_dew_spots
 	var/list/fx_dew_images
+	// Sway: how many plants this scan has swaying (capped at SWAY_MAX).
+	var/fx_sway_count = 0
 	// Bloom: how open the night flowers are drawn right now (null until the first scan).
 	var/fx_bloom
 	var/beauty_timer
@@ -4449,6 +4465,7 @@ var/global/sumiari_moon_bloom_enabled = TRUE
 var/global/sumiari_moon_shade_enabled = TRUE
 var/global/sumiari_moon_intensity = SUMIARI_MOON_INTENSITY
 var/global/sumiari_moon_pulse = SUMIARI_MOON_PULSE
+var/global/sumiari_moon_sway_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4622,6 +4639,7 @@ var/global/sumiari_moon_pulse = SUMIARI_MOON_PULSE
 	// Shade: turf -> TRUE/FALSE, whether it blocks the moon, filled as the shade asks.
 	var/list/blockers = list()
 	fx_dew_spots = null
+	fx_scan_counters_reset()
 	if(isnull(fx_bloom))
 		fx_bloom = sumiari_bloom_level()
 	var/turf/low = locate(max(center.x - SUMIARI_FX_RANGE, 1), max(center.y - SUMIARI_FX_RANGE, 1), center.z)
@@ -4647,9 +4665,17 @@ var/global/sumiari_moon_pulse = SUMIARI_MOON_PULSE
 		if(sumiari_moon_shade_enabled)
 			fx_shade(T, wanted, blockers)
 #endif
+#if SUMIARI_MOON_SWAY
+		if(sumiari_moon_sway_enabled)
+			fx_sway(T, wanted)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
+
+// Per-scan caps start again from zero.
+/obj/item/organ/eyes/sumiari/proc/fx_scan_counters_reset()
+	fx_sway_count = 0
 
 // Effects that change between scans. Each effect adds its own part here.
 /obj/item/organ/eyes/sumiari/proc/fx_live(turf/center)
@@ -4955,6 +4981,87 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 	return list(0, 0, 0, sw * strength, 0, 0, 0, se * strength, 0, 0, 0, nw * strength, 0, 0, 0, ne * strength, rgb[1] / 255, rgb[2] / 255, rgb[3] / 255, 0)
 
 // Moon effect checks that do not depend on the map or the time of day.
+// A tile some lamp, fire or movable light reaches (reads vanilla lighting only; the sun and moon do not count).
+/proc/sumiari_fx_lamp_lit(turf/T)
+	if(!T)
+		return FALSE
+	var/total = T.dynamic_lumcount
+	for(var/datum/lighting_corner/corner as anything in T.corners)
+		if(corner)
+			total += (corner.lum_r + corner.lum_g + corner.lum_b) / 12
+	return total > SUMIARI_FX_LAMP_LIT
+
+// 6) Swaying, shimmering plants.
+GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
+	/obj/structure/flora/roguegrass,
+	/obj/structure/flora/grass,
+	/obj/structure/flora/bush,
+	/obj/structure/flora/ausbushes,
+	/obj/structure/flora/junglebush,
+	/obj/structure/flower_sprout,
+)))
+
+/obj/item/organ/eyes/sumiari/proc/fx_sway(turf/T, list/wanted)
+	if(isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_fx_lamp_lit(T))
+		return
+	for(var/obj/plant in T)
+		if(fx_sway_count >= SUMIARI_SWAY_MAX)
+			return
+		if(!is_type_in_typecache(plant, GLOB.sumiari_sway_types) || plant.invisibility || !plant.icon_state)
+			continue
+		fx_sway_count++
+		var/key = "s[REF(plant)]"
+		var/state = "[plant.icon]|[plant.icon_state]|[plant.dir]|[plant.plane]|[plant.layer]|[plant.color]"
+		if(fx_want(key, state, wanted))
+			var/list/pair = sumiari_sway_images(plant)
+			fx_put(key, state, pair[1])
+			fx_put("[key]g", state, pair[2])
+		else
+			wanted["[key]g"] = TRUE
+
+// The base-pivoted lean: x shifts by skew * (y + 16), so the bottom row stays put.
+/proc/sumiari_sway_matrix(skew)
+	return matrix(1, skew, skew * 16, 0, 1, 0)
+
+// Moon silver-lilac: the sprite's luma times the lilac tone (alpha kept).
+/proc/sumiari_sway_shimmer_matrix()
+	var/list/tone = rgb2num(SUMIARI_TONE_LILAC)
+	var/list/look = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
+	for(var/input in 1 to 3)
+		for(var/output in 1 to 3)
+			look[(input - 1) * 4 + output] = luma[input] * 1.6 * tone[output] / 255
+	return look
+
+// list(override, shimmer): the plant swaying for this viewer only, and its silver shimmer swaying with it.
+/proc/sumiari_sway_images(obj/plant)
+	var/turf/T = get_turf(plant)
+	var/image/swayed = image(loc = plant)
+	swayed.appearance = plant.appearance
+	swayed.override = TRUE
+	swayed.loc = plant
+	var/image/shimmer = image(plant.icon, plant, plant.icon_state)
+	shimmer.dir = plant.dir
+	sumiari_fx_style(shimmer, sumiari_fx_plane_near(plant.plane))
+	shimmer.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
+	shimmer.color = sumiari_sway_shimmer_matrix()
+	var/period = SUMIARI_SWAY_PERIOD + rand(0, 26)
+	var/skew = SUMIARI_SWAY_SKEW * rand(60, 130) / 100
+	var/lean = pick(-1, 1)
+	var/start = rand(0, period)
+	var/matrix/base = plant.transform ? matrix(plant.transform) : matrix()
+	for(var/image/picture in list(swayed, shimmer))
+		picture.transform = base
+		animate(picture, transform = base * sumiari_sway_matrix(skew * lean), time = period / 2, delay = start, loop = -1, easing = SINE_EASING)
+		animate(transform = base * sumiari_sway_matrix(-skew * lean * 0.6), time = period / 2, easing = SINE_EASING)
+	var/gap = SUMIARI_SWAY_SHIMMER_GAP + rand(0, 90)
+	shimmer.alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_LOW)
+	animate(shimmer, alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_LOW), time = gap, delay = rand(0, gap), loop = -1, flags = ANIMATION_PARALLEL)
+	animate(alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_HIGH), time = 9, easing = SINE_EASING)
+	animate(alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_LOW), time = 15, easing = SINE_EASING)
+	sumiari_fx_breathe(shimmer, T, SUMIARI_PULSE_DEPTH, 6)
+	return list(swayed, shimmer)
+
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
 #if SUMIARI_MOON_FX
@@ -5044,9 +5151,19 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 	var/list/faded = sumiari_fx_fade_matrix(null, 0.5)
 	if(faded[16] != 0.5 || faded[1] != 1)
 		bad += "pulse fade matrix"
+#if SUMIARI_MOON_SWAY
+	var/obj/structure/flora/roguegrass/tuft = new(spot)
+	var/list/sway_pair = sumiari_sway_images(tuft)
+	var/image/swayed = sway_pair[1]
+	var/image/sway_glow = sway_pair[2]
+	var/matrix/lean = sumiari_sway_matrix(0.05)
+	if(!swayed.override || swayed.loc != tuft || sway_glow.plane != sumiari_fx_plane_near(tuft.plane) || abs(lean.c - 0.8) > 0.001 || length(sway_glow.color) != 20)
+		bad += "sway"
+	qdel(tuft)
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY]")
 	return TRUE
