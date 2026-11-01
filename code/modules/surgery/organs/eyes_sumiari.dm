@@ -412,8 +412,11 @@
 #define SUMIARI_SWAY_SHIMMER_LOW 14
 #define SUMIARI_SWAY_SHIMMER_HIGH 80
 #define SUMIARI_SWAY_SHIMMER_GAP 70
-// A tile whose lamp light (static corners plus movable lights, no sun) is above this counts as lit by a lamp or fire.
-#define SUMIARI_FX_LAMP_LIT 0.08
+// Lamp light on a tile (static corners plus movable lights, no sun). Firebowls reach a dozen tiles, and their faint
+// tail (under LAMP_LIT) still shows the full moon look, so effects stay there. From LAMP_LIT to LAMP_FULL the effects
+// thin out tile by tile in a fixed dither (a soft edge that does not flicker); past LAMP_FULL the tile is fire-lit.
+#define SUMIARI_FX_LAMP_LIT 0.15
+#define SUMIARI_FX_LAMP_FULL 0.4
 // 7) Moonlit mist: a few faint, low, thin streaks of silver-lilac mist lying on open-sky marsh, river and pond water
 // (not baths, sewers, blood pools or the sea), and on grass or snow hemmed in by that water on two sides. A misty
 // tile may carry one wisp: two or three thin horizontal ribbons, each a few pixels tall and fading out along its length,
@@ -5479,7 +5482,11 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 	for(var/datum/lighting_corner/corner as anything in T.corners)
 		if(corner)
 			total += (corner.lum_r + corner.lum_g + corner.lum_b) / 12
-	return total > SUMIARI_FX_LAMP_LIT
+	if(total <= SUMIARI_FX_LAMP_LIT)
+		return FALSE
+	if(total >= SUMIARI_FX_LAMP_FULL)
+		return TRUE
+	return ((T.x * 73 + T.y * 151) % 97) / 97 < (total - SUMIARI_FX_LAMP_LIT) / (SUMIARI_FX_LAMP_FULL - SUMIARI_FX_LAMP_LIT)
 
 // 6) Swaying, shimmering plants.
 GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
