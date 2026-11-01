@@ -320,6 +320,18 @@
 // Least change in the bloom (0..1) worth re-animating the plants for, and how long that easing takes.
 #define SUMIARI_BLOOM_STEP 0.02
 #define SUMIARI_BLOOM_EASE (2 SECONDS)
+// 5) Soft moon shadows: open ground beside a wall, cliff, tree or rock takes a gentle deep blue-violet shade. Each
+// lighting-grid corner of a tile gets a shade from the four tiles that meet there: mostly from the two on its north
+// side (the moon stands to the north, so shade falls south of what blocks it), a little from any of the four (soft
+// contact shade). The tile is drawn with the vanilla lighting gradient, tinted by those four corners, the same way
+// the sky light is drawn, so the shade is smooth across tiles and fades out within about a tile, with no edges.
+#define SUMIARI_MOON_SHADE 1
+#define SUMIARI_SHADE_NORTH 0.85
+#define SUMIARI_SHADE_CONTACT 0.25
+#define SUMIARI_SHADE_ALPHA 0.5
+#define SUMIARI_SHADE_COLOR "#1c1838"
+// A tile whose darkest corner is under this draws nothing.
+#define SUMIARI_SHADE_MIN 0.03
 
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
@@ -4206,6 +4218,7 @@ var/global/sumiari_moon_water_enabled = TRUE
 var/global/sumiari_moon_rims_enabled = TRUE
 var/global/sumiari_moon_dew_enabled = TRUE
 var/global/sumiari_moon_bloom_enabled = TRUE
+var/global/sumiari_moon_shade_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4329,6 +4342,8 @@ var/global/sumiari_moon_bloom_enabled = TRUE
 
 /obj/item/organ/eyes/sumiari/proc/fx_scan(turf/center)
 	var/list/wanted = list()
+	// Shade: turf -> TRUE/FALSE, whether it blocks the moon, filled as the shade asks.
+	var/list/blockers = list()
 	fx_dew_spots = null
 	if(isnull(fx_bloom))
 		fx_bloom = sumiari_bloom_level()
@@ -4350,6 +4365,10 @@ var/global/sumiari_moon_bloom_enabled = TRUE
 #if SUMIARI_MOON_BLOOM
 		if(sumiari_moon_bloom_enabled)
 			fx_blooms(T, wanted)
+#endif
+#if SUMIARI_MOON_SHADE
+		if(sumiari_moon_shade_enabled)
+			fx_shade(T, wanted, blockers)
 #endif
 	for(var/key in fx_images)
 		if(!wanted[key])
@@ -4593,6 +4612,61 @@ GLOBAL_LIST_INIT(sumiari_bloom_types, typecacheof(list(
 		if(copytext(key, 1, 2) == "b")
 			animate(fx_images[key], alpha = target, time = SUMIARI_BLOOM_EASE)
 
+// 5) Soft moon shadows.
+GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
+	/obj/structure/flora/roguetree,
+	/obj/structure/roguerock,
+	/obj/structure/flora/rogueshroom,
+)))
+
+// A tile that blocks the moon: a wall or cliff, or a tree, rock or big mushroom. Cached per scan in blockers.
+/proc/sumiari_shade_blocks(turf/T, list/blockers)
+	if(!T)
+		return FALSE
+	if(!isnull(blockers[T]))
+		return blockers[T]
+	var/blocks = isclosedturf(T)
+	if(!blocks)
+		for(var/obj/thing in T)
+			if(is_type_in_typecache(thing, GLOB.sumiari_shade_types))
+				blocks = TRUE
+				break
+	blockers[T] = blocks
+	return blocks
+
+// Shade at the grid corner between tiles (x - 1, x) and (y - 1, y): north pair weighted, all four for contact.
+/proc/sumiari_shade_corner(x, y, z, list/blockers)
+	var/north_west = sumiari_shade_blocks(locate(x - 1, y, z), blockers)
+	var/north_east = sumiari_shade_blocks(locate(x, y, z), blockers)
+	var/south_west = sumiari_shade_blocks(locate(x - 1, y - 1, z), blockers)
+	var/south_east = sumiari_shade_blocks(locate(x, y - 1, z), blockers)
+	var/shade = SUMIARI_SHADE_NORTH * (north_west + north_east) / 2 + SUMIARI_SHADE_CONTACT * (north_west + north_east + south_west + south_east) / 4
+	return round(min(shade, 1), 0.05)
+
+/obj/item/organ/eyes/sumiari/proc/fx_shade(turf/T, list/wanted, list/blockers)
+	if(sumiari_shade_blocks(T, blockers) || !sumiari_spare_turf_open(T))
+		return
+	// Tile (x, y) has corners SW (x, y), SE (x + 1, y), NW (x, y + 1), NE (x + 1, y + 1) on that grid.
+	var/sw = sumiari_shade_corner(T.x, T.y, T.z, blockers)
+	var/se = sumiari_shade_corner(T.x + 1, T.y, T.z, blockers)
+	var/nw = sumiari_shade_corner(T.x, T.y + 1, T.z, blockers)
+	var/ne = sumiari_shade_corner(T.x + 1, T.y + 1, T.z, blockers)
+	if(max(sw, se, nw, ne) < SUMIARI_SHADE_MIN)
+		return
+	var/key = "s[T.x],[T.y]"
+	var/state = "[sw]|[se]|[nw]|[ne]"
+	if(fx_want(key, state, wanted))
+		var/image/shade = sumiari_fx_style(image(LIGHTING_ICON, T, ""), SUMIARI_FX_FLOOR_PLANE)
+		shade.color = sumiari_shade_matrix(sw, se, nw, ne)
+		fx_put(key, state, shade)
+
+// The lighting gradient's channels weigh its corners: red SW, green SE, blue NW, alpha NE (as the sky light reads
+// them). Out: the shade color, alpha the corner-weighted shade.
+/proc/sumiari_shade_matrix(sw, se, nw, ne)
+	var/list/rgb = rgb2num(SUMIARI_SHADE_COLOR)
+	var/strength = SUMIARI_SHADE_ALPHA
+	return list(0, 0, 0, sw * strength, 0, 0, 0, se * strength, 0, 0, 0, nw * strength, 0, 0, 0, ne * strength, rgb[1] / 255, rgb[2] / 255, rgb[3] / 255, 0)
+
 // Moon effect checks that do not depend on the map or the time of day.
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
@@ -4652,9 +4726,31 @@ GLOBAL_LIST_INIT(sumiari_bloom_types, typecacheof(list(
 		bad += "bloom image alpha=[bloom.alpha] plane=[bloom.plane]"
 	qdel(shroom)
 #endif
+#if SUMIARI_MOON_SHADE
+	// A wall row to the north shades a tile's north corners strongly and its south corners not at all.
+	var/list/fake = list()
+	var/turf/probe = locate(50, 50, spot.z)
+	if(probe)
+		fake[locate(49, 51, spot.z)] = TRUE
+		fake[locate(50, 51, spot.z)] = TRUE
+		fake[locate(51, 51, spot.z)] = TRUE
+		for(var/dx in -1 to 1)
+			for(var/dy in -1 to 0)
+				fake[locate(50 + dx, 50 + dy, spot.z)] = FALSE
+		fake[locate(49, 49, spot.z)] = FALSE
+		fake[locate(50, 49, spot.z)] = FALSE
+		fake[locate(51, 49, spot.z)] = FALSE
+		var/north = sumiari_shade_corner(50, 51, spot.z, fake)
+		var/south = sumiari_shade_corner(50, 50, spot.z, fake)
+		if(!(north >= 0.9 && south == 0))
+			bad += "shade corners north=[north] south=[south]"
+	var/list/shade_matrix = sumiari_shade_matrix(1, 0, 0, 0)
+	if(shade_matrix[4] != SUMIARI_SHADE_ALPHA || shade_matrix[8] != 0 || shade_matrix[20] != 0)
+		bad += "shade matrix"
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE]")
 	return TRUE
