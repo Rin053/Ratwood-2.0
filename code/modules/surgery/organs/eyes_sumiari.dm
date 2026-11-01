@@ -427,7 +427,7 @@
 #define SUMIARI_MOON_BEAMS 1
 #define SUMIARI_BEAM_TREES 2
 #define SUMIARI_BEAM_MAX 14
-#define SUMIARI_BEAM_ALPHA 60
+#define SUMIARI_BEAM_ALPHA 40
 #define SUMIARI_BEAM_LEAN 0.12
 // 9) Rippling reflections: a tree, rock, post, statue, lamp post or wall standing just north of open-sky water lays a
 // soft upside-down reflection on that water tile: its sprite flipped, cut to the tile, fading toward the far edge, a
@@ -5028,7 +5028,13 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	sumiari_fx_style(rim, sumiari_fx_plane_near(thing.plane))
 	rim.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	rim.color = sumiari_solid_matrix(sumiari_fx_silver(255))
-	rim.filters = list(filter(type = "alpha", icon = sumiari_flora_cutout(thing), x = 1, y = -1, flags = MASK_INVERSE))
+	// Only edges with body behind them: the pixel two steps away from the moon must be sprite too. Without it every
+	// pixel of a dead tree's one- and two-pixel branches was an edge, and the tree wore a mesh of white scratches.
+	var/icon/cutout = sumiari_flora_cutout(thing)
+	rim.filters = list(
+		filter(type = "alpha", icon = cutout, x = 1, y = -1, flags = MASK_INVERSE),
+		filter(type = "alpha", icon = cutout, x = -2, y = 2),
+	)
 	// Breathe as a solid-color matrix: only its alpha column changes.
 	var/list/solid = rim.color
 	var/list/solid_low = solid.Copy()
