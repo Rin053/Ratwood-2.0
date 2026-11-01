@@ -794,6 +794,7 @@ var/global/turf/sumiari_test_dark_turf
 	var/atom/movable/screen/fullscreen/glow = who?.screens?["see_through_darkness"]
 	if(glow)
 		glow.alpha = initial(glow.alpha)
+	sumiari_grain_under_moon(who, 0, 0)
 
 /obj/item/organ/eyes/sumiari/proc/present_screen_pieces()
 	if(!owner)
@@ -1210,6 +1211,7 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 /obj/item/organ/eyes/sumiari/proc/apply_moon_fade(fade, time_ds)
 	if(!vision_on || wash_mode != SUMIARI_WASH_LIVE)
 		return
+	sumiari_grain_under_moon(owner, fade, time_ds)
 	var/halo_target = round(SUMIARI_FLORA_ALPHA * fade)
 	if(time_ds <= 0)
 		if(moon_plate)
@@ -1230,6 +1232,21 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	for(var/plant in flora_images)
 		var/image/halo = flora_images[plant]
 		animate(halo, alpha = halo_target, time = time_ds, flags = ANIMATION_PARALLEL)
+
+// The film grain pref (a multiply overlay, alpha 55) is invisible on a human's black night, but over the moonlit
+// world these eyes see it read as dark noise around everything. Under the moon it eases down to GRAIN_MOON_ALPHA;
+// by day and when the eyes go it is back at the pref's own value. Players with grain off are never touched.
+#define SUMIARI_GRAIN_MOON_ALPHA 12
+/proc/sumiari_grain_under_moon(mob/who, fade, time_ds)
+	var/atom/movable/screen/grain/grain = who?.hud_used?.grain
+	if(!grain || who.client?.prefs?.grain != TRUE)
+		return
+	var/target = round(55 + (SUMIARI_GRAIN_MOON_ALPHA - 55) * clamp(fade, 0, 1))
+	if(time_ds > 0)
+		animate(grain, alpha = target, time = time_ds)
+	else
+		animate(grain)
+		grain.alpha = target
 
 // Ink edge (limited to pixels the lighting plane still calls dark) and the night moon silver.
 /obj/item/organ/eyes/sumiari/proc/build_flourishes()
