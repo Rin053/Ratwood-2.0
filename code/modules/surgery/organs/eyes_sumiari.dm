@@ -315,7 +315,7 @@
 // tiles next to it, walking cardinally tile by tile through roofed floor that is not shut, up to BLEED_RANGE tiles.
 // A tile d steps in is 1 - (d - 0.5) / BLEED_RANGE at its middle (0.83, 0.5, 0.17), drawn as the same corner
 // gradient as the sky so it fades smoothly. An open door, open curtain, open or broken window lets it in; a closed
-// door, closed curtain, shutter, glass, or anything opaque stops it dead, so a shut room stays the cave look.
+// solid door, closed curtain, shutter, opaque glass, or anything opaque stops it dead (clear glass lets it in), so a shut room stays the cave look.
 // Wall faces take their corners from the same map (open sky 1, bled floor its value), not from the vanilla spread.
 #define SUMIARI_MOON_BLEED 1
 #define SUMIARI_BLEED_RANGE 3
@@ -5006,26 +5006,20 @@ var/global/sumiari_moon_spares_enabled = TRUE
 /proc/sumiari_cliff_matrix(fr, fg, fb, fa)
 	return list(fr, fr, fr, 0, fg, fg, fg, 0, fb, fb, fb, 0, fa, fa, fa, 0, 0, 0, 0, 1)
 
-// Does this tile stop moonlight passing (see SUMIARI_MOON_BLEED)? A closed turf, anything opaque (a closed door or
-// curtain sets opacity), a closed door (door_opened, even a see-through one), a closed curtain (open), a window that is
-// neither opened (climbable) nor broken (brokenstate, obj_broken), a closed shutter (density).
+// Does this tile stop moonlight passing (see SUMIARI_MOON_BLEED)? Moonlight goes wherever sight goes: a closed turf
+// or anything opaque stops it (a closed solid door, a closed shutter-window, stained or frosted glass, a closed
+// curtain all set opacity), while see-through glass (a closed clear window, a glass door) lets it in like an open
+// opening. Two belts and braces: a closed curtain (open FALSE) and a closed shutter (density) block even if their
+// opacity was left off.
 /proc/sumiari_moon_shut(turf/T)
 	if(!T || isclosedturf(T) || T.opacity)
 		return TRUE
 	for(var/atom/movable/thing as anything in T)
 		if(thing.opacity)
 			return TRUE
-		if(istype(thing, /obj/structure/mineral_door))
-			var/obj/structure/mineral_door/door = thing
-			if(!door.door_opened)
-				return TRUE
-		else if(istype(thing, /obj/structure/curtain))
+		if(istype(thing, /obj/structure/curtain))
 			var/obj/structure/curtain/curtain = thing
 			if(!curtain.open)
-				return TRUE
-		else if(istype(thing, /obj/structure/roguewindow))
-			var/obj/structure/roguewindow/window = thing
-			if(!window.brokenstate && !window.obj_broken && !window.climbable)
 				return TRUE
 		else if(istype(thing, /obj/structure/bars/passage/shutter))
 			if(thing.density)
@@ -5159,20 +5153,38 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	test_curtain.open = FALSE
 	var/curtain_closed = sumiari_moon_shut(opening_spot)
 	qdel(test_curtain)
+	// A closed solid door (opaque) blocks; a closed see-through (glass) door lets it in, as does an open one.
 	var/obj/structure/mineral_door/test_door = new(opening_spot)
 	test_door.door_opened = FALSE
-	test_door.set_opacity(FALSE)
+	test_door.set_opacity(TRUE)
 	var/door_closed = sumiari_moon_shut(opening_spot)
+	test_door.set_opacity(FALSE)
+	var/door_glass = sumiari_moon_shut(opening_spot)
 	test_door.door_opened = TRUE
 	var/door_open = sumiari_moon_shut(opening_spot)
 	qdel(test_door)
+	// A closed clear glass window lets it in; a closed opaque one (shutter-window, stained glass) blocks.
 	var/obj/structure/roguewindow/test_window = new(opening_spot)
-	var/window_closed = sumiari_moon_shut(opening_spot)
-	test_window.climbable = TRUE
-	var/window_open = sumiari_moon_shut(opening_spot)
+	var/window_clear = sumiari_moon_shut(opening_spot)
 	qdel(test_window)
-	if(shut_before || curtain_open || !curtain_closed || !door_closed || door_open || !window_closed || window_open)
-		bad += "openings before=[shut_before] curtain=[curtain_open]/[curtain_closed] door=[door_open]/[door_closed] window=[window_open]/[window_closed]"
+	var/obj/structure/roguewindow/stained/silver/test_stained = new(opening_spot)
+	var/window_stained = sumiari_moon_shut(opening_spot)
+	qdel(test_stained)
+	var/obj/structure/roguewindow/openclose/test_shutter = new(opening_spot)
+	var/window_closed = sumiari_moon_shut(opening_spot)
+	test_shutter.set_opacity(FALSE)
+	test_shutter.climbable = TRUE
+	var/window_open = sumiari_moon_shut(opening_spot)
+	qdel(test_shutter)
+	// A closed curtain over a clear window still blocks.
+	var/obj/structure/roguewindow/curtained_window = new(opening_spot)
+	var/obj/structure/curtain/window_curtain = new(opening_spot)
+	window_curtain.open = FALSE
+	var/window_curtained = sumiari_moon_shut(opening_spot)
+	qdel(window_curtain)
+	qdel(curtained_window)
+	if(shut_before || curtain_open || !curtain_closed || !door_closed || door_glass || door_open || window_clear || !window_stained || !window_closed || window_open || !window_curtained)
+		bad += "openings before=[shut_before] curtain=[curtain_open]/[curtain_closed] door=[door_open]/[door_glass]/[door_closed] window clear=[window_clear] stained=[window_stained] shutter=[window_open]/[window_closed] curtained=[window_curtained]"
 #endif
 	var/atom/movable/screen/sumiari_sampler/mask = null
 	for(var/atom/movable/screen/sumiari_sampler/sampler in eyes.screen_pieces)
