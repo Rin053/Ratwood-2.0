@@ -5442,6 +5442,10 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/list/spill_matrix = spill_cut.color
 	if(spill_cut.plane != SUNLIGHTING_PLANE || spill_cut.layer <= TURF_LAYER || spill_cut.blend_mode != BLEND_OVERLAY || !islist(spill_matrix) || spill_matrix[1] != 1 || spill_matrix[5] != 0 || spill_matrix[9] != 0.5 || spill_matrix[20] != 1)
 		bad += "spill image plane=[spill_cut.plane] layer=[spill_cut.layer]"
+	// Frost stays on grass tufts but never on bushes or hedge walls (no dashed line on a hedge's top edge).
+	if(!GLOB.sumiari_frost_skip[/obj/structure/flora/roguegrass/bush/wall] || !GLOB.sumiari_frost_skip[/obj/structure/flora/roguegrass/bush] \
+		|| GLOB.sumiari_frost_skip[/obj/structure/flora/roguegrass] || !GLOB.sumiari_frost_types[/obj/structure/flora/roguegrass])
+		bad += "frost skip"
 	// Overhang lift: a wall mirror (pixel_y 32) overhangs, a plain stone does not; the hang image is its own sprite on
 	// the hidden hang plane, offsets zeroed, alpha = wash; the gray mask and dim plate take the max with that plane.
 	var/turf/hang_turf = get_turf(eyes.owner)
@@ -6975,6 +6979,16 @@ GLOBAL_LIST_INIT(sumiari_frost_types, typecacheof(list(
 	/obj/item/natural/stone,
 )))
 
+// Not grass tufts, though they are roguegrass subtypes: a bush, hedge wall, thorn bush, maneater, pumpkin or jungle
+// bush is a full-tile block, so its sprite's top edge in silver drew a dashed pale line along the top border of the
+// tile (Ryan: the bluish dashes on the hedge under the mirror). No frost on them.
+GLOBAL_LIST_INIT(sumiari_frost_skip, typecacheof(list(
+	/obj/structure/flora/roguegrass/bush,
+	/obj/structure/flora/roguegrass/thorn_bush,
+	/obj/structure/flora/roguegrass/maneater,
+	/obj/structure/flora/roguegrass/pumpkin,
+)))
+
 GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	/turf/open/floor/rogue/cobble,
 	/turf/open/floor/rogue/cobblerock,
@@ -7027,7 +7041,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	for(var/obj/thing in T)
 		if(fx_frost_count >= SUMIARI_FROST_MAX)
 			return
-		if(!is_type_in_typecache(thing, GLOB.sumiari_frost_types) || thing.invisibility || !thing.icon_state)
+		if(!is_type_in_typecache(thing, GLOB.sumiari_frost_types) || is_type_in_typecache(thing, GLOB.sumiari_frost_skip) || thing.invisibility || !thing.icon_state)
 			continue
 		fx_frost_count++
 		var/key = "i[REF(thing)]"
