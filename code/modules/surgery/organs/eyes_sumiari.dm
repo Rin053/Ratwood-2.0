@@ -848,12 +848,24 @@ var/global/turf/sumiari_test_dark_turf
 	if(glow)
 		glow.alpha = initial(glow.alpha)
 	sumiari_grain_under_moon(who, 0, 0)
+	sumiari_cone_over_relays(who, FALSE)
 
 /obj/item/organ/eyes/sumiari/proc/present_screen_pieces()
 	if(!owner)
 		return
 	for(var/atom/movable/screen/piece as anything in screen_pieces)
 		owner.add_screen_object(piece)
+	sumiari_cone_over_relays(owner, TRUE)
+
+// The vision cone's dark wedge (hud_used.fov) sits on HUD_PLANE - 2, the very plane the relays use
+// (SUMIARI_RELAY_PLANE), at HUD_LAYER. The relays, a whole redrawn world at RELAY_LAYER_BASE and up, covered it,
+// so these eyes lost the wedge (bodies behind were still hidden by the blocker mask). While the eyes see, the wedge
+// goes above the relays and the ink vignette, still under the night senses; it comes back to HUD_LAYER after.
+#define SUMIARI_CONE_LAYER (SUMIARI_RELAY_LAYER_BASE + 35)
+/proc/sumiari_cone_over_relays(mob/who, over)
+	var/atom/movable/screen/cone = who?.hud_used?.fov
+	if(cone)
+		cone.layer = over ? SUMIARI_CONE_LAYER : HUD_LAYER
 
 /obj/item/organ/eyes/sumiari/proc/clear_screen_pieces(mob/living/carbon/M)
 	var/mob/living/carbon/who = M || owner
