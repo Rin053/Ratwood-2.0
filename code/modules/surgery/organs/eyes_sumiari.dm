@@ -438,6 +438,18 @@
 #define SUMIARI_PETAL_FALL (4.5 SECONDS)
 #define SUMIARI_PETAL_REST (2 SECONDS)
 #define SUMIARI_PETAL_FADE (1.5 SECONDS)
+// 11) Frost-silver edges: as the night deepens a faint frost of moon silver gathers on the tips of grass tufts (the
+// top edge of each blade), on the tops of loose stones and rocks, and along the edges of stone paving where it meets
+// earth or grass. Nothing at dusk, growing from FROST_START to full at FROST_FULL (small hours), melting away from
+// FROST_MELT to FROST_GONE at dawn. Frost on a swaying tuft sways with it. Breathes faintly with the moon.
+#define SUMIARI_MOON_FROST 1
+#define SUMIARI_FROST_MAX 140
+#define SUMIARI_FROST_ALPHA 170
+#define SUMIARI_FROST_PAVING_ALPHA 120
+#define SUMIARI_FROST_START (20 HOURS)
+#define SUMIARI_FROST_FULL (3 HOURS)
+#define SUMIARI_FROST_MELT (5 HOURS)
+#define SUMIARI_FROST_GONE (7 HOURS)
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -640,6 +652,9 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	// Petals: trees and flowers found by the last scan, and the petals in the air (image -> expiry).
 	var/list/fx_petal_sources
 	var/list/fx_petals
+	// Frost: sprites this scan, and the night's frost level (0..1) in twentieths, for this scan.
+	var/fx_frost_count = 0
+	var/fx_frost_step = 0
 	// Bloom: how open the night flowers are drawn right now (null until the first scan).
 	var/fx_bloom
 	var/beauty_timer
@@ -4520,6 +4535,7 @@ var/global/sumiari_moon_fog_enabled = TRUE
 var/global/sumiari_moon_beams_enabled = TRUE
 var/global/sumiari_moon_reflect_enabled = TRUE
 var/global/sumiari_moon_petals_enabled = TRUE
+var/global/sumiari_moon_frost_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4744,6 +4760,10 @@ var/global/sumiari_moon_petals_enabled = TRUE
 		if(sumiari_moon_petals_enabled && LAZYLEN(fx_petal_sources) < SUMIARI_PETAL_SOURCES_MAX)
 			fx_petal_source(T)
 #endif
+#if SUMIARI_MOON_FROST
+		if(sumiari_moon_frost_enabled && fx_frost_step)
+			fx_frost(T, wanted)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
@@ -4754,6 +4774,8 @@ var/global/sumiari_moon_petals_enabled = TRUE
 	fx_fog_count = 0
 	fx_beam_count = 0
 	fx_reflect_count = 0
+	fx_frost_count = 0
+	fx_frost_step = round(sumiari_frost_level() * 20)
 
 // Effects that change between scans. Each effect adds its own part here.
 /obj/item/organ/eyes/sumiari/proc/fx_live(turf/center)
@@ -5112,6 +5134,28 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 		else
 			wanted["[key]g"] = TRUE
 
+// A plant's own sway: period, signed depth and phase seed, fixed per plant (from where it stands and how it is
+// offset), so anything that sways with it (shimmer, frost) is built to the same motion.
+/proc/sumiari_sway_params(obj/plant)
+	var/seed = abs(plant.x * 37 + plant.y * 91 + plant.pixel_x * 7 + plant.pixel_y * 13 + length("[plant.type]") * 5)
+	var/period = SUMIARI_SWAY_PERIOD + seed % 27
+	var/skew = SUMIARI_SWAY_SKEW * (60 + (seed * 7) % 71) / 100
+	if((seed >> 3) % 2)
+		skew = -skew
+	return list(period, skew, seed)
+
+// Sways an image of plant with the plant's own sway, phase-locked to world.time so every image of one plant sways
+// together whenever it was made.
+/proc/sumiari_sway_apply(image/picture, obj/plant)
+	var/list/params = sumiari_sway_params(plant)
+	var/period = params[1]
+	var/skew = params[2]
+	var/matrix/base = plant.transform ? matrix(plant.transform) : matrix()
+	picture.transform = base * sumiari_sway_matrix(-skew * 0.6)
+	animate(picture, transform = base * sumiari_sway_matrix(skew), time = period / 2, delay = period - ((world.time + params[3]) % period), loop = -1, easing = SINE_EASING)
+	animate(transform = base * sumiari_sway_matrix(-skew * 0.6), time = period / 2, easing = SINE_EASING)
+	return picture
+
 // The base-pivoted lean: x shifts by skew * (y + 16), so the bottom row stays put.
 /proc/sumiari_sway_matrix(skew)
 	return matrix(1, skew, skew * 16, 0, 1, 0)
@@ -5138,15 +5182,8 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	sumiari_fx_style(shimmer, sumiari_fx_plane_near(plant.plane))
 	shimmer.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	shimmer.color = sumiari_sway_shimmer_matrix()
-	var/period = SUMIARI_SWAY_PERIOD + rand(0, 26)
-	var/skew = SUMIARI_SWAY_SKEW * rand(60, 130) / 100
-	var/lean = pick(-1, 1)
-	var/start = rand(0, period)
-	var/matrix/base = plant.transform ? matrix(plant.transform) : matrix()
-	for(var/image/picture in list(swayed, shimmer))
-		picture.transform = base
-		animate(picture, transform = base * sumiari_sway_matrix(skew * lean), time = period / 2, delay = start, loop = -1, easing = SINE_EASING)
-		animate(transform = base * sumiari_sway_matrix(-skew * lean * 0.6), time = period / 2, easing = SINE_EASING)
+	sumiari_sway_apply(swayed, plant)
+	sumiari_sway_apply(shimmer, plant)
 	var/gap = SUMIARI_SWAY_SHIMMER_GAP + rand(0, 90)
 	shimmer.alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_LOW)
 	animate(shimmer, alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_LOW), time = gap, delay = rand(0, gap), loop = -1, flags = ANIMATION_PARALLEL)
@@ -5382,6 +5419,112 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 	made["[variant]"] = petal
 	return petal
 
+// 11) Frost-silver edges.
+GLOBAL_LIST_INIT(sumiari_frost_types, typecacheof(list(
+	/obj/structure/flora/roguegrass,
+	/obj/structure/flora/grass,
+	/obj/structure/roguerock,
+	/obj/item/natural/stone,
+)))
+
+GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
+	/turf/open/floor/rogue/cobble,
+	/turf/open/floor/rogue/cobblerock,
+	/turf/open/floor/rogue/naturalstone,
+	/turf/open/floor/rogue/blocks,
+	/turf/open/floor/rogue/herringbone,
+	/turf/open/floor/rogue/greenstone,
+	/turf/open/floor/rogue/hexstone,
+)))
+
+// How much frost the night has laid down at a station time (null: now), 0..1, eased.
+/proc/sumiari_frost_level(time)
+	if(isnull(time))
+		time = station_time()
+	var/ramp
+	if(time >= SUMIARI_FROST_START)
+		ramp = (time - SUMIARI_FROST_START) / (24 HOURS - SUMIARI_FROST_START + SUMIARI_FROST_FULL)
+	else if(time < SUMIARI_FROST_FULL)
+		ramp = (time + 24 HOURS - SUMIARI_FROST_START) / (24 HOURS - SUMIARI_FROST_START + SUMIARI_FROST_FULL)
+	else if(time < SUMIARI_FROST_MELT)
+		return 1
+	else if(time < SUMIARI_FROST_GONE)
+		ramp = 1 - (time - SUMIARI_FROST_MELT) / (SUMIARI_FROST_GONE - SUMIARI_FROST_MELT)
+	else
+		return 0
+	ramp = clamp(ramp, 0, 1)
+	return ramp * ramp * (3 - 2 * ramp)
+
+/obj/item/organ/eyes/sumiari/proc/fx_frost(turf/T, list/wanted)
+	if(fx_frost_count >= SUMIARI_FROST_MAX || isclosedturf(T) || !sumiari_spare_turf_open(T))
+		return
+	var/level = fx_frost_step / 20
+	if(is_type_in_typecache(T, GLOB.sumiari_frost_paving))
+		var/sides = 0
+		for(var/side in GLOB.cardinals)
+			var/turf/next = get_step(T, side)
+			if(next && !isclosedturf(next) && !is_type_in_typecache(next, GLOB.sumiari_frost_paving))
+				sides |= side
+		if(sides)
+			fx_frost_count++
+			var/key = "i[T.x],[T.y]"
+			if(fx_want(key, "[sides]|[fx_frost_step]", wanted))
+				var/image/paving = sumiari_fx_style(image(sumiari_frost_paving_icon(sides), T), SUMIARI_FX_FLOOR_PLANE)
+				paving.alpha = sumiari_fx_alpha(SUMIARI_FROST_PAVING_ALPHA * level)
+				fx_put(key, "[sides]|[fx_frost_step]", sumiari_fx_breathe(paving, T, SUMIARI_PULSE_DEPTH * 0.5, 11))
+	var/sways = sumiari_moon_sway_enabled && SUMIARI_MOON_SWAY && !sumiari_fx_lamp_lit(T)
+	for(var/obj/thing in T)
+		if(fx_frost_count >= SUMIARI_FROST_MAX)
+			return
+		if(!is_type_in_typecache(thing, GLOB.sumiari_frost_types) || thing.invisibility || !thing.icon_state)
+			continue
+		fx_frost_count++
+		var/key = "i[REF(thing)]"
+		var/state = "[thing.icon]|[thing.icon_state]|[thing.dir]|[thing.plane]|[fx_frost_step]|[sways]"
+		if(fx_want(key, state, wanted))
+			fx_put(key, state, sumiari_frost_image(thing, level, sways && is_type_in_typecache(thing, GLOB.sumiari_sway_types)))
+
+// The sprite's top edge in silver: the sprite, solid silver, minus itself shifted one pixel down.
+/proc/sumiari_frost_image(obj/thing, level, sway)
+	var/image/frost = image(thing.icon, thing, thing.icon_state)
+	frost.dir = thing.dir
+	sumiari_fx_style(frost, sumiari_fx_plane_near(thing.plane))
+	frost.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
+	frost.color = sumiari_solid_matrix(sumiari_fx_silver(255))
+	frost.alpha = sumiari_fx_alpha(SUMIARI_FROST_ALPHA * level)
+	frost.filters = list(filter(type = "alpha", icon = sumiari_flora_cutout(thing), x = 0, y = -1, flags = MASK_INVERSE))
+	if(sway)
+		sumiari_sway_apply(frost, thing)
+	var/turf/T = get_turf(thing)
+	if(T)
+		var/list/solid = frost.color
+		var/list/solid_low = solid.Copy()
+		solid_low[16] *= 1 - SUMIARI_PULSE_DEPTH * 0.5
+		animate(frost, color = solid_low, time = max(sumiari_moon_pulse, 2) / 2, delay = sumiari_fx_phase(T.x, T.y, 11), loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+		animate(color = solid, time = max(sumiari_moon_pulse, 2) / 2, easing = SINE_EASING)
+	return frost
+
+// A one-pixel silver line (and a fainter one inside it) along each side of a paving tile that meets earth or grass.
+/proc/sumiari_frost_paving_icon(sides)
+	var/static/list/made = list()
+	if(made["[sides]"])
+		return made["[sides]"]
+	var/icon/edge = sumiari_blank_icon()
+	if(sides & NORTH)
+		edge.DrawBox(sumiari_fx_silver(70), 1, 31, 32, 31)
+		edge.DrawBox(sumiari_fx_silver(200), 1, 32, 32, 32)
+	if(sides & SOUTH)
+		edge.DrawBox(sumiari_fx_silver(70), 1, 2, 32, 2)
+		edge.DrawBox(sumiari_fx_silver(200), 1, 1, 32, 1)
+	if(sides & WEST)
+		edge.DrawBox(sumiari_fx_silver(70), 2, 1, 2, 32)
+		edge.DrawBox(sumiari_fx_silver(200), 1, 1, 1, 32)
+	if(sides & EAST)
+		edge.DrawBox(sumiari_fx_silver(70), 31, 1, 31, 32)
+		edge.DrawBox(sumiari_fx_silver(200), 32, 1, 32, 32)
+	made["[sides]"] = edge
+	return edge
+
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
 #if SUMIARI_MOON_FX
@@ -5515,9 +5658,25 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 	if(sumiari_fx_expire(null, expiring))
 		bad += "petal expiry"
 #endif
+#if SUMIARI_MOON_FROST
+	if(sumiari_frost_level(12 HOURS) != 0 || sumiari_frost_level(4 HOURS) != 1 || sumiari_frost_level(19 HOURS) != 0)
+		bad += "frost curve"
+	var/frost_dusk = sumiari_frost_level(22 HOURS)
+	var/frost_dawn = sumiari_frost_level(6 HOURS)
+	if(!(frost_dusk > 0 && frost_dusk < 1 && frost_dawn > 0 && frost_dawn < 1 && sumiari_frost_level(1 HOURS) > frost_dusk))
+		bad += "frost ramp dusk=[frost_dusk] dawn=[frost_dawn]"
+	var/obj/structure/flora/roguegrass/frost_tuft = new(spot)
+	var/image/frost = sumiari_frost_image(frost_tuft, 0.5, TRUE)
+	if(frost.alpha != sumiari_fx_alpha(SUMIARI_FROST_ALPHA * 0.5) || length(frost.filters) != 1 || frost.loc != frost_tuft)
+		bad += "frost image"
+	qdel(frost_tuft)
+	var/icon/paving_icon = sumiari_frost_paving_icon(NORTH)
+	if(paving_icon.GetPixel(10, 32) == null || paving_icon.GetPixel(10, 1) != null)
+		bad += "frost paving"
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST]")
 	return TRUE
