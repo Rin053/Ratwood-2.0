@@ -194,6 +194,15 @@
 //    multiplicative lean toward the violet that tints every pixel in proportion and so adds no speckle.
 #define SUMIARI_SHADOW_VIOLET 0.035
 #define SUMIARI_SHADOW_CAST 0.12
+// Moon haze: a luminous silver-lilac veil over everything the moon reaches, so moonlit ground reads ethereal and
+// stands out from roofs, caves and firelight (more than the old violet shadow lift, 0.12, ever did). Unlike that lift it is one flat added
+// tone, the same on every pixel, so it cannot turn texture into speckle and never changes which pixel is brighter.
+// It rides the moon relay, so the moon plate cuts it: none under roofs, in caves or at a fire, soft at every edge,
+// and it fades with dusk and dawn. HAZE is the peak added value (0..1 of full white) in the haze tone; 0 turns it off.
+#define SUMIARI_MOON_HAZE 0.2
+#define SUMIARI_MOON_HAZE_R 0.62
+#define SUMIARI_MOON_HAZE_G 0.5
+#define SUMIARI_MOON_HAZE_B 1
 #define SUMIARI_SHADOW_R 0.1
 #define SUMIARI_SHADOW_G 0.45
 #define SUMIARI_SHADOW_B 1
@@ -1847,6 +1856,10 @@ var/global/sumiari_moon_handoff_enabled = TRUE
 		for(var/input in 1 to 3)
 			vivid[(input - 1) * 4 + output] = vivid[(input - 1) * 4 + output] * cast - SUMIARI_MOON_LUMINANCE * SUMIARI_SHADOW_VIOLET * luma[input] * violet[output]
 #endif
+	if(sumiari_night_beauty_enabled && sumiari_moon_haze > 0)
+		var/list/haze = list(SUMIARI_MOON_HAZE_R, SUMIARI_MOON_HAZE_G, SUMIARI_MOON_HAZE_B)
+		for(var/output in 1 to 3)
+			vivid[16 + output] += sumiari_moon_haze * haze[output]
 	return vivid
 
 // The blue-violet the shadows lean toward. Mostly blue, so the lift it gives black stays tiny in luma.
@@ -3540,6 +3553,9 @@ var/global/sumiari_run_headless_test = FALSE
 		log_world("SUMIARI TEST FAIL moon vivid relay plane=[moon.plane] layer=[moon.layer] ink=[ink_relay?.layer]")
 		return FALSE
 	// A muted green has to come out more saturated (wider channel spread) and a gray has to stay a cool gray.
+	// The grade itself, without the haze's flat added tone (checked with the night beauty below).
+	var/haze_was = sumiari_moon_haze
+	sumiari_moon_haze = 0
 	var/list/vivid = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.3, 0.5, 0.3)
 	var/list/vivid_gray = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.5, 0.5, 0.5)
 	// Luma in * LUMINANCE == luma out (within the sheen's slope) for a color and for gray. Orange stays warm, and a dim
@@ -3548,6 +3564,7 @@ var/global/sumiari_run_headless_test = FALSE
 	var/list/orange = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.6, 0.3, 0.1)
 	var/list/brick = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.175, 0.149, 0.116)
 	var/brick_chroma = max(brick[1], brick[2], brick[3]) - min(brick[1], brick[2], brick[3])
+	sumiari_moon_haze = haze_was
 	if(!(vivid[2] - vivid[1] > 0.2) || !(vivid_gray[3] > vivid_gray[1]) || abs(vivid_gray[2] / SUMIARI_MOON_LUMINANCE - 0.5) > 0.03 || abs(vivid_luma - 0.4431) > 0.03 || !(orange[1] > orange[2] && orange[2] > orange[3]) || brick_chroma > 0.08)
 		log_world("SUMIARI TEST FAIL moon vivid matrix green=[vivid[1]],[vivid[2]],[vivid[3]] gray=[vivid_gray[1]],[vivid_gray[2]],[vivid_gray[3]]")
 		return FALSE
@@ -4028,6 +4045,8 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 // Runtime switch for every night-beauty feature at once (the defines pick which exist). An admin can flip it
 // with View Variables and the next filter rebuild or beauty tick follows.
 var/global/sumiari_night_beauty_enabled = TRUE
+// SUMIARI_MOON_HAZE, live (A/B tuning; the moon relay picks it up when its filters are rebuilt).
+var/global/sumiari_moon_haze = SUMIARI_MOON_HAZE
 
 /proc/sumiari_is_moon_night()
 	return sumiari_moon_strength() > 0
@@ -4270,10 +4289,20 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	var/list/plain = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0, 0, 0)
 #endif
 	sumiari_night_beauty_enabled = TRUE
+	var/haze_was = sumiari_moon_haze
+	sumiari_moon_haze = 0
 #if SUMIARI_NIGHT_SHADOWS
 	var/list/shadow = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0, 0, 0)
 	var/list/white = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 1, 1, 1)
 #endif
+	var/list/no_haze = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.2, 0.3, 0.2)
+	sumiari_moon_haze = haze_was
+	// The haze is one flat lilac tone added to every pixel: blue most, then red, then green, the same on any input.
+	var/list/hazed = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 0.2, 0.3, 0.2)
+	var/list/lift = list(hazed[1] - no_haze[1], hazed[2] - no_haze[2], hazed[3] - no_haze[3])
+	if(SUMIARI_MOON_HAZE > 0 && !(lift[3] > lift[1] && lift[1] > lift[2] && abs(lift[3] - sumiari_moon_haze * SUMIARI_MOON_HAZE_B) < 0.01))
+		bad += "haze lift=[lift[1]],[lift[2]],[lift[3]]"
+
 	var/list/violet = sumiari_shadow_violet()
 	var/violet_luma = violet[1] * SUMIARI_LUMA_R + violet[2] * SUMIARI_LUMA_G + violet[3] * SUMIARI_LUMA_B
 	if(SUMIARI_SHADOW_VIOLET * violet_luma > 0.06)
