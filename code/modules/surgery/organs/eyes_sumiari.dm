@@ -1500,16 +1500,22 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 
 // After the lit world stack: mobs cut out, brightness above the floor in the haze tone, cut by the moon plate (roofs,
 // caves, fire, dusk and dawn), softened, bloomed.
+// Only the ground and walls glow. Every object plane is cut out first like the mobs, so bones, grass tufts, trees,
+// items and furniture keep their moonlit color but get no added violet light and no halo of their own (Ryan: the
+// bones looked artificially lit). The ground's soft glow still reaches a pixel or two past their edges.
+GLOBAL_LIST_INIT(sumiari_moon_glow_cut_planes, list(GAME_PLANE_LOWER, GAME_PLANE, GAME_PLANE_FOV_HIDDEN, GAME_PLANE_UPPER, GAME_PLANE_HIGHEST))
 var/global/sumiari_moon_glow_stages = 5
 /proc/sumiari_moon_glow_filters()
-	var/list/all = list(
-		filter(type = "alpha", render_source = sumiari_world_render_source(GAME_PLANE_FOV_HIDDEN), flags = MASK_INVERSE),
+	var/list/cuts = list()
+	for(var/plane in GLOB.sumiari_moon_glow_cut_planes)
+		cuts += filter(type = "alpha", render_source = sumiari_world_render_source(plane), flags = MASK_INVERSE)
+	var/list/all = cuts + list(
 		filter(type = "color", color = sumiari_moon_glow_matrix()),
 		filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON)),
 		filter(type = "blur", size = sumiari_moon_glow_soft),
 		filter(type = "bloom", threshold = "#000000", size = sumiari_moon_glow_bloom, offset = 1, alpha = sumiari_moon_glow_bloom_alpha),
 	)
-	return all.Copy(1, clamp(sumiari_moon_glow_stages, 1, 5) + 1)
+	return all.Copy(1, length(cuts) + clamp(sumiari_moon_glow_stages, 1, 4) + 1)
 
 // out = GLOW * tone * (luma - FLOOR), alpha kept. The client blends premultiplied, so luma already carries the mask.
 /proc/sumiari_moon_glow_matrix()
@@ -3834,6 +3840,21 @@ var/global/sumiari_run_headless_test = FALSE
 	// soft graded edge darkens glow and ground by the same factor (nothing cone-shaped is drawn over the wedge).
 	var/atom/movable/screen/sumiari_relay/glow = sumiari_find_piece(eyes, "sumiari glow")
 	var/atom/movable/screen/wedge = eyes.owner?.hud_used?.fov
+	// No object glows: every object plane is cut (MASK_INVERSE) before the glow's color step, and floors and walls are not.
+	var/list/glow_cut = list()
+	var/glow_color_at = 0
+	var/list/glow_filters = sumiari_moon_glow_filters()
+	for(var/glow_index in 1 to length(glow_filters))
+		var/glow_sample = glow_filters[glow_index]
+		var/glow_kind = sumiari_filter_kind(glow_sample)
+		if(glow_kind == "color" && !glow_color_at)
+			glow_color_at = glow_index
+		if(glow_kind == "alpha" && (glow_sample:flags & MASK_INVERSE) && !glow_color_at)
+			glow_cut += glow_sample:render_source
+	if(!glow_color_at || (!(sumiari_world_render_source(GAME_PLANE) in glow_cut) || !(sumiari_world_render_source(GAME_PLANE_UPPER) in glow_cut) \
+		|| !(sumiari_world_render_source(GAME_PLANE_LOWER) in glow_cut) || (sumiari_world_render_source(FLOOR_PLANE) in glow_cut) || (sumiari_world_render_source(WALL_PLANE) in glow_cut)))
+		log_world("SUMIARI TEST FAIL objects glow cut=[glow_cut.Join(",")] color_at=[glow_color_at]")
+		return FALSE
 	if(!glow || glow.plane != SUMIARI_RELAY_PLANE || glow.layer >= SUMIARI_CONE_LAYER || (wedge && eyes.vision_on && (wedge.plane != glow.plane || wedge.layer != SUMIARI_CONE_LAYER)))
 		log_world("SUMIARI TEST FAIL moon glow under the cone wedge glow=[glow ? "[glow.plane]/[glow.layer]" : "none"] wedge=[wedge ? "[wedge.plane]/[wedge.layer]" : "none"]")
 		return FALSE
