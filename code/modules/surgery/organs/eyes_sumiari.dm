@@ -437,6 +437,8 @@
 #define SUMIARI_SWAY_MAX 110
 #define SUMIARI_SWAY_SKEW 0.045
 #define SUMIARI_SWAY_PERIOD 34
+// The silver shimmer over swaying plants is removed (Ryan: no pale shimmer on plants); the sway itself stays.
+#define SUMIARI_SWAY_SHIMMER 0
 #define SUMIARI_SWAY_SHIMMER_LOW 14
 #define SUMIARI_SWAY_SHIMMER_HIGH 80
 #define SUMIARI_SWAY_SHIMMER_GAP 70
@@ -5766,9 +5768,11 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 			var/list/pair = sumiari_sway_images(plant)
 			sumiari_fx_tile_share = 1
 			fx_put(key, state, pair[1])
+#if SUMIARI_SWAY_SHIMMER
 			fx_put("[key]g", state, pair[2])
 		else
 			wanted["[key]g"] = TRUE
+#endif
 
 // A plant's own sway: period, signed depth and phase seed, fixed per plant (from where it stands and how it is
 // offset), so anything that sways with it (shimmer, frost) is built to the same motion.
@@ -5824,12 +5828,16 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 
 // list(override, shimmer): the plant swaying for this viewer only, and its silver shimmer swaying with it.
 /proc/sumiari_sway_images(obj/plant)
-	var/turf/T = get_turf(plant)
 	var/image/swayed = image(loc = plant)
 	swayed.appearance = plant.appearance
 	swayed.override = TRUE
 	swayed.loc = plant
 	sumiari_clear_offsets(swayed)
+#if !SUMIARI_SWAY_SHIMMER
+	sumiari_sway_apply(swayed, plant)
+	return list(swayed, null)
+#else
+	var/turf/T = get_turf(plant)
 	var/image/shimmer = image(plant.icon, plant, plant.icon_state)
 	shimmer.dir = plant.dir
 	sumiari_fx_style(shimmer, sumiari_fx_plane_near(plant.plane))
@@ -5844,6 +5852,7 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	animate(alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_LOW), time = 15, easing = SINE_EASING)
 	sumiari_fx_breathe(shimmer, T, SUMIARI_PULSE_DEPTH, 6, fold_alpha = FALSE)
 	return list(swayed, shimmer)
+#endif
 
 // 7) Moonlit fog.
 GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /turf/open/water/river, /turf/open/water/pond, /turf/open/water/cleanshallow)))
@@ -6719,8 +6728,13 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	var/image/swayed = sway_pair[1]
 	var/image/sway_glow = sway_pair[2]
 	var/matrix/lean = sumiari_sway_matrix(0.05)
+#if SUMIARI_SWAY_SHIMMER
 	if(!swayed.override || swayed.loc != tuft || sway_glow.plane != sumiari_fx_plane_near(tuft.plane) || abs(lean.c - 0.8) > 0.001 || length(sway_glow.color) != 20)
 		bad += "sway"
+#else
+	if(!swayed.override || swayed.loc != tuft || sway_glow || abs(lean.c - 0.8) > 0.001)
+		bad += "sway"
+#endif
 	qdel(tuft)
 	// A redrawn plant sits exactly on the real one: an offset plant (the 64x96 tall bush, pixel_x -16 plus a random -3..3) gets a copy with
 	// no offsets of its own (it rides the plant's), and its lean pivots on its own bottom row.
