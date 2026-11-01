@@ -3515,9 +3515,21 @@ var/global/sumiari_run_headless_test = FALSE
 	if(!(vivid[2] - vivid[1] > 0.2) || !(vivid_gray[3] > vivid_gray[1]) || abs(vivid_gray[2] / SUMIARI_MOON_LUMINANCE - 0.5) > 0.03 || abs(vivid_luma - 0.4431) > 0.03 || !(orange[1] > orange[2] && orange[2] > orange[3]) || brick_chroma > 0.08)
 		log_world("SUMIARI TEST FAIL moon vivid matrix green=[vivid[1]],[vivid[2]],[vivid[3]] gray=[vivid_gray[1]],[vivid_gray[2]],[vivid_gray[3]]")
 		return FALSE
-	if(length(eyes.moon_plate.filters) != 6 + SUMIARI_MOON_SPARES_NONFIRE + SUMIARI_MOON_CLIFFS || sumiari_filter_field(eyes.moon_plate.filters, 5 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE) || sumiari_filter_field(eyes.moon_plate.filters, 4 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_COOKIE))
+	// With the lamp hand-off the plate skips the light and cookie subtracts; emitter sprites still subtract.
+	var/lamp_subtracts = 2
+#if SUMIARI_MOON_LAMP_HANDOFF
+	if(sumiari_moon_handoff_enabled)
+		lamp_subtracts = 0
+#endif
+	if(length(eyes.moon_plate.filters) != 4 + lamp_subtracts + SUMIARI_MOON_SPARES_NONFIRE + SUMIARI_MOON_CLIFFS || sumiari_filter_field(eyes.moon_plate.filters, 3 + lamp_subtracts + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE) || (lamp_subtracts && sumiari_filter_field(eyes.moon_plate.filters, 4 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_COOKIE)))
 		log_world("SUMIARI TEST FAIL moon vivid mask filters=[length(eyes.moon_plate.filters)]")
 		return FALSE
+#if SUMIARI_MOON_LAMP_HANDOFF
+	var/atom/movable/screen/sumiari_relay/lamp = sumiari_find_piece(eyes, "sumiari lamp")
+	if(!lamp || lamp.layer <= ink_relay.layer || lamp.blend_mode != BLEND_ADD || (eyes.wash_mode == SUMIARI_WASH_LIVE && sumiari_moon_handoff_enabled && sumiari_filter_field(lamp.filters, length(lamp.filters), "render_source") != sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT)))
+		log_world("SUMIARI TEST FAIL moon lamp hand-off relay=[lamp ? "[lamp.layer]/[lamp.blend_mode]/[length(lamp.filters)]" : "none"]")
+		return FALSE
+#endif
 #else
 	if(moon.plane != SUMIARI_RELAY_PLANE || moon.plane >= HUD_PLANE || moon.layer <= SUMIARI_RELAY_LAYER_BASE)
 		log_world("SUMIARI TEST FAIL moon relay plane=[moon.plane] layer=[moon.layer]")
@@ -4256,13 +4268,23 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 #if SUMIARI_MOON_MOB_GRADE && SUMIARI_MOON_VIVID
 	// The mob grade: skin of every shade comes out richer (more chroma) but never pinker (blue against green may not
 	// rise past 1%), keeps red > green > blue; white stays near neutral and unclipped; a gray stays gray.
+	// The base grade is checked without the violet shadow lean (that cast is deliberate and checked below).
+	var/beauty_was = sumiari_night_beauty_enabled
+	sumiari_night_beauty_enabled = FALSE
 	var/list/grade = sumiari_moon_mob_grade_matrix()
+	sumiari_night_beauty_enabled = beauty_was
+	var/list/violet_grade = sumiari_moon_mob_grade_matrix()
+	var/list/violet_skin = sumiari_apply_matrix(violet_grade, 0.75, 0.5, 0.35)
+	if(!(violet_skin[1] > violet_skin[2] && violet_skin[2] > violet_skin[3]))
+		bad += "mob grade violet skin=[violet_skin[1]],[violet_skin[2]],[violet_skin[3]]"
 	for(var/list/tone in list(list(0.95, 0.69, 0.6), list(0.75, 0.5, 0.35), list(0.45, 0.3, 0.22)))
 		var/list/graded = sumiari_apply_matrix(grade, tone[1], tone[2], tone[3])
-		if(graded[3] / graded[2] > (tone[3] / tone[2]) * 1.01 || !(graded[1] > graded[2] && graded[2] > graded[3]) || (graded[1] - graded[3]) < (tone[1] - tone[3]))
+		// The mob shares the world's silver sheen (blue 1.1 against green 1), so blue may rise by up to that much.
+		if(graded[3] / graded[2] > (tone[3] / tone[2]) * SUMIARI_MOON_SHEEN_B / SUMIARI_MOON_SHEEN_G || !(graded[1] > graded[2] && graded[2] > graded[3]) || (graded[1] - graded[3]) < (tone[1] - tone[3]))
 			bad += "mob grade skin=[graded[1]],[graded[2]],[graded[3]]"
 	var/list/grade_white = sumiari_apply_matrix(grade, 1, 1, 1)
-	if(max(grade_white[1], grade_white[2], grade_white[3]) > 1 || max(grade_white[1], grade_white[2], grade_white[3]) > min(grade_white[1], grade_white[2], grade_white[3]) * 1.06)
+	// White takes the mob gain (LUMINANCE * MOB_GRADE_GAIN) and the sheen's blue lean, no more.
+	if(max(grade_white[1], grade_white[2], grade_white[3]) > SUMIARI_MOON_LUMINANCE * SUMIARI_MOB_GRADE_GAIN * SUMIARI_MOON_SHEEN_B || max(grade_white[1], grade_white[2], grade_white[3]) > min(grade_white[1], grade_white[2], grade_white[3]) * 1.2)
 		bad += "mob grade white=[grade_white[1]],[grade_white[2]],[grade_white[3]]"
 #endif
 	if(length(bad))
@@ -4683,7 +4705,8 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	if(!spare_master || spare_master.render_target != SUMIARI_SPARE_RENDER_TARGET)
 		bad += "spare plane master"
 	var/list/moon_filters = sumiari_moon_mask_filters(TRUE)
-	if(sumiari_filter_field(moon_filters, 6 + SUMIARI_MOON_CLIFFS, "render_source") != SUMIARI_SPARE_RENDER_TARGET || sumiari_filter_field(moon_filters, 6 + SUMIARI_MOON_CLIFFS, "blend_mode") != BLEND_ADD)
+	// The spare add sits just before the final strength matrix (the lamp hand-off drops two subtracts ahead of it).
+	if(sumiari_filter_field(moon_filters, length(moon_filters) - 1, "render_source") != SUMIARI_SPARE_RENDER_TARGET || sumiari_filter_field(moon_filters, length(moon_filters) - 1, "blend_mode") != BLEND_ADD)
 		bad += "moon mask has no spare add"
 #if SUMIARI_MOON_CLIFFS
 	var/atom/movable/screen/plane_master/cliff_master = eyes.owner?.hud_used?.plane_masters["[SUMIARI_CLIFF_PLANE]"]
@@ -5904,11 +5927,13 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 #endif
 #if SUMIARI_MOON_RIMS
 	var/icon/rim_icon = sumiari_rim_icon(NORTH | WEST)
-	if(!rim_icon || rim_icon.GetPixel(10, 32) == null || rim_icon.GetPixel(1, 10) == null || rim_icon.GetPixel(32, 10) != null || rim_icon.GetPixel(16, 16) != null)
+	// Top edge plus a short side fade (SUMIARI_RIM_SIDE_LENGTH px) down the west side only.
+	if(!rim_icon || rim_icon.GetPixel(10, 32) == null || rim_icon.GetPixel(1, 30) == null || rim_icon.GetPixel(1, 32 - SUMIARI_RIM_SIDE_LENGTH - 1) != null || rim_icon.GetPixel(32, 30) != null || rim_icon.GetPixel(16, 16) != null)
 		bad += "rim icon"
 	var/obj/structure/roguerock/rock = new(spot)
 	var/image/rock_rim = sumiari_rim_image(rock)
-	if(rock_rim.plane != SUMIARI_FX_LOWER_PLANE || length(rock_rim.filters) != 1 || rock_rim.loc != rock)
+	// Two cutout masks: the sprite's own body offset away, and its body behind (rims only where body backs them).
+	if(rock_rim.plane != SUMIARI_FX_LOWER_PLANE || length(rock_rim.filters) != 2 || rock_rim.loc != rock)
 		bad += "rim image plane=[rock_rim.plane]"
 	qdel(rock)
 #endif
@@ -5932,7 +5957,8 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 		bad += "bloom matrix leaf=[leaf[1]],[leaf[2]],[leaf[3]]"
 	var/obj/structure/flora/tinymushrooms/shroom = new(spot)
 	var/image/bloom = sumiari_bloom_image(shroom, 0.5)
-	if(bloom.alpha != sumiari_fx_alpha(SUMIARI_BLOOM_ALPHA * 0.5) || bloom.loc != shroom || bloom.plane != sumiari_fx_plane_near(shroom.plane))
+	// With a color matrix BYOND folds alpha into the matrix, so alpha reads back 255 then.
+	if((bloom.alpha != sumiari_fx_alpha(SUMIARI_BLOOM_ALPHA * 0.5) && !islist(bloom.color)) || bloom.loc != shroom || bloom.plane != sumiari_fx_plane_near(shroom.plane))
 		bad += "bloom image alpha=[bloom.alpha] plane=[bloom.plane]"
 	qdel(shroom)
 #endif
@@ -5979,7 +6005,8 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 #endif
 #if SUMIARI_MOON_FOG
 	var/icon/wisp_icon = sumiari_fog_icon(1)
-	if(wisp_icon.Width() != 64 || wisp_icon.GetPixel(32, 32) == null || wisp_icon.GetPixel(1, 1) != null || wisp_icon.GetPixel(64, 32) != null)
+	// Three thin low ribbons in a 96x32 strip: ink near the first ribbon's middle, clear corners and top.
+	if(wisp_icon.Width() != 96 || wisp_icon.GetPixel(44, 10) == null || wisp_icon.GetPixel(1, 1) != null || wisp_icon.GetPixel(96, 32) != null || wisp_icon.GetPixel(48, 32) != null)
 		bad += "fog icon"
 	var/image/wisp = sumiari_fog_image(spot)
 	if(wisp.plane != SUMIARI_FX_GAME_PLANE || wisp.loc != spot)
@@ -6020,7 +6047,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 		bad += "frost ramp dusk=[frost_dusk] dawn=[frost_dawn]"
 	var/obj/structure/flora/roguegrass/frost_tuft = new(spot)
 	var/image/frost = sumiari_frost_image(frost_tuft, 0.5, TRUE)
-	if(frost.alpha != sumiari_fx_alpha(SUMIARI_FROST_ALPHA * 0.5) || length(frost.filters) != 1 || frost.loc != frost_tuft)
+	if((frost.alpha != sumiari_fx_alpha(SUMIARI_FROST_ALPHA * 0.5) && !islist(frost.color)) || length(frost.filters) != 1 || frost.loc != frost_tuft)
 		bad += "frost image"
 	qdel(frost_tuft)
 	var/icon/paving_icon = sumiari_frost_paving_icon(NORTH)
