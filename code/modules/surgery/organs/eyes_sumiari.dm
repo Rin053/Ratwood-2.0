@@ -5213,8 +5213,42 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/list/grid = sumiari_moon_bleed_cells(gx0, gy0, gw, gh, center.z)
 	var/list/openings = sumiari_moon_bleed_openings(grid, gw, gh)
 	var/list/steps = sumiari_moon_bleed_grid(grid, gw, gh, SUMIARI_SPILL_RANGE)
-	bleed_cache = list(key, grid, steps, gx0, gy0, gw, gh, openings)
+	var/list/shut = sumiari_moon_shut_openings(grid, gw, gh, sumiari_moon_shut_floor(grid, gx0, gy0, gw, gh, center.z))
+	bleed_cache = list(key, grid, steps, gx0, gy0, gw, gh, openings, shut)
 	return bleed_cache
+
+// Is the owner indoors (not on open sky)? Then every shut opening in a wall line is drawn dark for them.
+/obj/item/organ/eyes/sumiari/proc/owner_indoors(turf/center)
+	return !sumiari_spare_turf_open(center)
+
+// Grid cells that block (WALL or SKY_SHUT) but stand on a floor turf: a shut door, window, shutter or curtain.
+// Returns their indices.
+/proc/sumiari_moon_shut_floor(list/grid, x0, y0, w, h, z)
+	. = list()
+	for(var/n in 1 to w * h)
+		var/cell = grid[n]
+		if(cell != SUMIARI_BLEED_WALL && cell != SUMIARI_BLEED_SKY_SHUT)
+			continue
+		var/turf/T = locate(x0 + (n - 1) % w, y0 + round((n - 1) / w), z)
+		if(T && !isclosedturf(T))
+			. += n
+
+// Shut openings in a wall line: a shut floor cell with a blocking cell (WALL or SKY_SHUT) on both sides along one
+// axis, so a double door (two shut cells side by side) counts too. Seen from indoors such a tile takes no outside
+// light at all, day or night: no corner of it is lit, so nothing shows at or around a closed door.
+// floor holds the indices from sumiari_moon_shut_floor. Returns a list as long as the grid, TRUE at each shut opening.
+/proc/sumiari_moon_shut_openings(list/grid, w, h, list/floor)
+	. = new /list(w * h)
+	for(var/n in floor)
+		var/x = (n - 1) % w + 1
+		var/y = round((n - 1) / w) + 1
+		var/across = x > 1 && x < w && sumiari_moon_blocking(grid[n - 1]) && sumiari_moon_blocking(grid[n + 1])
+		var/upright = y > 1 && y < h && sumiari_moon_blocking(grid[n - w]) && sumiari_moon_blocking(grid[n + w])
+		if(across || upright)
+			.[n] = TRUE
+
+/proc/sumiari_moon_blocking(cell)
+	return cell == SUMIARI_BLEED_WALL || cell == SUMIARI_BLEED_SKY_SHUT
 
 /obj/item/organ/eyes/sumiari/proc/clear_spill()
 	for(var/turf/T as anything in spill_images)
@@ -5242,19 +5276,35 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/gy0 = map[5]
 	var/gw = map[6]
 	var/gh = map[7]
+	var/list/shut = map[9]
+	var/indoors = owner_indoors(center)
 	var/list/keep = list()
 	var/cliff_reach = reach(SUMIARI_CLIFF_RANGE)
 	var/turf/low = locate(max(center.x - cliff_reach, 1), max(center.y - cliff_reach, 1), center.z)
 	var/turf/high = locate(min(center.x + cliff_reach, world.maxx), min(center.y + cliff_reach, world.maxy), center.z)
 	for(var/turf/T as anything in block(low, high))
 		var/datum/outdoor_info/outdoor = T.outdoor_effect
-		if(!outdoor || outdoor.state != SKY_BLOCKED || !outdoor.sunlight_overlay)
+		if(!outdoor || !outdoor.sunlight_overlay)
+			continue
+		var/cx = T.x - gx0 + 1
+		var/cy = T.y - gy0 + 1
+		// A shut opening seen from indoors: fully dark, roofed or under the sky.
+		if(indoors && shut[(cy - 1) * gw + cx])
+			keep[T] = TRUE
+			if(spill_keys?[T] == "0|0|0|0")
+				continue
+			if(spill_images?[T])
+				spill_client.images -= spill_images[T]
+			var/image/dark = sumiari_spill_image(T, 0, 0, 0, 0)
+			LAZYSET(spill_images, T, dark)
+			LAZYSET(spill_keys, T, "0|0|0|0")
+			spill_client.images += dark
+			continue
+		if(outdoor.state != SKY_BLOCKED)
 			continue
 		var/list/corners = T.corners
 		if(!corners)
 			continue
-		var/cx = T.x - gx0 + 1
-		var/cy = T.y - gy0 + 1
 		// Vanilla corner order (update_outdoor_effect_overlays): r SW = corners[3], g SE = [2], b NW = [4], a NE = [1].
 		var/datum/lighting_corner/cr = corners[3]
 		var/datum/lighting_corner/cg = corners[2]
@@ -5456,16 +5506,20 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/gy0 = map[5]
 	var/gw = map[6]
 	var/gh = map[7]
+	var/list/shut = map[9]
+	var/indoors = owner_indoors(center)
 	for(var/turf/T as anything in block(low, high))
 		var/wall = isclosedturf(T) && !T.outdoor_effect
 		var/index = (T.y - gy0) * gw + (T.x - gx0) + 1
 		if(!wall && !(grid[index] == SUMIARI_BLEED_ROOF && steps[index]))
 			continue
 		// The same corner order the sky overlay uses (update_outdoor_effect_overlays): r SW, g SE, b NW, a NE.
-		var/fr = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, -1, -1, wall)
-		var/fg = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, 1, -1, wall)
-		var/fb = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, -1, 1, wall)
-		var/fa = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, 1, 1, wall)
+		// Seen from indoors a shut door under the sky does not light the wall faces beside it.
+		var/shut_lights = wall && !indoors
+		var/fr = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, -1, -1, shut_lights)
+		var/fg = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, 1, -1, shut_lights)
+		var/fb = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, -1, 1, shut_lights)
+		var/fa = sumiari_moon_bleed_corner(grid, steps, gw, gh, T.x - gx0 + 1, T.y - gy0 + 1, 1, 1, shut_lights)
 		if(max(fr, fg, fb, fa) < SUMIARI_CLIFF_MIN)
 			continue
 		keep[T] = TRUE
@@ -5493,6 +5547,11 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		var/turf/T = locate(gx0 + cx - 1, gy0 + cy - 1, center.z)
 		if(!T || get_dist(T, center) > cliff_reach)
 			continue
+		// spill_tick already draws a shut opening dark for an indoor owner.
+#if SUMIARI_SKY_SPILL_CUT
+		if(indoors && shut[n])
+			continue
+#endif
 		var/fr = sumiari_moon_seal_corner(grid, gw, gh, cx, cy, -1, -1)
 		var/fg = sumiari_moon_seal_corner(grid, gw, gh, cx, cy, 1, -1)
 		var/fb = sumiari_moon_seal_corner(grid, gw, gh, cx, cy, -1, 1)
@@ -5744,6 +5803,21 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		|| sumiari_moon_seal_corner(south_open, 3, 4, 2, 2, -1, -1) != 1 || sumiari_moon_seal_corner(south_open, 3, 4, 2, 2, 1, 1) != 0 \
 		|| sumiari_moon_seal_corner(west_open, 4, 3, 2, 2, -1, 1) != 1 || sumiari_moon_seal_corner(west_open, 4, 3, 2, 2, 1, -1) != 0)
 		bad += "equal openings south=[south_open_steps.Join(",")] roof=[south_roof_steps.Join(",")] west=[west_open_steps.Join(",")]"
+	// Shut openings: a closed double door under the sky (two SKY_SHUT cells between walls) and a closed roofed door
+	// (a WALL cell on a floor turf) both count; a lone shut cell out in the open and a plain wall do not.
+	// 4x3, south outside: row 1 sky, row 2 wall|door|door|wall, row 3 room.
+	var/list/double_door = list(1, 1, 1, 1, 0, 2, 2, 0, 3, 3, 3, 3)
+	var/list/double_shut = sumiari_moon_shut_openings(double_door, 4, 3, list(6, 7))
+	var/list/roofed_door = list(1, 1, 1, 0, 0, 0, 3, 3, 3)
+	var/list/roofed_shut = sumiari_moon_shut_openings(roofed_door, 3, 3, list(5))
+	var/list/field = list(1, 1, 1, 1, 2, 1, 1, 1, 1)
+	var/list/field_shut = sumiari_moon_shut_openings(field, 3, 3, list(5))
+	var/double_count = 0
+	for(var/flag in double_shut)
+		if(flag)
+			double_count++
+	if(!double_shut[6] || !double_shut[7] || double_count != 2 || !roofed_shut[5] || field_shut[5])
+		bad += "shut openings double=[double_count] roofed=[roofed_shut[5]] field=[field_shut[5]]"
 	// An open-sky alley between two buildings (sky on both ends) stays sky.
 	var/list/alley = list(1, 1, 1, 0, 1, 0, 1, 1, 1)
 	if(length(sumiari_moon_bleed_openings(alley, 3, 3)) || alley[5] != 1)
