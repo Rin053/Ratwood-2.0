@@ -18,8 +18,9 @@
 	 *
 	 * * The main limitation of this system is that it uses a limited number of pre-baked geometrical shapes, but for most uses it does the job.
 	 *
-	 * * Another limitation is for big lights: you only see the light if you see the object emiting it.
-	 * * For small objects this is good (you can't see them behind a wall), but for big ones this quickly becomes prety clumsy.
+	 * * The mask is drawn by a light_carrier on the holder's turf whose bounds cover the whole light radius, not by the holder itself.
+	 * * BYOND draws an atom if any turf it covers is visible, so the pool stays visible while you can see the lit ground,
+	 * * even when the source itself is hidden behind a tree, reeds or anything else opaque. See /atom/movable/light_carrier.
 */
 /datum/component/overlay_lighting
 	///How far the light reaches, float.
@@ -50,6 +51,10 @@
 
 	///Overlay effect to cut into the darkness and provide light.
 	var/obj/effect/overlay/light_visible/visible_mask
+	///Invisible map object that displays visible_mask around current_holder, so the light pool does not depend on the holder being visible.
+	var/atom/movable/light_carrier/carrier
+	///Holder whose vis_contents currently show visible_mask directly (projectiles only, see uses_carrier()).
+	var/atom/movable/mask_holder
 	///Lazy list to track the turfs being affected by our light, to determine their visibility.
 	var/list/turf/affected_turfs
 	///Movable atom currently holding the light. Parent might be a flashlight, for example, but that might be held by a mob or something else.
@@ -70,6 +75,8 @@
 	. = ..()
 
 	visible_mask = new()
+	carrier = new()
+	carrier.vis_contents += visible_mask
 	if(!isnull(_range))
 		movable_parent.set_light_range(_range, _range)
 	set_range(parent, movable_parent.light_inner_range, movable_parent.light_outer_range)
@@ -122,6 +129,10 @@
 	set_parent_attached_to(null)
 	set_holder(null)
 	clean_old_turfs()
+	hide_mask()
+	if(carrier)
+		qdel(carrier, force = TRUE)
+		carrier = null
 	QDEL_NULL(visible_mask)
 	return ..()
 
@@ -152,22 +163,85 @@
 ///Clears the old affected turfs and populates the new ones.
 /datum/component/overlay_lighting/proc/make_luminosity_update()
 	clean_old_turfs()
+	update_mask()
 	if(!isturf(current_holder?.loc))
 		return
 	get_new_turfs()
 
 
+///Projectiles animate their own pixel offsets between tiles and live for moments, so they keep drawing the mask themselves.
+/datum/component/overlay_lighting/proc/uses_carrier(atom/movable/holder)
+	return !isprojectile(holder)
+
+
+///Puts the light mask where current_holder is: on the carrier (normally) or in the holder's own vis_contents (projectiles).
+/datum/component/overlay_lighting/proc/update_mask()
+	var/atom/movable/holder = current_holder
+	if(!(overlay_lighting_flags & LIGHTING_ON) || !holder || !isturf(holder.loc))
+		hide_mask()
+		return
+	if(!uses_carrier(holder))
+		if(carrier.loc)
+			carrier.loc = null
+		if(mask_holder != holder)
+			if(mask_holder)
+				mask_holder.vis_contents -= visible_mask
+			mask_holder = holder
+			holder.vis_contents += visible_mask
+		return
+	if(mask_holder)
+		mask_holder.vis_contents -= visible_mask
+		mask_holder = null
+	sync_carrier_offsets()
+	carrier.glide_size = holder.glide_size
+	carrier.invisibility = holder.invisibility
+	// Direct loc change on purpose: no Entered/Exited/Crossed side effects on the turfs it covers.
+	carrier.loc = holder.loc
+	// Items set their random pixel offsets right after landing; pick those up next tick.
+	if(holder == parent)
+		addtimer(CALLBACK(src, PROC_REF(sync_carrier_offsets)), 1, TIMER_UNIQUE|TIMER_OVERRIDE)
+
+
+///Matches the carrier's pixel offsets to the holder's, so the pool sits exactly where it did when the holder drew it.
+/datum/component/overlay_lighting/proc/sync_carrier_offsets()
+	var/atom/movable/holder = current_holder
+	if(!holder || !carrier)
+		return
+	carrier.pixel_x = holder.pixel_x
+	carrier.pixel_y = holder.pixel_y
+	carrier.pixel_w = holder.pixel_w
+	carrier.pixel_z = holder.pixel_z
+
+
+///Takes the light mask off the map.
+/datum/component/overlay_lighting/proc/hide_mask()
+	if(carrier?.loc)
+		carrier.loc = null
+	if(mask_holder)
+		mask_holder.vis_contents -= visible_mask
+		mask_holder = null
+
+
+///Sizes the carrier's bounds to the light radius (plus one tile of slack for pixel offsets and gliding).
+/datum/component/overlay_lighting/proc/update_carrier_bounds()
+	if(!carrier)
+		return
+	var/reach = lumcount_range * world.icon_size
+	carrier.bound_x = -reach
+	carrier.bound_y = -reach
+	carrier.bound_width = (reach * 2) + world.icon_size
+	carrier.bound_height = (reach * 2) + world.icon_size
+
+
 ///Adds the luminosity and source for the afected movable atoms to keep track of their visibility.
 /datum/component/overlay_lighting/proc/add_dynamic_lumi(atom/movable/affected_movable)
 	LAZYSET(affected_movable.affected_dynamic_lights, src, lumcount_range + 1)
-	affected_movable.vis_contents += visible_mask
 	affected_movable.update_dynamic_luminosity()
 
 
 ///Removes the luminosity and source for the afected movable atoms to keep track of their visibility.
 /datum/component/overlay_lighting/proc/remove_dynamic_lumi(atom/movable/affected_movable)
 	LAZYREMOVE(affected_movable.affected_dynamic_lights, src)
-	affected_movable.vis_contents -= visible_mask
 	affected_movable.update_dynamic_luminosity()
 
 
@@ -203,9 +277,11 @@
 	current_holder = new_holder
 	if(new_holder == null)
 		clean_old_turfs()
+		hide_mask()
 		return
 	if(overlay_lighting_flags & LIGHTING_ON)
 		add_dynamic_lumi(new_holder)
+		update_mask()
 	if(new_holder != parent && new_holder != parent_attached_to)
 		RegisterSignal(new_holder, COMSIG_QDELETING, PROC_REF(on_holder_qdel))
 		RegisterSignal(new_holder, COMSIG_MOVABLE_MOVED, PROC_REF(on_holder_moved))
@@ -282,6 +358,7 @@
 	range = clamp(CEILING(new_outer_range, 0.5), 1, 6)
 	var/pixel_bounds = ((range - 1) * 64) + 32
 	lumcount_range = CEILING(range, 1)
+	update_carrier_bounds()
 	visible_mask.icon = light_overlays["[pixel_bounds]"]
 	if(pixel_bounds == 32)
 		visible_mask.transform = null
@@ -338,6 +415,7 @@
 	if(current_holder)
 		add_dynamic_lumi(current_holder)
 	overlay_lighting_flags |= LIGHTING_ON
+	update_mask()
 	get_new_turfs()
 
 
@@ -348,6 +426,7 @@
 	if(current_holder)
 		remove_dynamic_lumi(current_holder)
 	overlay_lighting_flags &= ~LIGHTING_ON
+	hide_mask()
 	clean_old_turfs()
 
 
