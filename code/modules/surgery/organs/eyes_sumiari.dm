@@ -479,8 +479,8 @@
 #define SUMIARI_MOON_STEPS 1
 #define SUMIARI_STEP_GAP 2
 #define SUMIARI_STEPS_MAX 30
-#define SUMIARI_STEP_ALPHA 150
-#define SUMIARI_STEP_FADE (4 SECONDS)
+#define SUMIARI_STEP_ALPHA 210
+#define SUMIARI_STEP_FADE (5 SECONDS)
 #define SUMIARI_STEP_DECAL_ALPHA 110
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
@@ -5086,6 +5086,7 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	var/image/petal = sumiari_petal_image(T)
 	LAZYSET(fx_petals, petal, world.time + SUMIARI_PETAL_FALL + SUMIARI_PETAL_REST + SUMIARI_PETAL_FADE + 2)
 	fx_client.images += petal
+	sumiari_petal_play(petal)
 #endif
 #if SUMIARI_MOON_STEPS
 // A walker set foot on T: a fading print, if T is in this viewer's moonlit effect area.
@@ -5098,6 +5099,7 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	var/image/print = sumiari_step_image(T, walker.dir, walker.sumiari_step_foot)
 	LAZYSET(fx_steps, print, world.time + SUMIARI_STEP_FADE + 2)
 	fx_client.images += print
+	sumiari_step_play(print, T)
 #endif
 // Marks key as wanted this scan; TRUE when its image must be (re)built because the state changed.
 /obj/item/organ/eyes/sumiari/proc/fx_want(key, state, list/wanted)
@@ -5763,20 +5765,25 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 	var/variant = rand(1, 4)
 	var/image/petal = sumiari_fx_style(image(sumiari_petal_icon(variant), T), SUMIARI_FX_GAME_PLANE)
 	var/start_x = rand(-10, 10)
-	var/drift = pick(-1, 1) * rand(4, 8)
 	petal.pixel_x = start_x
 	petal.pixel_y = rand(14, 30)
 	petal.alpha = 0
+	return petal
+
+// The fall, rest and fade; started only once the petal is in client.images (see sumiari_step_play).
+/proc/sumiari_petal_play(image/petal)
+	var/start_x = petal.pixel_x
+	var/drift = pick(-1, 1) * rand(4, 8)
 	var/land_y = rand(-14, -4)
 	var/third = SUMIARI_PETAL_FALL / 3
-	var/drop = (land_y - petal.pixel_y) / 3
+	var/start_y = petal.pixel_y
+	var/drop = (land_y - start_y) / 3
 	var/peak = sumiari_fx_alpha(SUMIARI_PETAL_ALPHA)
-	animate(petal, alpha = peak, pixel_x = start_x + drift, pixel_y = petal.pixel_y + drop, transform = turn(matrix(), 70), time = third, easing = SINE_EASING)
-	animate(pixel_x = start_x - drift / 2, pixel_y = petal.pixel_y + drop * 2, transform = turn(matrix(), -40), time = third, easing = SINE_EASING)
+	animate(petal, alpha = peak, pixel_x = start_x + drift, pixel_y = start_y + drop, transform = turn(matrix(), 70), time = third, easing = SINE_EASING)
+	animate(pixel_x = start_x - drift / 2, pixel_y = start_y + drop * 2, transform = turn(matrix(), -40), time = third, easing = SINE_EASING)
 	animate(pixel_x = start_x + drift / 2, pixel_y = land_y, transform = turn(matrix(), 15), time = third, easing = SINE_EASING)
 	animate(alpha = peak, time = SUMIARI_PETAL_REST)
 	animate(alpha = 0, time = SUMIARI_PETAL_FADE, easing = SINE_EASING)
-	return petal
 
 // A small soft petal or leaf in the middle of a 32x32 icon: 1 amethyst petal, 2 lilac petal, 3 emerald leaf, 4 umber leaf.
 /proc/sumiari_petal_icon(variant)
@@ -5933,23 +5940,29 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	else
 		print.pixel_x = side
 		print.pixel_y = rand(-2, 2)
-	var/peak = sumiari_fx_alpha(SUMIARI_STEP_ALPHA * (1 - SUMIARI_PULSE_DEPTH + SUMIARI_PULSE_DEPTH * sumiari_fx_breath_now(T)))
-	print.alpha = round(peak * 0.4)
-	animate(print, alpha = peak, time = 3, easing = SINE_EASING)
-	animate(alpha = 0, time = SUMIARI_STEP_FADE - 3, easing = SINE_EASING | EASE_IN)
+	print.alpha = round(sumiari_step_peak(T) * 0.4)
 	return print
 
-// One soft foot in the middle of a 32x32 icon: a 3x6 oval, bright in the middle, a faint halo around it.
+/proc/sumiari_step_peak(turf/T)
+	return sumiari_fx_alpha(SUMIARI_STEP_ALPHA * (1 - SUMIARI_PULSE_DEPTH + SUMIARI_PULSE_DEPTH * sumiari_fx_breath_now(T)))
+
+// One-shot animations must start after the image is in client.images: animated first, the client is sent the
+// animation's end state (alpha 0) and shows nothing.
+/proc/sumiari_step_play(image/print, turf/T)
+	animate(print, alpha = sumiari_step_peak(T), time = 3, easing = SINE_EASING)
+	animate(alpha = 0, time = SUMIARI_STEP_FADE - 3, easing = SINE_EASING | EASE_IN)
+
+// One soft foot in the middle of a 32x32 icon: a 6x11 oval, bright in the middle, a faint halo around it.
 /proc/sumiari_step_icon()
 	var/static/icon/made
 	if(made)
 		return made
 	var/list/tone = rgb2num(SUMIARI_TONE_LILAC)
 	var/icon/print = sumiari_blank_icon()
-	for(var/py in 11 to 22)
-		for(var/px in 13 to 20)
-			var/dx = (px - 16.5) / 2.6
-			var/dy = (py - 16.5) / 4.6
+	for(var/py in 10 to 23)
+		for(var/px in 12 to 21)
+			var/dx = (px - 16.5) / 3.2
+			var/dy = (py - 16.5) / 5.6
 			var/r2 = dx * dx + dy * dy
 			if(r2 >= 1)
 				continue
