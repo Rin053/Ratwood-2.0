@@ -4897,13 +4897,19 @@ var/global/sumiari_moon_steps_enabled = TRUE
 
 // Joins an effect image to the moon's breath: its opacity swells and ebbs with the shared pulse, at its tile's place
 // in the wave. Rides the color matrix, not alpha, so it stacks with the image's own fades and shimmers.
-/proc/sumiari_fx_breathe(image/picture, turf/T, depth = SUMIARI_PULSE_DEPTH, salt = 0)
+// BYOND drops a plain alpha when a color matrix is assigned (alpha 40 then a matrix reads back 255 and draws
+// opaque), so with no matrix yet the image's own alpha is folded into the breath's matrix (fold_alpha). An image
+// that already carries a matrix has its alpha folded in by BYOND. Images that animate alpha themselves pass FALSE.
+/proc/sumiari_fx_breathe(image/picture, turf/T, depth = SUMIARI_PULSE_DEPTH, salt = 0, fold_alpha = TRUE)
 	if(!T || depth <= 0)
 		return picture
 	var/pulse = max(sumiari_moon_pulse, 2)
-	var/list/full = sumiari_fx_fade_matrix(picture.color, 1)
-	var/list/low = sumiari_fx_fade_matrix(picture.color, 1 - depth)
+	var/own = (fold_alpha && !islist(picture.color)) ? picture.alpha / 255 : 1
+	var/list/full = sumiari_fx_fade_matrix(picture.color, own)
+	var/list/low = sumiari_fx_fade_matrix(picture.color, own * (1 - depth))
 	picture.color = full
+	if(own != 1)
+		picture.alpha = 255
 	animate(picture, color = low, time = pulse / 2, delay = sumiari_fx_phase(T.x, T.y, salt), loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
 	animate(color = full, time = pulse / 2, easing = SINE_EASING)
 	return picture
@@ -5099,7 +5105,7 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	ripple.alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_LOW)
 	animate(ripple, alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_HIGH), pixel_x = 2 * drift, time = period / 2, loop = -1, easing = SINE_EASING)
 	animate(alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_LOW), pixel_x = -drift, time = period / 2, easing = SINE_EASING)
-	return sumiari_fx_breathe(ripple, T)
+	return sumiari_fx_breathe(ripple, T, fold_alpha = FALSE)
 
 // Dashes as list(x, y, length), inside 3..29 so a two-pixel drift never leaves the tile.
 /proc/sumiari_water_dashes(variant)
@@ -5579,6 +5585,11 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 		return made
 	var/icon/beam = sumiari_blank_icon()
 	beam.Scale(32, 128)
+	// Lilac-silver, the fog's tone, so shafts and mist read as the same moonlight.
+	var/list/lilac = rgb2num(SUMIARI_TONE_LILAC)
+	var/tone_r = round((lilac[1] + SUMIARI_FX_SILVER_R) / 2)
+	var/tone_g = round((lilac[2] + SUMIARI_FX_SILVER_G) / 2)
+	var/tone_b = round((lilac[3] + SUMIARI_FX_SILVER_B) / 2)
 	for(var/py in 1 to 128)
 		var/along = (py <= 12) ? (py / 12) * 1.1 : (128 - py) / 116
 		along = clamp(along, 0, 1.1)
@@ -5588,7 +5599,7 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 			var/opacity = along * max(0, 1 - across * across)
 			if(opacity <= 0.01)
 				continue
-			beam.DrawBox(rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B, round(clamp(255 * opacity, 0, 255))), px, py)
+			beam.DrawBox(rgb(tone_r, tone_g, tone_b, round(clamp(255 * opacity, 0, 255))), px, py)
 	made = beam
 	return beam
 
