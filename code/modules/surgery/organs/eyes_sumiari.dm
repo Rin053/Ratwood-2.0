@@ -199,10 +199,22 @@
 // tone, the same on every pixel, so it cannot turn texture into speckle and never changes which pixel is brighter.
 // It rides the moon relay, so the moon plate cuts it: none under roofs, in caves or at a fire, soft at every edge,
 // and it fades with dusk and dawn. HAZE is the peak added value (0..1 of full white) in the haze tone; 0 turns it off.
-#define SUMIARI_MOON_HAZE 0.2
+// Off by default: lifting every pixel read as a milky wash over the blacks. The moon glow below replaced it.
+#define SUMIARI_MOON_HAZE 0
 #define SUMIARI_MOON_HAZE_R 0.62
 #define SUMIARI_MOON_HAZE_G 0.5
 #define SUMIARI_MOON_HAZE_B 1
+// Moon glow: the ethereal version of the haze, on its own relay over the world. It takes the
+// lit world, keeps each pixel's brightness above GLOW_FLOOR, turns it into the haze tone, cuts it by the moon plate
+// (none under roofs, in caves or at a fire, faded with dusk and dawn) and adds it back softened, with a bloom halo.
+// So moonlit surfaces glow violet in proportion to how bright the moon makes them, while shadows and blacks stay
+// deep (the flat haze lifted them into a milky wash). Mob pixels are cut before the blur, so no mob gets an outline.
+// GLOW is the gain on brightness (0 turns the relay off); GLOW_SOFT the veil blur and GLOW_BLOOM the halo size, px.
+#define SUMIARI_MOON_GLOW 3.2
+#define SUMIARI_MOON_GLOW_FLOOR 0.02
+#define SUMIARI_MOON_GLOW_SOFT 1.5
+#define SUMIARI_MOON_GLOW_BLOOM 6
+#define SUMIARI_MOON_GLOW_BLOOM_ALPHA 170
 #define SUMIARI_SHADOW_R 0.1
 #define SUMIARI_SHADOW_G 0.45
 #define SUMIARI_SHADOW_B 1
@@ -1303,6 +1315,14 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	var/atom/movable/screen/sumiari_relay/moon = sumiari_find_piece(src, "sumiari moon")
 	var/atom/movable/screen/sumiari_relay/dim = sumiari_find_piece(src, "sumiari dim")
 	var/atom/movable/screen/sumiari_relay/lamp = sumiari_find_piece(src, "sumiari lamp")
+	var/atom/movable/screen/sumiari_relay/glow = sumiari_find_piece(src, "sumiari glow")
+	if(glow)
+		animate(glow)
+		glow.alpha = 0
+		glow.filters = null
+		if(wash_mode == SUMIARI_WASH_LIVE && sumiari_night_beauty_enabled && sumiari_moon_glow > 0)
+			glow.filters = world_stack_filters() + sumiari_moon_glow_filters()
+			glow.alpha = 255
 	if(lamp)
 		lamp.alpha = 0
 		lamp.filters = null
@@ -1350,6 +1370,31 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 		moon_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON))
 		moon.filters = moon_filters
 		moon.alpha = 255
+
+// After the lit world stack: mobs cut out, brightness above the floor in the haze tone, cut by the moon plate (roofs,
+// caves, fire, dusk and dawn), softened, bloomed.
+var/global/sumiari_moon_glow_stages = 5
+/proc/sumiari_moon_glow_filters()
+	var/list/all = list(
+		filter(type = "alpha", render_source = sumiari_world_render_source(GAME_PLANE_FOV_HIDDEN), flags = MASK_INVERSE),
+		filter(type = "color", color = sumiari_moon_glow_matrix()),
+		filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON)),
+		filter(type = "blur", size = sumiari_moon_glow_soft),
+		filter(type = "bloom", threshold = "#000000", size = sumiari_moon_glow_bloom, offset = 1, alpha = sumiari_moon_glow_bloom_alpha),
+	)
+	return all.Copy(1, clamp(sumiari_moon_glow_stages, 1, 5) + 1)
+
+// out = GLOW * tone * (luma - FLOOR), alpha kept. The client blends premultiplied, so luma already carries the mask.
+/proc/sumiari_moon_glow_matrix()
+	var/list/tone = list(SUMIARI_MOON_HAZE_R, SUMIARI_MOON_HAZE_G, SUMIARI_MOON_HAZE_B)
+	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
+	var/list/m = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+	for(var/input in 1 to 3)
+		for(var/output in 1 to 3)
+			m[(input - 1) * 4 + output] = sumiari_moon_glow * tone[output] * luma[input]
+	for(var/output in 1 to 3)
+		m[16 + output] = -sumiari_moon_glow * tone[output] * sumiari_moon_glow_floor
+	return m
 
 // Fades the moon look to a moon fade value over time_ds (0 snaps). The fade rides the moon plate's last color step
 // (the mask every moon effect is cut by: vivid color, sheen, shadows and the
@@ -1428,6 +1473,14 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	moon.alpha = 0
 	moon.blockscharging = FALSE
 	screen_pieces += moon
+	var/atom/movable/screen/sumiari_relay/glow = new
+	glow.name = "sumiari glow"
+	glow.plane = SUMIARI_RELAY_PLANE
+	glow.layer = SUMIARI_RELAY_LAYER_BASE + 4
+	glow.alpha = 0
+	glow.blend_mode = BLEND_ADD
+	glow.blockscharging = FALSE
+	screen_pieces += glow
 #endif
 #if SUMIARI_INK_VIGNETTE
 	var/atom/movable/screen/sumiari_vignette/vignette = new
@@ -4047,6 +4100,11 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 var/global/sumiari_night_beauty_enabled = TRUE
 // SUMIARI_MOON_HAZE, live (A/B tuning; the moon relay picks it up when its filters are rebuilt).
 var/global/sumiari_moon_haze = SUMIARI_MOON_HAZE
+var/global/sumiari_moon_glow = SUMIARI_MOON_GLOW
+var/global/sumiari_moon_glow_floor = SUMIARI_MOON_GLOW_FLOOR
+var/global/sumiari_moon_glow_soft = SUMIARI_MOON_GLOW_SOFT
+var/global/sumiari_moon_glow_bloom = SUMIARI_MOON_GLOW_BLOOM
+var/global/sumiari_moon_glow_bloom_alpha = SUMIARI_MOON_GLOW_BLOOM_ALPHA
 
 /proc/sumiari_is_moon_night()
 	return sumiari_moon_strength() > 0
@@ -4302,6 +4360,11 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	var/list/lift = list(hazed[1] - no_haze[1], hazed[2] - no_haze[2], hazed[3] - no_haze[3])
 	if(SUMIARI_MOON_HAZE > 0 && !(lift[3] > lift[1] && lift[1] > lift[2] && abs(lift[3] - sumiari_moon_haze * SUMIARI_MOON_HAZE_B) < 0.01))
 		bad += "haze lift=[lift[1]],[lift[2]],[lift[3]]"
+	// The glow keeps blacks black (nothing added below the floor) and lights a bright pixel in the haze tone.
+	var/list/glow_black = sumiari_apply_matrix(sumiari_moon_glow_matrix(), 0.01, 0.01, 0.01)
+	var/list/glow_white = sumiari_apply_matrix(sumiari_moon_glow_matrix(), 0.6, 0.6, 0.6)
+	if(sumiari_moon_glow > 0 && (max(glow_black[1], glow_black[2], glow_black[3]) > 0 || !(glow_white[3] > glow_white[1] && glow_white[1] > glow_white[2] && glow_white[2] > 0)))
+		bad += "glow black=[glow_black[3]] white=[glow_white[1]],[glow_white[2]],[glow_white[3]]"
 
 	var/list/violet = sumiari_shadow_violet()
 	var/violet_luma = violet[1] * SUMIARI_LUMA_R + violet[2] * SUMIARI_LUMA_G + violet[3] * SUMIARI_LUMA_B
