@@ -405,16 +405,18 @@
 #define SUMIARI_SWAY_SHIMMER_GAP 70
 // A tile whose lamp light (static corners plus movable lights, no sun) is above this counts as lit by a lamp or fire.
 #define SUMIARI_FX_LAMP_LIT 0.08
-// 7) Moonlit fog: faint silver-lilac mist lying on open-sky water, marsh and the grass at their banks. Each misty tile
-// gets one soft 64x64 wisp (no edges: its opacity falls off like a soft ellipse to nothing) centred on the tile, drifting
-// a few pixels to and fro on its own slow period and thickening and thinning with the moon's breath. Only about half
-// the candidate tiles carry a wisp (picked by position, so it never flickers between scans), at most FOG_MAX. Under
-// mobs, so it pools around legs instead of veiling them; never screen-sized.
+// 7) Moonlit mist: a few faint, low, thin streaks of silver-lilac mist lying on open-sky marsh, river and pond water
+// (not baths, sewers, blood pools or the sea), and on grass or snow hemmed in by that water on two sides. A misty
+// tile may carry one wisp: two or three thin horizontal ribbons, each a few pixels tall and fading out along its length,
+// centred low on the tile and spilling a tile to each side, drifting slowly sideways and thinning with the moon's
+// breath. About a third of the candidates (picked by position, so nothing flickers between scans), at most FOG_MAX.
+// Under mobs, so it curls around legs; never a blob, never screen-sized. (It was a 2-tile lilac ellipse at alpha 70,
+// on bank dirt too, and read as bright blobs on dry ground.)
 #define SUMIARI_MOON_FOG 1
-#define SUMIARI_FOG_MAX 45
-#define SUMIARI_FOG_ALPHA 70
-#define SUMIARI_FOG_DRIFT 7
-#define SUMIARI_FOG_PERIOD 110
+#define SUMIARI_FOG_MAX 24
+#define SUMIARI_FOG_ALPHA 110
+#define SUMIARI_FOG_DRIFT 10
+#define SUMIARI_FOG_PERIOD 180
 #define SUMIARI_FOG_VARIANTS 3
 // 8) Moonbeam shafts: in a gap of the canopy (an open-sky tile with no tree of its own but trees on at least
 // BEAM_TREES of its eight neighbours) a faint pale column of moonlight slants down onto the ground: a 32x128 soft
@@ -5010,6 +5012,12 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	made["[sides]"] = rim
 	return rim
 
+// Fades a steady effect image in from nothing, alongside its breath, so it never pops on as you walk.
+/proc/sumiari_fx_fade_in(image/picture, target_alpha)
+	picture.alpha = 0
+	animate(picture, alpha = target_alpha, time = SUMIARI_RIM_FADE_IN, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+	return picture
+
 // The object's own sprite in solid silver, minus itself shifted one pixel right and down: what is left are the
 // pixels whose up-left neighbour is outside the sprite, the edge that faces the moon. Rides the object (its offset
 // and transform), so it stays glued to the sprite.
@@ -5044,12 +5052,6 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	var/image/dew = sumiari_dew_image(T)
 	LAZYSET(fx_dew_images, dew, world.time + SUMIARI_DEW_RISE + SUMIARI_DEW_FALL + 2)
 	fx_client.images += dew
-
-// Fades a steady effect image in from nothing, alongside its breath, so it never pops on as you walk.
-/proc/sumiari_fx_fade_in(image/picture, target_alpha)
-	picture.alpha = 0
-	animate(picture, alpha = target_alpha, time = SUMIARI_RIM_FADE_IN, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
-	return picture
 
 /proc/sumiari_dew_image(turf/T)
 	var/image/dew = sumiari_fx_style(image(sumiari_dew_icon(), T), SUMIARI_FX_FLOOR_PLANE)
@@ -5294,55 +5296,79 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	return list(swayed, shimmer)
 
 // 7) Moonlit fog.
+GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /turf/open/water/river, /turf/open/water/pond, /turf/open/water/cleanshallow)))
+
+/proc/sumiari_fog_water(turf/T)
+	return T && is_type_in_typecache(T, GLOB.sumiari_fog_waters)
+
 /proc/sumiari_fog_ground(turf/T)
-	if(istype(T, /turf/open/water))
+	if(sumiari_fog_water(T))
 		return TRUE
-	if(!is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && !istype(T, /turf/open/floor/rogue/dirt))
+	if(!is_type_in_typecache(T, GLOB.sumiari_dew_turfs))
 		return FALSE
+	var/wet = 0
 	for(var/dir in GLOB.cardinals)
-		if(istype(get_step(T, dir), /turf/open/water))
-			return TRUE
-	return FALSE
+		if(sumiari_fog_water(get_step(T, dir)))
+			wet++
+	return wet >= 2
 
 /obj/item/organ/eyes/sumiari/proc/fx_fog(turf/T, list/wanted)
-	if(fx_fog_count >= SUMIARI_FOG_MAX || ((T.x * 5 + T.y * 3) % 2) || !sumiari_spare_turf_open(T) || !sumiari_fog_ground(T))
+	if(fx_fog_count >= SUMIARI_FOG_MAX || ((T.x * 7 + T.y * 5) % 3) || !sumiari_spare_turf_open(T) || !sumiari_fog_ground(T))
 		return
 	fx_fog_count++
 	var/key = "f[T.x],[T.y]"
-	if(fx_want(key, "1", wanted))
-		fx_put(key, "1", sumiari_fog_image(T))
+	if(fx_want(key, "2", wanted))
+		fx_put(key, "2", sumiari_fog_image(T))
 
 /proc/sumiari_fog_image(turf/T)
 	var/variant = ((T.x * 11 + T.y * 7) % SUMIARI_FOG_VARIANTS) + 1
 	var/image/wisp = sumiari_fx_style(image(sumiari_fog_icon(variant), T), SUMIARI_FX_GAME_PLANE)
-	wisp.pixel_x = -16
-	wisp.pixel_y = -16
-	wisp.alpha = sumiari_fx_alpha(SUMIARI_FOG_ALPHA)
-	var/period = SUMIARI_FOG_PERIOD + ((T.x * 29 + T.y * 13) % 7) * 8
+	wisp.pixel_x = -32
+	wisp.pixel_y = -10 + ((T.x * 13 + T.y * 3) % 5)
+	var/period = SUMIARI_FOG_PERIOD + ((T.x * 29 + T.y * 13) % 7) * 10
 	var/drift = ((T.x + T.y) % 2) ? SUMIARI_FOG_DRIFT : -SUMIARI_FOG_DRIFT
-	animate(wisp, pixel_x = -16 + drift, pixel_y = -15, time = period / 2, delay = (T.x * 17 + T.y * 5) % period, loop = -1, easing = SINE_EASING)
-	animate(pixel_x = -16 - drift, pixel_y = -17, time = period / 2, easing = SINE_EASING)
-	return sumiari_fx_breathe(wisp, T, SUMIARI_PULSE_DEPTH * 1.2, 7)
+	animate(wisp, pixel_x = -32 + drift, time = period / 2, delay = (T.x * 17 + T.y * 5) % period, loop = -1, easing = SINE_EASING)
+	animate(pixel_x = -32 - drift, time = period / 2, easing = SINE_EASING)
+	sumiari_fx_breathe(wisp, T, SUMIARI_PULSE_DEPTH, 7)
+	return sumiari_fx_fade_in(wisp, sumiari_fx_alpha(SUMIARI_FOG_ALPHA))
 
-// A soft lilac ellipse, 64x64, opacity (1 - r^2)^2 so it melts away at its rim. Variants differ in stretch.
+// 96x32: two or three thin ribbons (a soft gaussian a couple of pixels tall), each fading in and out along its length
+// with a gentle ripple, in a pale silver-lilac. Variants differ in ribbon count, height and length.
 /proc/sumiari_fog_icon(variant)
 	var/static/list/made = list()
 	if(made["[variant]"])
 		return made["[variant]"]
 	var/icon/wisp = sumiari_blank_icon()
-	wisp.Scale(64, 64)
-	var/list/tone = rgb2num(SUMIARI_TONE_LILAC)
-	var/stretch_x = list(30, 26, 31)[variant]
-	var/stretch_y = list(18, 22, 15)[variant]
-	for(var/py in 1 to 64)
-		for(var/px in 1 to 64)
-			var/dx = (px - 32.5) / stretch_x
-			var/dy = (py - 32.5) / stretch_y
-			var/r2 = dx * dx + dy * dy
-			if(r2 >= 1)
+	wisp.Scale(96, 32)
+	var/list/lilac = rgb2num(SUMIARI_TONE_LILAC)
+	var/tone_r = round((lilac[1] + SUMIARI_FX_SILVER_R) / 2)
+	var/tone_g = round((lilac[2] + SUMIARI_FX_SILVER_G) / 2)
+	var/tone_b = round((lilac[3] + SUMIARI_FX_SILVER_B) / 2)
+	// Ribbons: centre y, half thickness, centre x, half length, ripple phase.
+	var/list/ribbons = list(
+		list(list(10, 1.6, 44, 40, 0), list(15, 1.2, 56, 30, 90)),
+		list(list(9, 1.4, 50, 38, 40), list(13, 1.8, 40, 34, 200), list(18, 1.1, 60, 22, 120)),
+		list(list(11, 2, 48, 44, 300), list(16, 1.2, 38, 26, 10)),
+	)[variant]
+	var/list/field = new /list(96 * 32)
+	for(var/list/ribbon as anything in ribbons)
+		for(var/px in 1 to 96)
+			var/along = (px - ribbon[3]) / ribbon[4]
+			if(abs(along) >= 1)
 				continue
-			var/opacity = (1 - r2) * (1 - r2)
-			wisp.DrawBox(rgb(tone[1], tone[2], tone[3], round(255 * opacity)), px, py)
+			var/length_fade = (1 - along * along) ** 2
+			var/ripple = 0.75 + 0.25 * sin(px * 9 + ribbon[5])
+			var/wave = sin(px * 4 + ribbon[5]) * 1.2
+			for(var/py in 1 to 32)
+				var/dy = (py - ribbon[1] - wave) / ribbon[2]
+				if(abs(dy) > 3)
+					continue
+				var/index = (py - 1) * 96 + px
+				field[index] = min(1, (field[index] || 0) + length_fade * ripple * NUM_E ** (-dy * dy / 2))
+	for(var/index in 1 to length(field))
+		var/v = field[index]
+		if(v && v > 0.02)
+			wisp.DrawBox(rgb(tone_r, tone_g, tone_b, round(255 * v)), ((index - 1) % 96) + 1, round((index - 1) / 96) + 1)
 	made["[variant]"] = wisp
 	return wisp
 
