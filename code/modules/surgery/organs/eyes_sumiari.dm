@@ -530,6 +530,26 @@
 #define SUMIARI_STEP_GRASS_LIFT 1.2
 #define SUMIARI_STEP_SNOW_SHADE 0.3
 #define SUMIARI_STEP_SNOW_LIFT 1.2
+// 13) Moon spirits. Now and then (every SPIRIT_GAP_LOW..HIGH, at most SPIRIT_MAX in the air) a small luminous sprite
+// shows near the viewer on a moonlit open-sky tile: a silver-lilac wisp (a soft round mote with a bright core) or,
+// one time in SPIRIT_BIRD_CHANCE, a ghostly swift (a pale scythe-winged silhouette, wings beating) trailing
+// SPIRIT_TRAIL fading jewel motes. It fades in, flies off along a curve, up and away to one side, and fades out, all
+// timed to the moon's breath (and brighter at its top). Drawn on the canopy fx plane, so like every moon effect it is
+// part of the moon relay: masked by the moon (none under hard cover or by a fire), under the HUD and the vision cone's
+// wedge. No moths.
+#define SUMIARI_MOON_SPIRITS 1
+#define SUMIARI_SPIRIT_MAX 3
+#define SUMIARI_SPIRIT_GAP_LOW (6 SECONDS)
+#define SUMIARI_SPIRIT_GAP_HIGH (15 SECONDS)
+#define SUMIARI_SPIRIT_BIRD_CHANCE 25
+#define SUMIARI_SPIRIT_ALPHA 225
+// Tiles from the viewer a spirit may start on (x; y is one less), never the viewer's own tile.
+#define SUMIARI_SPIRIT_RANGE 4
+#define SUMIARI_SPIRIT_TRAIL 3
+// Deciseconds between the bird and each mote of its trail.
+#define SUMIARI_SPIRIT_TRAIL_GAP 2
+// Points on the curved flight path (the path is animated straight between them).
+#define SUMIARI_SPIRIT_PATH_POINTS 6
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -774,6 +794,10 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/fx_frost_step = 0
 	// Footprints glowing right now (image -> expiry).
 	var/list/fx_steps
+	// Moon spirits in the air (image -> expiry), their trail motes, and when the next one may show.
+	var/list/fx_spirits
+	var/list/fx_spirit_trails
+	var/fx_spirit_next = 0
 	// Bloom: how open the night flowers are drawn right now (null until the first scan).
 	var/fx_bloom
 	var/beauty_timer
@@ -4273,6 +4297,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	glint_center = null
 	beauty_anchors = null
 	beauty_client = null
+	clear_spirits()
 
 /obj/item/organ/eyes/sumiari/proc/beauty_tick()
 	if(QDELETED(src) || !vision_on)
@@ -5000,6 +5025,7 @@ var/global/sumiari_moon_petals_enabled = TRUE
 var/global/sumiari_fx_tile_share = 1
 var/global/sumiari_moon_frost_enabled = TRUE
 var/global/sumiari_moon_steps_enabled = TRUE
+var/global/sumiari_moon_spirits_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -5170,6 +5196,7 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	for(var/image/print as anything in fx_steps)
 		fx_client?.images -= print
 	fx_steps = null
+	clear_spirits()
 	fx_bloom = null
 	fx_images = null
 	fx_states = null
@@ -5289,6 +5316,9 @@ var/global/sumiari_moon_steps_enabled = TRUE
 #endif
 #if SUMIARI_MOON_STEPS
 	fx_steps = sumiari_fx_expire(fx_client, fx_steps)
+#endif
+#if SUMIARI_MOON_SPIRITS
+	fx_live_spirits(center)
 #endif
 
 #if SUMIARI_MOON_PETALS
@@ -6046,6 +6076,204 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 			live -= old
 	return length(live) ? live : null
 
+// 13) Moon spirits. Cleared with the effects and with the night beauty (vision off, day, cover, sense blocked).
+/obj/item/organ/eyes/sumiari/proc/clear_spirits()
+	for(var/image/spirit as anything in fx_spirits)
+		fx_client?.images -= spirit
+		beauty_client?.images -= spirit
+		owner?.client?.images -= spirit
+	for(var/image/mote as anything in fx_spirit_trails)
+		fx_client?.images -= mote
+		beauty_client?.images -= mote
+		owner?.client?.images -= mote
+	fx_spirits = null
+	fx_spirit_trails = null
+
+#if SUMIARI_MOON_SPIRITS
+/obj/item/organ/eyes/sumiari/proc/fx_live_spirits(turf/center)
+	fx_spirits = sumiari_fx_expire(fx_client, fx_spirits)
+	fx_spirit_trails = sumiari_fx_expire(fx_client, fx_spirit_trails)
+	if(!sumiari_moon_spirits_enabled || !fx_client || world.time < fx_spirit_next || LAZYLEN(fx_spirits) >= SUMIARI_SPIRIT_MAX)
+		return
+	var/turf/T = sumiari_spirit_spot(center)
+	if(!T)
+		fx_spirit_next = world.time + 2 SECONDS
+		return
+	fx_spirit_next = world.time + rand(SUMIARI_SPIRIT_GAP_LOW, SUMIARI_SPIRIT_GAP_HIGH)
+	var/bird = prob(SUMIARI_SPIRIT_BIRD_CHANCE)
+	var/side = pick(-1, 1)
+	var/list/path = sumiari_spirit_path(bird, side)
+	var/life = sumiari_spirit_life(bird)
+	var/breath = sumiari_fx_breath_now(T)
+	var/peak = sumiari_fx_alpha(SUMIARI_SPIRIT_ALPHA * (0.75 + 0.25 * breath))
+	var/image/spirit = sumiari_spirit_image(T, bird, side < 0)
+	LAZYSET(fx_spirits, spirit, world.time + life + 2)
+	fx_client.images += spirit
+	sumiari_spirit_play(spirit, path, life, peak, 0, bird)
+	if(!bird)
+		return
+	var/list/jewels = list(SUMIARI_TONE_AMETHYST, SUMIARI_TONE_SAPPHIRE, SUMIARI_TONE_EMERALD)
+	for(var/i in 1 to SUMIARI_SPIRIT_TRAIL)
+		var/image/mote = sumiari_spirit_mote_image(T, jewels[(i - 1) % length(jewels) + 1], spirit)
+		var/lag = i * SUMIARI_SPIRIT_TRAIL_GAP
+		LAZYSET(fx_spirit_trails, mote, world.time + life + lag + 2)
+		fx_client.images += mote
+		sumiari_spirit_play(mote, path, life, round(peak * (0.55 - 0.12 * i)), lag, FALSE)
+
+// A moonlit open-sky tile near the viewer, outside lamp pools; null if a few tries find none.
+/proc/sumiari_spirit_spot(turf/center)
+	if(!center)
+		return null
+	for(var/attempt in 1 to 6)
+		var/dx = rand(-SUMIARI_SPIRIT_RANGE, SUMIARI_SPIRIT_RANGE)
+		var/dy = rand(-(SUMIARI_SPIRIT_RANGE - 1), SUMIARI_SPIRIT_RANGE - 1)
+		if(!dx && !dy)
+			continue
+		var/turf/T = locate(center.x + dx, center.y + dy, center.z)
+		if(T && !isclosedturf(T) && sumiari_spare_turf_open(T) && sumiari_fx_lamp_share(T) > 0)
+			return T
+	return null
+
+// How long a spirit is in the air, in deciseconds: part of the moon's breath (a bird is quicker than a wisp).
+/proc/sumiari_spirit_life(bird)
+	var/life = clamp(round(max(sumiari_moon_pulse, 1) * 0.6), 40, 90)
+	return bird ? round(life * 0.7) : life
+
+// Offsets from the start (pixels) along a curve up and away to one side (side -1 left, 1 right): a quadratic bezier
+// whose control point pulls the first part of the flight back across, so it bends as it leaves.
+/proc/sumiari_spirit_path(bird, side)
+	var/end_x = side * (bird ? rand(110, 170) : rand(36, 80))
+	var/end_y = bird ? rand(70, 120) : rand(48, 96)
+	var/control_x = -side * rand(8, 28)
+	var/control_y = end_y * (rand(45, 75) / 100)
+	var/list/path = list()
+	for(var/i in 1 to SUMIARI_SPIRIT_PATH_POINTS)
+		var/t = i / SUMIARI_SPIRIT_PATH_POINTS
+		var/u = 1 - t
+		path += list(list(round(2 * u * t * control_x + t * t * end_x), round(2 * u * t * control_y + t * t * end_y)))
+	return path
+
+/proc/sumiari_spirit_image(turf/T, bird, facing_left)
+	var/image/spirit = sumiari_fx_style(image(bird ? sumiari_spirit_bird_icon(facing_left) : sumiari_spirit_wisp_icon(rand(1, 3)), T), SUMIARI_FX_UPPER_PLANE)
+	spirit.layer = 3
+	spirit.pixel_x = rand(-8, 8)
+	spirit.pixel_y = rand(6, 20)
+	spirit.alpha = 0
+	return spirit
+
+// A jewel mote of a bird's trail, starting where the bird does.
+/proc/sumiari_spirit_mote_image(turf/T, tone, image/leader)
+	var/image/mote = sumiari_fx_style(image(sumiari_spirit_mote_icon(tone), T), SUMIARI_FX_UPPER_PLANE)
+	mote.layer = 2
+	mote.pixel_x = leader.pixel_x
+	mote.pixel_y = leader.pixel_y
+	mote.alpha = 0
+	return mote
+
+// Fade in, fly the path, fade out. Started only once the image is in client.images (an animate on an image not yet
+// shown is lost). Alpha only, never color: a color animation would reset the alpha.
+/proc/sumiari_spirit_play(image/spirit, list/path, life, peak, lag = 0, bird = FALSE)
+	var/x0 = spirit.pixel_x
+	var/y0 = spirit.pixel_y
+	var/leg = max(round(life / length(path)), 1)
+	var/first = TRUE
+	for(var/list/point in path)
+		if(first)
+			animate(spirit, pixel_x = x0 + point[1], pixel_y = y0 + point[2], time = leg, delay = lag, easing = SINE_EASING | EASE_IN)
+			first = FALSE
+		else
+			animate(pixel_x = x0 + point[1], pixel_y = y0 + point[2], time = leg)
+	var/fade_in = round(life * 0.25)
+	var/fade_out = round(life * 0.35)
+	animate(spirit, alpha = peak, time = fade_in, delay = lag, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+	animate(alpha = peak, time = max(life - fade_in - fade_out, 1))
+	animate(alpha = 0, time = fade_out, easing = SINE_EASING)
+	if(bird)
+		// Wing beats: the span (vertical in the icon) folds and opens.
+		animate(spirit, transform = matrix(1, 0, 0, 0, 0.45, 0), time = 2, loop = -1, flags = ANIMATION_PARALLEL)
+		animate(transform = matrix(), time = 2)
+		animate(transform = matrix(), time = rand(3, 6))
+	else
+		// A wisp swells a little with the breath as it goes.
+		animate(spirit, transform = matrix() * 1.2, time = max(round(life / 4), 1), loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+		animate(transform = matrix() * 0.9, time = max(round(life / 4), 1), easing = SINE_EASING)
+
+// A soft round wisp: a bright silver core inside a halo, 1 silver-lilac, 2 lilac-amethyst, 3 lilac-sapphire.
+/proc/sumiari_spirit_wisp_icon(variant)
+	var/static/list/made = list()
+	if(made["[variant]"])
+		return made["[variant]"]
+	var/list/halos = list(SUMIARI_TONE_LILAC, SUMIARI_TONE_AMETHYST, SUMIARI_TONE_SAPPHIRE)
+	var/halo = halos[clamp(variant, 1, 3)]
+	var/core = rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B)
+	var/icon/wisp = sumiari_blank_icon()
+	var/radius = 5.5
+	for(var/x in 10 to 23)
+		for(var/y in 10 to 23)
+			var/d = sqrt((x - 16.5) ** 2 + (y - 16.5) ** 2)
+			if(d >= radius)
+				continue
+			var/a = round(255 * (1 - d / radius) ** 1.4)
+			if(a < 8)
+				continue
+			wisp.DrawBox(sumiari_fx_tone(d < 1.8 ? core : (d < 3 ? SUMIARI_TONE_LILAC : halo), a), x, y)
+	made["[variant]"] = wisp
+	return wisp
+
+// A trail mote: a small soft dot in one jewel tone.
+/proc/sumiari_spirit_mote_icon(tone)
+	var/static/list/made = list()
+	if(made[tone])
+		return made[tone]
+	var/icon/mote = sumiari_blank_icon()
+	for(var/x in 14 to 19)
+		for(var/y in 14 to 19)
+			var/d = sqrt((x - 16.5) ** 2 + (y - 16.5) ** 2)
+			if(d < 2.6)
+				mote.DrawBox(sumiari_fx_tone(d < 1 ? SUMIARI_TONE_LILAC : tone, round(255 * (1 - d / 2.6))), x, y)
+	made[tone] = mote
+	return mote
+
+// Inside the swift's silhouette (u along the flight, v across it, pixels from the middle of the icon)?
+/proc/sumiari_spirit_bird_inside(u, v)
+	if((u / 4) ** 2 + (v / 1.6) ** 2 <= 1)
+		return TRUE
+	if((u - 3.6) ** 2 + v ** 2 <= 4.4)
+		return TRUE
+	var/t = abs(v) / 11
+	if(t <= 1)
+		var/sweep = 1 - 7 * t ** 1.5
+		if(abs(u - sweep) <= 2.3 * (1 - t) + 0.4)
+			return TRUE
+	if(u <= -3 && u >= -7.5 && abs(abs(v) - 0.55 * (-u - 3)) <= 0.75)
+		return TRUE
+	return FALSE
+
+// The ghostly swift, flying right (or left): lilac body, a silver leading edge, a darker lilac trailing edge.
+/proc/sumiari_spirit_bird_icon(facing_left)
+	var/static/list/made = list()
+	var/key = facing_left ? "l" : "r"
+	if(made[key])
+		return made[key]
+	var/icon/bird = sumiari_blank_icon()
+	for(var/x in 1 to 32)
+		for(var/y in 1 to 32)
+			var/u = x - 16.5
+			var/v = y - 16.5
+			if(!sumiari_spirit_bird_inside(u, v))
+				continue
+			if(!sumiari_spirit_bird_inside(u + 1, v))
+				bird.DrawBox(sumiari_fx_silver(255), x, y)
+			else if(!sumiari_spirit_bird_inside(u - 1, v))
+				bird.DrawBox(sumiari_fx_tone(SUMIARI_TONE_AMETHYST, 200), x, y)
+			else
+				bird.DrawBox(sumiari_fx_tone(SUMIARI_TONE_LILAC, 235), x, y)
+	if(facing_left)
+		bird.Flip(WEST)
+	made[key] = bird
+	return bird
+#endif
+
 // 10) Drifting petals and leaves.
 /obj/item/organ/eyes/sumiari/proc/fx_petal_source(turf/T)
 	if(isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_fx_lamp_lit(T))
@@ -6550,9 +6778,34 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 		bad += "shrine"
 	qdel(cross)
 #endif
+#if SUMIARI_MOON_SPIRITS
+	var/icon/spirit_wisp_icon = sumiari_spirit_wisp_icon(2)
+	var/icon/bird_right = sumiari_spirit_bird_icon(FALSE)
+	var/icon/bird_left = sumiari_spirit_bird_icon(TRUE)
+	var/bird_pixels = 0
+	var/bird_unflipped = FALSE
+	for(var/bx in 1 to 32)
+		for(var/by in 1 to 32)
+			if(bird_right.GetPixel(bx, by))
+				bird_pixels++
+			if(bird_right.GetPixel(bx, by) != bird_left.GetPixel(33 - bx, by))
+				bird_unflipped = TRUE
+	if(spirit_wisp_icon.GetPixel(16, 16) == null || spirit_wisp_icon.GetPixel(2, 2) != null || bird_pixels < 40 || bird_unflipped || bird_right.GetPixel(16, 16) == null)
+		bad += "spirit icons wisp=[spirit_wisp_icon.GetPixel(16, 16)] bird=[bird_pixels] unflipped=[bird_unflipped]"
+	var/image/wisp_image = sumiari_spirit_image(spot, FALSE, FALSE)
+	var/list/flight = sumiari_spirit_path(TRUE, -1)
+	var/list/flight_end = flight[length(flight)]
+	if(wisp_image.plane != SUMIARI_FX_UPPER_PLANE || wisp_image.alpha != 0 || length(flight) != SUMIARI_SPIRIT_PATH_POINTS || flight_end[1] >= 0 || flight_end[2] <= 0 || sumiari_spirit_life(TRUE) >= sumiari_spirit_life(FALSE))
+		bad += "spirit image plane=[wisp_image.plane] end=[flight_end[1]],[flight_end[2]]"
+	var/image/stray = sumiari_spirit_image(spot, TRUE, TRUE)
+	LAZYSET(eyes.fx_spirits, stray, world.time + 100)
+	eyes.clear_spirits()
+	if(eyes.fx_spirits || eyes.fx_spirit_trails)
+		bad += "spirit cleanup"
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] sprite_rims=[SUMIARI_MOON_SPRITE_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST] steps=[SUMIARI_MOON_STEPS]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] sprite_rims=[SUMIARI_MOON_SPRITE_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST] steps=[SUMIARI_MOON_STEPS] spirits=[SUMIARI_MOON_SPIRITS]")
 	return TRUE
