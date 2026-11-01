@@ -482,6 +482,10 @@
 #define SUMIARI_STEP_ALPHA 210
 #define SUMIARI_STEP_FADE (5 SECONDS)
 #define SUMIARI_STEP_DECAL_ALPHA 110
+// Prints on dark grass are lifted a touch (x this, capped at 255); snow prints use the jewel-toned icon instead.
+#define SUMIARI_STEP_GRASS_LIFT 1.2
+#define SUMIARI_STEP_SNOW_SHADE 0.3
+#define SUMIARI_STEP_SNOW_LIFT 1.2
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -4074,6 +4078,13 @@ GLOBAL_LIST_INIT(sumiari_dew_turfs, typecacheof(list(
 	/turf/open/floor/rogue/snowpatchy,
 )))
 
+// Snow, where moon prints are jewel-toned so they read on white.
+GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
+	/turf/open/floor/rogue/snow,
+	/turf/open/floor/rogue/snowrough,
+	/turf/open/floor/rogue/snowpatchy,
+)))
+
 // A tile that may glint: open sky, not lit by any lamp, and water, a wet floor, or a metal item on it.
 /proc/sumiari_glint_spot(turf/T)
 	if(!isopenturf(T))
@@ -5946,7 +5957,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 		eyes.fx_footstep(T, walker)
 
 /proc/sumiari_step_image(turf/T, walk_dir, left_foot)
-	var/image/print = sumiari_fx_style(image(sumiari_step_icon(), T), SUMIARI_FX_FLOOR_PLANE)
+	var/image/print = sumiari_fx_style(image(sumiari_step_icon(sumiari_step_on_snow(T)), T), SUMIARI_FX_FLOOR_PLANE)
 	var/side = left_foot ? -3 : 3
 	if(walk_dir & (EAST | WEST))
 		print.transform = turn(matrix(), 90)
@@ -5959,7 +5970,19 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	return print
 
 /proc/sumiari_step_peak(turf/T)
-	return sumiari_fx_alpha(SUMIARI_STEP_ALPHA * (1 - SUMIARI_PULSE_DEPTH + SUMIARI_PULSE_DEPTH * sumiari_fx_breath_now(T)))
+	var/lift = 1
+	if(sumiari_step_on_snow(T))
+		lift = SUMIARI_STEP_SNOW_LIFT
+	else if(is_type_in_typecache(T, GLOB.sumiari_dew_turfs))
+		lift = SUMIARI_STEP_GRASS_LIFT
+	return sumiari_fx_alpha(min(255, SUMIARI_STEP_ALPHA * lift * (1 - SUMIARI_PULSE_DEPTH + SUMIARI_PULSE_DEPTH * sumiari_fx_breath_now(T))))
+
+/proc/sumiari_step_snow_heart()
+	var/list/tone = rgb2num(SUMIARI_TONE_AMETHYST)
+	return list(round(tone[1] * SUMIARI_STEP_SNOW_SHADE), round(tone[2] * SUMIARI_STEP_SNOW_SHADE), round(tone[3] * SUMIARI_STEP_SNOW_SHADE))
+
+/proc/sumiari_step_on_snow(turf/T)
+	return is_type_in_typecache(T, GLOB.sumiari_step_snow)
 
 // One-shot animations must start after the image is in client.images: animated first, the client is sent the
 // animation's end state (alpha 0) and shows nothing.
@@ -5968,11 +5991,15 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	animate(alpha = 0, time = SUMIARI_STEP_FADE - 3, easing = SINE_EASING | EASE_IN)
 
 // One soft foot in the middle of a 32x32 icon: a 6x11 oval, bright in the middle, a faint halo around it.
-/proc/sumiari_step_icon()
-	var/static/icon/made
-	if(made)
-		return made
+// The print: a soft oval, silver at the heart fading to lilac at the rim. On snow, which is already near white,
+// a silver print vanishes (and the night grade lifts bright snow to white), so the snow print is a jewel-toned
+// shadow instead: shaded amethyst at the heart, like moonlit snow pressed into a hollow, easing to lilac at the rim.
+/proc/sumiari_step_icon(snow = FALSE)
+	var/static/list/made = list()
+	if(made["[snow]"])
+		return made["[snow]"]
 	var/list/tone = rgb2num(SUMIARI_TONE_LILAC)
+	var/list/heart = snow ? sumiari_step_snow_heart() : list(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B)
 	var/icon/print = sumiari_blank_icon()
 	for(var/py in 10 to 23)
 		for(var/px in 12 to 21)
@@ -5983,8 +6010,8 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 				continue
 			var/opacity = (1 - r2)
 			var/mix = 1 - r2 * 0.5
-			print.DrawBox(rgb(round(tone[1] * (1 - mix) + SUMIARI_FX_SILVER_R * mix), round(tone[2] * (1 - mix) + SUMIARI_FX_SILVER_G * mix), round(tone[3] * (1 - mix) + SUMIARI_FX_SILVER_B * mix), round(255 * opacity)), px, py)
-	made = print
+			print.DrawBox(rgb(round(tone[1] * (1 - mix) + heart[1] * mix), round(tone[2] * (1 - mix) + heart[2] * mix), round(tone[3] * (1 - mix) + heart[3] * mix), round(255 * opacity)), px, py)
+	made["[snow]"] = print
 	return print
 
 // Footprint decals (blood, mud) on moonlit open ground: a silver-lilac copy that breathes with the moon.
@@ -6169,6 +6196,9 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	var/icon/print_icon = sumiari_step_icon()
 	if(print.plane != SUMIARI_FX_FLOOR_PLANE || print.pixel_y != -3 || print_icon.GetPixel(16, 16) == null || print_icon.GetPixel(16, 25) != null)
 		bad += "footprint"
+	var/icon/snow_print_icon = sumiari_step_icon(TRUE)
+	if(snow_print_icon == print_icon || snow_print_icon.GetPixel(16, 16) == print_icon.GetPixel(16, 16))
+		bad += "snow footprint"
 	var/obj/effect/decal/cleanable/blood/footprints/old_print = new(spot)
 	var/image/decal_glow = sumiari_step_decal_image(old_print)
 	if(decal_glow.plane != SUMIARI_FX_FLOOR_PLANE || decal_glow.loc != old_print || !(decal_glow.appearance_flags & KEEP_TOGETHER))
