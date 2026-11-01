@@ -566,6 +566,8 @@
 #define SUMIARI_TARGET_COOKIE_RED "sumiari_cookie_r"
 #define SUMIARI_TARGET_COOKIE_GREEN "sumiari_cookie_g"
 #define SUMIARI_TARGET_COOKIE_BLUE "sumiari_cookie_b"
+#define SUMIARI_PLANE_KNEE -68
+#define SUMIARI_TARGET_KNEE "sumiari_knee"
 
 // Stored in place of a null render_target. BYOND drops a list entry whose value is null.
 #define SUMIARI_NO_TARGET ""
@@ -630,6 +632,7 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/atom/movable/screen/sumiari_sampler/glare_plate
 	// The moon mask sampler. Its alpha matrix is rebuilt on a time-of-day change, so night silver turns on and off.
 	var/atom/movable/screen/sumiari_sampler/moon_plate
+	var/atom/movable/screen/sumiari_sampler/knee_plate
 	// Night senses: body -> image shown to sense_client, and body -> the dir/lying the image was copied at.
 	var/list/sensed_images
 	var/list/sensed_shapes
@@ -770,6 +773,7 @@ var/global/turf/sumiari_test_dark_turf
 	wash_mode = SUMIARI_WASH_LIVE
 	glare_plate = null
 	moon_plate = null
+	knee_plate = null
 	clear_master_wash(M)
 	clear_screen_pieces(M)
 	restore_render_targets(M)
@@ -866,6 +870,7 @@ var/global/turf/sumiari_test_dark_turf
 /obj/item/organ/eyes/sumiari/proc/build_screen_pieces()
 	glare_plate = null
 	moon_plate = null
+	knee_plate = null
 	if(screen_pieces)
 		QDEL_LIST(screen_pieces)
 	screen_pieces = list()
@@ -899,6 +904,8 @@ var/global/turf/sumiari_test_dark_turf
 		glare_plate = sampler
 	if(target_name == SUMIARI_TARGET_MOON)
 		moon_plate = sampler
+	if(target_name == SUMIARI_TARGET_KNEE)
+		knee_plate = sampler
 	screen_pieces += plate
 	screen_pieces += sampler
 	return sampler
@@ -1046,10 +1053,6 @@ var/global/turf/sumiari_test_dark_turf
 #else
 		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = (plane == GAME_PLANE_FOV_HIDDEN) ? mob_look : world_look)
 #endif
-#if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
-		if(plane in GLOB.sumiari_moon_knee_planes)
-			stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_SUBTRACT, color = knee_look)
-#endif
 #if SUMIARI_MOON_FX
 		// The moon effects that belong with this plane, right on top of it, in their own colors (no moon grade).
 		var/fx_plane = sumiari_fx_plane_for(plane)
@@ -1060,9 +1063,24 @@ var/global/turf/sumiari_test_dark_turf
 			stacked += filter(type = "layer", render_source = sumiari_fx_target(fx_plane), blend_mode = BLEND_OVERLAY)
 #endif
 #endif
+#if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
+	// The knee comes off once, from its own plate. Five extra layers on this relay (one per kneed plane) pushed the
+	// filter list past what the client renders, and the whole moonlit world drew black.
+	if(knee_plate)
+		knee_plate.filters = sumiari_moon_knee_filters(knee_look)
+		stacked += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_KNEE), blend_mode = BLEND_SUBTRACT)
+#endif
 	if(gain != 1)
 		stacked += filter(type = "color", color = sumiari_scale_matrix_rgb(color_matrix_identity(), gain))
 	return stacked
+
+// The knee plate: each kneed plane's highlight excess over the knee, stacked in draw order like the world.
+/proc/sumiari_moon_knee_filters(list/knee_look)
+	var/list/out = list()
+	for(var/plane in GLOB.sumiari_vision_plane_order)
+		if(plane in GLOB.sumiari_moon_knee_planes)
+			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = knee_look)
+	return out
 
 // Planes whose highlights get the knee: ground, walls, objects. Not mobs (neutral, never near 1) or open space.
 GLOBAL_LIST_INIT(sumiari_moon_knee_planes, list(FLOOR_PLANE, WALL_PLANE, GAME_PLANE_LOWER, GAME_PLANE, GAME_PLANE_UPPER))
@@ -1203,6 +1221,10 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	// Sky plane gray (open sky 1, border partial, roof and cave 0), minus the lamp wash, into alpha.
 	// The wash plate already carries the gain, so a fully firelit pixel subtracts to 0 and stays neutral.
 	add_plate(SUMIARI_PLANE_MOON, SUMIARI_TARGET_MOON, SUNLIGHTING_RENDER_TARGET, sumiari_moon_mask_filters())
+#if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
+	// No render source: the blank canvas, then the knee layers (filled by moon_stack_filters).
+	add_plate(SUMIARI_PLANE_KNEE, SUMIARI_TARGET_KNEE, null, list())
+#endif
 	var/atom/movable/screen/sumiari_relay/moon = new
 	moon.name = "sumiari moon"
 	moon.plane = SUMIARI_RELAY_PLANE
