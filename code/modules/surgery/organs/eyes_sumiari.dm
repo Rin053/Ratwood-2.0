@@ -319,6 +319,16 @@
 // Wall faces take their corners from the same map (open sky 1, bled floor its value), not from the vanilla spread.
 #define SUMIARI_MOON_BLEED 1
 #define SUMIARI_BLEED_RANGE 3
+// Daylight (and any outdoor light) spill, same rules. The vanilla sun plane spreads up to GLOBAL_LIGHT_RANGE tiles
+// into roofed rooms (outdoor_datum calc_sunlight_spread), through closed curtains, and that plane feeds the lighting
+// plane (lighting_backdrop/sunlight) and so the whole Sumiari wash by day, dusk and dawn. For these eyes only, each
+// roofed tile near the owner whose vanilla sun overlay has a corner the bleed walk cannot reach gets a client image
+// on SUNLIGHTING_PLANE, above the vanilla overlay, drawing the same corners with the unreachable ones at 0. Reachable
+// corners (touching unshut open sky or a roofed tile the walk got to within SPILL_RANGE steps) keep the vanilla value,
+// so an open door or clear window still lets the day in exactly as before. Lamps and fires are their own lighting
+// objects, not the sun plane, and are untouched. Nobody else sees the images.
+#define SUMIARI_SKY_SPILL_CUT 1
+#define SUMIARI_SPILL_RANGE 5
 // Grid cells for sumiari_moon_bleed_grid.
 #define SUMIARI_BLEED_WALL 0
 #define SUMIARI_BLEED_SKY 1
@@ -783,6 +793,12 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/atom/movable/screen/sumiari_sampler/moon_plate
 	var/atom/movable/screen/sumiari_sampler/knee_plate
 	var/atom/movable/screen/sumiari_sampler/skylight_plate
+	// Sun spill cut (SUMIARI_SKY_SPILL_CUT): turf -> image on SUNLIGHTING_PLANE, turf -> corner key.
+	var/client/spill_client
+	var/list/spill_images
+	var/list/spill_keys
+	// One bleed walk per tick, shared by the cliff (moon bleed) and spill passes: list(key, grid, steps, x0, y0, w, h).
+	var/list/bleed_cache
 	// Night senses: body -> image shown to sense_client, and body -> the dir/lying the image was copied at.
 	var/list/sensed_images
 	var/list/sensed_shapes
@@ -4034,6 +4050,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	sense_tick()
 	place_beauty()
 	cliff_tick()
+	spill_tick()
 	fx_tick(TRUE)
 
 /obj/item/organ/eyes/sumiari/proc/clear_sensed()
@@ -4363,6 +4380,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	clear_beauty()
 	clear_spare()
 	clear_cliffs()
+	clear_spill()
 	clear_fx()
 
 /obj/item/organ/eyes/sumiari/proc/clear_beauty()
@@ -4387,6 +4405,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	sumiari_cone_over_relays(owner, TRUE)
 	spare_tick()
 	cliff_tick()
+	spill_tick()
 	fx_tick()
 	if(beauty_client && beauty_client != owner?.client)
 		clear_beauty()
@@ -4940,6 +4959,120 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	cliff_keys = null
 	cliff_client = null
 
+// The bleed walk around the owner (cliff square plus SPILL_RANGE + 1, so a spill from just off screen still walks in),
+// walked SPILL_RANGE steps (the moon bleed reads only its first BLEED_RANGE: sumiari_moon_bleed_value is 0 past it).
+// Built once per tile per tick and shared by cliff_tick and spill_tick.
+/obj/item/organ/eyes/sumiari/proc/bleed_map(turf/center)
+	var/key = "[center.x],[center.y],[center.z],[world.time]"
+	if(bleed_cache && bleed_cache[1] == key)
+		return bleed_cache
+	var/margin = SUMIARI_CLIFF_RANGE + SUMIARI_SPILL_RANGE + 1
+	var/gx0 = max(center.x - margin, 1)
+	var/gy0 = max(center.y - margin, 1)
+	var/gw = min(center.x + margin, world.maxx) - gx0 + 1
+	var/gh = min(center.y + margin, world.maxy) - gy0 + 1
+	var/list/grid = sumiari_moon_bleed_cells(gx0, gy0, gw, gh, center.z)
+	var/list/steps = sumiari_moon_bleed_grid(grid, gw, gh, SUMIARI_SPILL_RANGE)
+	bleed_cache = list(key, grid, steps, gx0, gy0, gw, gh)
+	return bleed_cache
+
+/obj/item/organ/eyes/sumiari/proc/clear_spill()
+	for(var/turf/T as anything in spill_images)
+		spill_client?.images -= spill_images[T]
+	spill_images = null
+	spill_keys = null
+	spill_client = null
+	bleed_cache = null
+
+// Every step and every beauty tick, day or night, while the vision is on: roofed tiles around the owner whose vanilla
+// sun spill has a corner the bleed walk cannot reach get the cut image (see SUMIARI_SKY_SPILL_CUT).
+/obj/item/organ/eyes/sumiari/proc/spill_tick()
+#if SUMIARI_SKY_SPILL_CUT
+	if(spill_client && spill_client != owner?.client)
+		clear_spill()
+	var/turf/center = get_turf(owner)
+	if(!vision_on || !owner?.client || !center)
+		clear_spill()
+		return
+	spill_client = owner.client
+	var/list/map = bleed_map(center)
+	var/list/grid = map[2]
+	var/list/steps = map[3]
+	var/gx0 = map[4]
+	var/gy0 = map[5]
+	var/gw = map[6]
+	var/gh = map[7]
+	var/list/keep = list()
+	var/turf/low = locate(max(center.x - SUMIARI_CLIFF_RANGE, 1), max(center.y - SUMIARI_CLIFF_RANGE, 1), center.z)
+	var/turf/high = locate(min(center.x + SUMIARI_CLIFF_RANGE, world.maxx), min(center.y + SUMIARI_CLIFF_RANGE, world.maxy), center.z)
+	for(var/turf/T as anything in block(low, high))
+		var/datum/outdoor_info/outdoor = T.outdoor_effect
+		if(!outdoor || outdoor.state != SKY_BLOCKED || !outdoor.sunlight_overlay)
+			continue
+		var/list/corners = T.corners
+		if(!corners)
+			continue
+		var/cx = T.x - gx0 + 1
+		var/cy = T.y - gy0 + 1
+		// Vanilla corner order (update_outdoor_effect_overlays): r SW = corners[3], g SE = [2], b NW = [4], a NE = [1].
+		var/datum/lighting_corner/cr = corners[3]
+		var/datum/lighting_corner/cg = corners[2]
+		var/datum/lighting_corner/cb = corners[4]
+		var/datum/lighting_corner/ca = corners[1]
+		var/vr = cr ? cr.sunFalloff : 0
+		var/vg = cg ? cg.sunFalloff : 0
+		var/vb = cb ? cb.sunFalloff : 0
+		var/va = ca ? ca.sunFalloff : 0
+		var/fr = sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, -1, -1) ? vr : 0
+		var/fg = sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, 1, -1) ? vg : 0
+		var/fb = sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, -1, 1) ? vb : 0
+		var/fa = sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, 1, 1) ? va : 0
+		if(fr == vr && fg == vg && fb == vb && fa == va)
+			continue
+		keep[T] = TRUE
+		var/key = "[fr]|[fg]|[fb]|[fa]"
+		if(spill_keys?[T] == key)
+			continue
+		if(spill_images?[T])
+			spill_client.images -= spill_images[T]
+		var/image/cut = sumiari_spill_image(T, fr, fg, fb, fa)
+		LAZYSET(spill_images, T, cut)
+		LAZYSET(spill_keys, T, key)
+		spill_client.images += cut
+	for(var/turf/T as anything in spill_images)
+		if(!keep[T])
+			spill_client.images -= spill_images[T]
+			spill_images -= T
+			spill_keys -= T
+#endif
+
+// Can outdoor light reach this corner (dx, dy = +-1) of the 1-based grid cell (cx, cy)? Yes if any of the four cells
+// meeting there is unshut open sky or roofed floor the walk reached.
+/proc/sumiari_spill_corner_open(list/grid, list/steps, w, h, cx, cy, dx, dy)
+	for(var/list/offset in list(list(0, 0), list(dx, 0), list(0, dy), list(dx, dy)))
+		var/x = cx + offset[1]
+		var/y = cy + offset[2]
+		if(x < 1 || y < 1 || x > w || y > h)
+			continue
+		var/n = (y - 1) * w + x
+		if(grid[n] == SUMIARI_BLEED_SKY || (grid[n] == SUMIARI_BLEED_ROOF && steps[n]))
+			return TRUE
+	return FALSE
+
+// The vanilla sun overlay (create_sunlight_overlay) with these corners, as this viewer's image over the turf's own:
+// same plane, a layer above the turf's underlays, opaque, so it replaces the vanilla value on that tile.
+/proc/sumiari_spill_image(turf/T, fr, fg, fb, fa)
+	var/image/cut = image(LIGHTING_ICON, T)
+	cut.icon_state = null
+	cut.plane = SUNLIGHTING_PLANE
+	cut.layer = ABOVE_ALL_MOB_LAYER
+	cut.blend_mode = BLEND_OVERLAY
+	cut.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
+	cut.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	cut.invisibility = INVISIBILITY_LIGHTING
+	cut.color = sumiari_cliff_matrix(fr, fg, fb, fa)
+	return cut
+
 // Every step and every beauty tick: closed turfs around the owner, each with its corners' sky light. Only a turf
 // whose corners changed gets a new image, so a still night costs one pass over the square and no image churn.
 /obj/item/organ/eyes/sumiari/proc/cliff_tick()
@@ -4954,14 +5087,13 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/list/keep = list()
 	var/turf/low = locate(max(center.x - SUMIARI_CLIFF_RANGE, 1), max(center.y - SUMIARI_CLIFF_RANGE, 1), center.z)
 	var/turf/high = locate(min(center.x + SUMIARI_CLIFF_RANGE, world.maxx), min(center.y + SUMIARI_CLIFF_RANGE, world.maxy), center.z)
-	// The grid reaches BLEED_RANGE + 1 past the drawn square, so a spill from just off screen still walks in.
-	var/margin = SUMIARI_BLEED_RANGE + 1
-	var/gx0 = max(low.x - margin, 1)
-	var/gy0 = max(low.y - margin, 1)
-	var/gw = min(high.x + margin, world.maxx) - gx0 + 1
-	var/gh = min(high.y + margin, world.maxy) - gy0 + 1
-	var/list/grid = sumiari_moon_bleed_cells(gx0, gy0, gw, gh, center.z)
-	var/list/steps = sumiari_moon_bleed_grid(grid, gw, gh)
+	var/list/map = bleed_map(center)
+	var/list/grid = map[2]
+	var/list/steps = map[3]
+	var/gx0 = map[4]
+	var/gy0 = map[5]
+	var/gw = map[6]
+	var/gh = map[7]
 	for(var/turf/T as anything in block(low, high))
 		var/wall = isclosedturf(T) && !T.outdoor_effect
 		var/index = (T.y - gy0) * gw + (T.x - gx0) + 1
@@ -5044,7 +5176,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 
 // Steps in from open sky (1..BLEED_RANGE, 0 = not reached) for every ROOF cell: a cardinal walk from SKY cells
 // (not SKY_SHUT) through ROOF cells only.
-/proc/sumiari_moon_bleed_grid(list/grid, w, h)
+/proc/sumiari_moon_bleed_grid(list/grid, w, h, range = SUMIARI_BLEED_RANGE)
 	var/list/steps = new /list(w * h)
 	var/list/frontier = list()
 	for(var/index in 1 to w * h)
@@ -5052,7 +5184,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	for(var/index in 1 to w * h)
 		if(grid[index] == SUMIARI_BLEED_SKY)
 			frontier += index
-	for(var/step in 1 to SUMIARI_BLEED_RANGE)
+	for(var/step in 1 to range)
 		var/list/next = list()
 		for(var/index in frontier)
 			var/x = (index - 1) % w
@@ -5133,6 +5265,22 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		bad += "bleed open [open_steps.Join(",")]"
 	if(sumiari_moon_bleed_corner(open_row, open_steps, 6, 1, 2, 1, -1, 1, FALSE) != 1 || sumiari_moon_bleed_corner(open_row, open_steps, 6, 1, 5, 1, 1, 1, FALSE) != 0)
 		bad += "bleed corners"
+	// Daylight spill: through the open door it reaches as far as SPILL_RANGE; behind a shut door no corner is reachable.
+	var/list/long_row = list(SUMIARI_BLEED_SKY, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF)
+	var/list/long_steps = sumiari_moon_bleed_grid(long_row, 8, 1, SUMIARI_SPILL_RANGE)
+	var/list/shut_spill_row = list(SUMIARI_BLEED_SKY, SUMIARI_BLEED_WALL, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF)
+	var/list/shut_spill_steps = sumiari_moon_bleed_grid(shut_spill_row, 4, 1, SUMIARI_SPILL_RANGE)
+	var/list/sky_shut_spill_row = list(SUMIARI_BLEED_SKY_SHUT, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF)
+	var/list/sky_shut_spill_steps = sumiari_moon_bleed_grid(sky_shut_spill_row, 3, 1, SUMIARI_SPILL_RANGE)
+	if(long_steps[1 + SUMIARI_SPILL_RANGE] != SUMIARI_SPILL_RANGE || long_steps[2 + SUMIARI_SPILL_RANGE] || sumiari_moon_bleed_value(4) != 0 \
+		|| !sumiari_spill_corner_open(long_row, long_steps, 8, 1, 1 + SUMIARI_SPILL_RANGE, 1, 1, 1) || sumiari_spill_corner_open(long_row, long_steps, 8, 1, 3 + SUMIARI_SPILL_RANGE, 1, 1, 1) \
+		|| sumiari_spill_corner_open(shut_spill_row, shut_spill_steps, 4, 1, 3, 1, -1, 1) || sumiari_spill_corner_open(shut_spill_row, shut_spill_steps, 4, 1, 4, 1, 1, 1) \
+		|| sumiari_spill_corner_open(sky_shut_spill_row, sky_shut_spill_steps, 3, 1, 2, 1, -1, 1))
+		bad += "spill walk long=[long_steps.Join(",")] shut=[shut_spill_steps.Join(",")]"
+	var/image/spill_cut = sumiari_spill_image(get_turf(eyes.owner), 1, 0, 0.5, 0)
+	var/list/spill_matrix = spill_cut.color
+	if(spill_cut.plane != SUNLIGHTING_PLANE || spill_cut.layer <= TURF_LAYER || spill_cut.blend_mode != BLEND_OVERLAY || !islist(spill_matrix) || spill_matrix[1] != 1 || spill_matrix[5] != 0 || spill_matrix[9] != 0.5 || spill_matrix[20] != 1)
+		bad += "spill image plane=[spill_cut.plane] layer=[spill_cut.layer]"
 	// Closed door (shut cell in the roofed doorway, or a shut door under the sky): nothing gets in, not even a corner.
 	var/list/shut_row = list(SUMIARI_BLEED_SKY, SUMIARI_BLEED_WALL, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF)
 	var/list/shut_steps = sumiari_moon_bleed_grid(shut_row, 4, 1)
