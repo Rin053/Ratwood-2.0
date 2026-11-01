@@ -699,13 +699,13 @@
 // shadow a human sees as darker read as bright as lit ground (flat floor, no falloff). The dim plate is the raw
 // light a human sees as luma (static lighting plus the movable-light cookie, emitter sprites full, before the wash gain),
 // and the dim relay lays black over the whole view at alpha (1 - FLOOR) * (1 - light). Drawn brightness is then
-// sprite * (FLOOR + (1 - FLOOR) * light): pitch black keeps FLOOR of its brightness, in color, and every step
+// sprite * (FLOOR + (1 - FLOOR) * light): pitch black keeps FLOOR (40%) of its brightness, in color, and every step
 // brighter for a human is a step brighter here, with the same falloff and shape. Full light is untouched.
 #define SUMIARI_DARKVISION 1
-#define SUMIARI_DARKVISION_FLOOR 0.36
+#define SUMIARI_DARKVISION_FLOOR 0.4
 // Moonlit open sky at night keeps the full moon look (sat 1.75, lum 1.5): the skylight plate (sky plane plus cliff
 // faces, feathered like the moon mask, times the moon fade) is full light for the dim plate, so the dim is off under
-// the night sky and eases back in across dawn and dusk. A floor there (0.36, or a moonlight share of 0.45, or a
+// the night sky and eases back in across dawn and dusk. A floor there (0.36 then, or a moonlight share of 0.45, or a
 // lamp-matched 0.8) left the moonlit night dull, and the moon look's 1.5x against the gray wash's 1x made lamp pools
 // darker rings in brighter moonlight. Caves, roofs and the whole day keep the proportional dim.
 // Lamp hand-off under the night sky. The moon look is LUMINANCE (1.5x) and the gray wash 1x, and the moon mask
@@ -3439,6 +3439,11 @@ var/global/sumiari_run_headless_test = FALSE
 		return FALSE
 	var/atom/movable/screen/plane_master/lighting/lighting = body.hud_used.plane_masters["[LIGHTING_PLANE]"]
 	var/atom/movable/screen/plane_master/cookie = body.hud_used.plane_masters["[O_LIGHTING_VISUAL_PLANE]"]
+	// Pitch black keeps 40% of its brightness: the dim relay's darkest alpha is 1 - FLOOR = 0.6.
+	var/list/dim = sumiari_matrix_dim_alpha()
+	if(SUMIARI_DARKVISION_FLOOR != 0.4 || abs(dim[4] + 0.6) > 0.001 || abs(dim[20] - 0.6) > 0.001)
+		log_world("SUMIARI TEST FAIL darkness floor=[SUMIARI_DARKVISION_FLOOR] dim=[dim[4]],[dim[20]]")
+		return FALSE
 	log_world("SUMIARI TEST darkness PASS plane_alpha=[lighting.alpha] target=[lighting.render_target] olight=[cookie?.render_target] world_hidden=0 pieces=[length(eyes.screen_pieces)] mask=[SUMIARI_LIGHTING_SOURCE] canvas=[eyes.mask_pixels_x]x[eyes.mask_pixels_y] dyn_not_used=1")
 	return TRUE
 
