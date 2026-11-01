@@ -664,7 +664,7 @@
 #define SUMIARI_WASH_COLOR "color"
 // The mask, cookie, knee, dim and moon plates, each a master plus the child that draws the capture,
 // plus the ink, sun, dim and moon relays (39 today), with a little headroom.
-#define SUMIARI_PIECE_CAP 40
+#define SUMIARI_PIECE_CAP 42
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 // A wider client view (zoomed out) raises it by the view's extra radius (sumiari view_extra), up to VIEW_EXTRA_MAX.
 #define SUMIARI_SEE_IN_DARK 8
@@ -748,6 +748,15 @@
 #define SUMIARI_MOON_LAMP_LIFT 0.15
 #define SUMIARI_PLANE_SKYLIGHT -70
 #define SUMIARI_TARGET_SKYLIGHT "sumiari_skylight"
+// Dawn and dusk (iter33). The fire-blind clear used to subtract the faded skylight FIRE_BLIND_GAIN (4) times over,
+// which clamps: through most of the dawn fade it still wiped out all of the rising dawn sunlight, then in the last
+// minutes (fade under wash / 4) the whole gray wash of that sunlight came back at once, over a moon look that was
+// nearly gone - a fade, a jump back to bright, then nothing. Dusk mirrored it (the dusk sun's gray snapped away a
+// third of the way in). Now the clear reads this unfaded copy (the night skylight shape, GAIN times over, clamped
+// to 1 by the plate) and multiplies the ink mask by 1 - fade * shape, so the gray on open sky is wash * (1 - fade):
+// the exact night value at fade 1, the day value at fade 0, and a straight line between.
+#define SUMIARI_PLANE_SKYSHAPE -71
+#define SUMIARI_TARGET_SKYSHAPE "sumiari_skyshape"
 #define SUMIARI_PLANE_DIM -69
 #define SUMIARI_TARGET_DIM "sumiari_dim"
 
@@ -818,6 +827,7 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/atom/movable/screen/sumiari_sampler/moon_plate
 	var/atom/movable/screen/sumiari_sampler/knee_plate
 	var/atom/movable/screen/sumiari_sampler/skylight_plate
+	var/atom/movable/screen/sumiari_sampler/mask_plate
 	// Sun spill cut (SUMIARI_SKY_SPILL_CUT): turf -> image on SUNLIGHTING_PLANE, turf -> corner key.
 	var/client/spill_client
 	var/list/spill_images
@@ -977,6 +987,7 @@ var/global/turf/sumiari_test_dark_turf
 	moon_plate = null
 	knee_plate = null
 	skylight_plate = null
+	mask_plate = null
 	clear_master_wash(M)
 	clear_screen_pieces(M)
 	restore_render_targets(M)
@@ -1088,6 +1099,7 @@ var/global/turf/sumiari_test_dark_turf
 	moon_plate = null
 	knee_plate = null
 	skylight_plate = null
+	mask_plate = null
 	if(screen_pieces)
 		QDEL_LIST(screen_pieces)
 	screen_pieces = list()
@@ -1125,6 +1137,8 @@ var/global/turf/sumiari_test_dark_turf
 		knee_plate = sampler
 	if(target_name == SUMIARI_TARGET_SKYLIGHT)
 		skylight_plate = sampler
+	if(target_name == SUMIARI_TARGET_MASK)
+		mask_plate = sampler
 	screen_pieces += plate
 	screen_pieces += sampler
 	return sampler
@@ -1176,28 +1190,10 @@ var/global/turf/sumiari_test_dark_turf
 	// The emitters' own sprites. Alpha into gray, so a sprite pixel is a full wash whatever its tile reads.
 	add_plate(SUMIARI_PLANE_SOURCE, SUMIARI_TARGET_SOURCE, SUMIARI_SOURCE_RENDER_TARGET, sumiari_lighting_channel_filters(4))
 	// Max with the cookie. Add alone would wash a sconce twice, once for the fixture and once for its torch.
-	add_plate(SUMIARI_PLANE_MASK, SUMIARI_TARGET_MASK, sumiari_offscreen(SUMIARI_TARGET_LIGHT), list(
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_ADD),
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
-#if SUMIARI_HANG_LIFT
-		// Overhanging sprites: max with their own tile's wash (alpha into gray), before the night-sky clear.
-		filter(type = "layer", render_source = SUMIARI_HANG_RENDER_TARGET, blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_alpha_to_gray()),
-		filter(type = "layer", render_source = SUMIARI_HANG_RENDER_TARGET, blend_mode = BLEND_ADD, color = sumiari_matrix_alpha_to_gray()),
-#endif
+	add_plate(SUMIARI_PLANE_MASK, SUMIARI_TARGET_MASK, sumiari_offscreen(SUMIARI_TARGET_LIGHT), sumiari_gray_mask_filters())
 #if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION && SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
-		// No lamp gray, fire or not, under the open night sky (see SUMIARI_MOON_FIRE_BLIND): after the emitter-sprite
-		// max, so a flame, lamp, torch or fire bowl standing on open sky is in full moon color too. Under a roof, in a
-		// cave or by day the skylight is 0 and the sprite stays gray.
-		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT), blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_fire_blind()),
+	add_plate(SUMIARI_PLANE_SKYSHAPE, SUMIARI_TARGET_SKYSHAPE, SUNLIGHTING_RENDER_TARGET, sumiari_skyshape_filters())
 #endif
-#if SUMIARI_MOON_SPARES_NONFIRE
-		// No lamp gray where the moon spares a non-fire light.
-		filter(type = "layer", render_source = SUMIARI_SPARE_RENDER_TARGET, blend_mode = BLEND_SUBTRACT),
-#endif
-		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
-	))
 #if SUMIARI_DARKVISION
 	// Human brightness is luma, not the max channel the wash uses: a red-lit room is much darker to a human than
 	// its brightest channel says. Static: luma(color) at the plane's alpha over opaque white, so 1 - A * (1 - luma).
@@ -1235,6 +1231,65 @@ var/global/turf/sumiari_test_dark_turf
 	add_plate(SUMIARI_PLANE_GLARE, SUMIARI_TARGET_GLARE, SUNLIGHTING_RENDER_TARGET, list(
 		filter(type = "color", color = sumiari_matrix_glare_to_alpha()),
 	))
+
+// The ink (gray) mask: lighting wash, max the movable-light cookie, the emitter sprites and the overhang lift, then
+// the night-sky clear and the spares. fade (0..1, null = live sumiari_moon_fade) drives the clear and the spares;
+// apply_moon_fade animates those two steps across dawn and dusk (sumiari_gray_mask_fade_steps).
+/proc/sumiari_gray_mask_filters(fade)
+	if(isnull(fade))
+		fade = sumiari_moon_fade()
+	return list(
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_ADD),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
+#if SUMIARI_HANG_LIFT
+		// Overhanging sprites: max with their own tile's wash (alpha into gray), before the night-sky clear.
+		filter(type = "layer", render_source = SUMIARI_HANG_RENDER_TARGET, blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_alpha_to_gray()),
+		filter(type = "layer", render_source = SUMIARI_HANG_RENDER_TARGET, blend_mode = BLEND_ADD, color = sumiari_matrix_alpha_to_gray()),
+#endif
+#if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION && SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
+		// No lamp gray, fire or not, under the open night sky (see SUMIARI_MOON_FIRE_BLIND): after the emitter-sprite
+		// max, so a flame, lamp, torch or fire bowl standing on open sky is in full moon color too. Under a roof, in a
+		// cave or by day the skylight is 0 and the sprite stays gray.
+		// Multiplied by 1 - fade * night shape (iter33), so dawn and dusk blend the gray linearly with the fade.
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYSHAPE), blend_mode = BLEND_MULTIPLY, color = sumiari_matrix_fire_blind(fade)),
+#endif
+#if SUMIARI_MOON_SPARES_NONFIRE
+		// No lamp gray where the moon spares a non-fire light.
+		// Times the fade (iter33): the spares stop at the window's end, so their clear eases out with the moon.
+		filter(type = "layer", render_source = SUMIARI_SPARE_RENDER_TARGET, blend_mode = BLEND_SUBTRACT, color = sumiari_matrix_fade_scale(fade)),
+#endif
+		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
+	)
+
+// Indices of the ink mask's fade-driven steps, as list(index, kind): kind 1 the night-sky clear, 2 the spares.
+/proc/sumiari_gray_mask_fade_steps(list/plate_filters)
+	. = list()
+	for(var/index in 1 to length(plate_filters))
+		var/source = sumiari_filter_field(plate_filters, index, "render_source")
+		if(source == sumiari_offscreen(SUMIARI_TARGET_SKYSHAPE))
+			. += list(list(index, 1))
+		else if(source == SUMIARI_SPARE_RENDER_TARGET)
+			. += list(list(index, 2))
+
+// The night skylight shape for the fire-blind clear: the skylight plate's chain without the fade, FIRE_BLIND_GAIN
+// times over into opaque gray (the plate clamps at 1), so any open-sky pixel and any bled cliff or opening at a
+// quarter or more is a full 1. Day or night it is the same; the mask's clear step multiplies it by the fade.
+/proc/sumiari_skyshape_filters()
+	. = list(filter(type = "color", color = sumiari_matrix_sky_cut()))
+#if SUMIARI_MOON_CLIFFS
+	. += filter(type = "layer", render_source = SUMIARI_CLIFF_RENDER_TARGET, blend_mode = BLEND_ADD)
+#endif
+	. += filter(type = "color", color = sumiari_matrix_sky_scaled(1))
+	. += filter(type = "blur", size = SUMIARI_MOON_EDGE_BLUR)
+	var/k = SUMIARI_MOON_FIRE_BLIND_GAIN * sumiari_moon_strength(TRUE)
+	. += filter(type = "color", color = list(k, k, k, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
+
+// Every channel times fade (a layer drawn at that share).
+/proc/sumiari_matrix_fade_scale(fade)
+	var/f = clamp(fade, 0, 1)
+	return list(f, 0, 0, 0, 0, f, 0, 0, 0, 0, f, 0, 0, 0, 0, f, 0, 0, 0, 0)
 
 // Both relays stay in the screen list. Live mode fills their filters. Force ink and force color hide them.
 /obj/item/organ/eyes/sumiari/proc/build_wash_relays()
@@ -1547,6 +1602,14 @@ var/global/sumiari_moon_glow_stages = 5
 		return
 	sumiari_grain_under_moon(owner, fade, time_ds)
 	var/halo_target = round(SUMIARI_FLORA_ALPHA * fade)
+	if(mask_plate)
+		if(time_ds <= 0)
+			animate(mask_plate)
+			mask_plate.filters = sumiari_gray_mask_filters(fade)
+		else
+			for(var/list/step as anything in sumiari_gray_mask_fade_steps(mask_plate.filters))
+				var/step_color = step[2] == 1 ? sumiari_matrix_fire_blind(fade) : sumiari_matrix_fade_scale(fade)
+				animate(mask_plate.filters[step[1]], color = step_color, time = time_ds)
 	if(skylight_plate)
 		if(time_ds <= 0)
 			animate(skylight_plate)
@@ -1644,6 +1707,9 @@ var/global/sumiari_moon_glow_stages = 5
 		moon_plate.filters = sumiari_moon_mask_filters()
 	if(skylight_plate)
 		skylight_plate.filters = sumiari_skylight_filters()
+	if(mask_plate)
+		animate(mask_plate)
+		mask_plate.filters = sumiari_gray_mask_filters()
 
 /atom/movable/screen/plane_master/proc/apply_sumiari_sight(mob/mymob)
 	if(!sumiari_plane_is_world(plane))
@@ -1896,11 +1962,11 @@ var/global/sumiari_moon_handoff_enabled = TRUE
 /proc/sumiari_matrix_skylight(fade)
 	return sumiari_matrix_moon_alpha(sumiari_moon_strength() * fade)
 
-// The skylight's alpha as opaque gray, FIRE_BLIND_GAIN times over (0 while the switch is off). The mask reads only
-// its gray (sumiari_matrix_gray_to_alpha), like the dim plate's alpha-to-gray max.
-/proc/sumiari_matrix_fire_blind()
-	var/k = sumiari_moon_fire_blind ? SUMIARI_MOON_FIRE_BLIND_GAIN : 0
-	return list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k, k, k, 0, 0, 0, 0, 1)
+// The fire-blind clear's factor from the night sky shape's gray g: 1 - fade * g on every channel, alpha 1 (1, so no
+// change, while the switch is off or by day). The ink mask is multiplied by it.
+/proc/sumiari_matrix_fire_blind(fade)
+	var/k = sumiari_moon_fire_blind ? clamp(fade, 0, 1) : 0
+	return list(-k, -k, -k, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1)
 
 // 1 if the moon mask cuts the emitter sprites out (0 while fire-blind: flames on open sky take the moon look).
 /proc/sumiari_moon_source_subtracts()
@@ -3698,6 +3764,76 @@ var/global/sumiari_run_headless_test = FALSE
 			return
 		return sample:blend_mode
 
+// iter33: dawn and dusk fade every moon piece together. The phase only falls across dawn and only rises across
+// dusk, and the ink gray on open sky (wash w times the clear factor 1 - fade * shape) is the straight line
+// w * (1 - fade) with no knee, where the old clamped w - 4 * fade held 0 until fade < w / 4 and then jumped.
+/proc/sumiari_fade_problem(obj/item/organ/eyes/sumiari/eyes)
+	var/last = 2
+	for(var/t in round(7.98 * 36000) to round(8.52 * 36000) step 100)
+		var/phase = sumiari_moon_phase(t)
+		if(phase > last + 0.0001)
+			return "dawn rises at [t] [phase]>[last]"
+		last = phase
+	if(sumiari_moon_phase(round(7.98 * 36000)) < 0.999 || sumiari_moon_phase(round(8.52 * 36000)) > 0.001)
+		return "dawn ends [sumiari_moon_phase(round(7.98 * 36000))]/[sumiari_moon_phase(round(8.52 * 36000))]"
+	last = -1
+	for(var/t in round(15.48 * 36000) to round(16.02 * 36000) step 100)
+		var/phase = sumiari_moon_phase(t)
+		if(phase < last - 0.0001)
+			return "dusk falls at [t] [phase]<[last]"
+		last = phase
+	if(sumiari_moon_phase(round(15.48 * 36000)) > 0.001 || sumiari_moon_phase(round(16.02 * 36000)) < 0.999)
+		return "dusk ends [sumiari_moon_phase(round(15.48 * 36000))]/[sumiari_moon_phase(round(16.02 * 36000))]"
+	var/was_blind = sumiari_moon_fire_blind
+	sumiari_moon_fire_blind = TRUE
+	for(var/wash in list(0.25, 0.5, 1))
+		var/previous = null
+		for(var/step in 0 to 20)
+			var/fade = step / 20
+			var/list/clear = sumiari_matrix_fire_blind(fade)
+			var/list/spare = sumiari_matrix_fade_scale(fade)
+			var/gray = wash * (1 + clear[1])
+			if(abs(gray - wash * (1 - fade)) > 0.001 || clear[17] != 1 || clear[20] != 1 || clear[16] != 0 || abs(spare[1] - fade) > 0.001 || abs(spare[16] - fade) > 0.001)
+				sumiari_moon_fire_blind = was_blind
+				return "clear at wash [wash] fade [fade] gray=[gray] clear=[jointext(clear, ",")] spare=[jointext(spare, ",")]"
+			if(!isnull(previous) && abs(previous - gray) > wash / 20 + 0.001)
+				sumiari_moon_fire_blind = was_blind
+				return "gray jumps at wash [wash] fade [fade] [previous]->[gray]"
+			previous = gray
+	sumiari_moon_fire_blind = FALSE
+	var/list/off = sumiari_matrix_fire_blind(1)
+	sumiari_moon_fire_blind = was_blind
+	if(off[1] != 0)
+		return "clear while fire-blind is off"
+	var/atom/movable/screen/sumiari_sampler/shape = sumiari_find_piece(eyes, "[SUMIARI_TARGET_SKYSHAPE] sample")
+	if(!shape || shape.render_source != SUNLIGHTING_RENDER_TARGET || !length(shape.filters))
+		return "no sky shape plate"
+	var/list/shape_matrix = shape.filters[length(shape.filters)]:color
+	if(!islist(shape_matrix) || abs(shape_matrix[1] - SUMIARI_MOON_FIRE_BLIND_GAIN * sumiari_moon_strength(TRUE)) > 0.01)
+		return "sky shape gain [islist(shape_matrix) ? jointext(shape_matrix, ",") : shape_matrix]"
+	var/list/steps = sumiari_gray_mask_fade_steps(eyes.mask_plate?.filters)
+	var/clears = 0
+	for(var/list/step as anything in steps)
+		if(step[2] == 1)
+			clears++
+			if(sumiari_filter_field(eyes.mask_plate.filters, step[1], "blend_mode") != BLEND_MULTIPLY)
+				return "clear is not a multiply"
+		else if(sumiari_filter_field(eyes.mask_plate.filters, step[1], "blend_mode") != BLEND_SUBTRACT)
+			return "spare is not a subtract"
+	if(clears != 1)
+		return "clears=[clears]"
+	for(var/index in 1 to length(eyes.mask_plate.filters))
+		if(sumiari_filter_field(eyes.mask_plate.filters, index, "render_source") == sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT))
+			return "ink mask still reads the faded skylight"
+	// The snap path sets the clear for a given fade, and the live fade puts it back.
+	if(eyes.vision_on && eyes.wash_mode == SUMIARI_WASH_LIVE)
+		eyes.apply_moon_fade(0.3, 0)
+		var/list/after = sumiari_gray_mask_fade_steps(eyes.mask_plate.filters)
+		var/list/set_matrix = eyes.mask_plate.filters[after[1][1]]:color
+		eyes.apply_moon_fade(sumiari_moon_fade(), 0)
+		if(sumiari_moon_fire_blind && (!islist(set_matrix) || abs(set_matrix[1] + 0.3) > 0.01))
+			return "snap clear [islist(set_matrix) ? jointext(set_matrix, ",") : set_matrix]"
+
 /proc/sumiari_find_piece(obj/item/organ/eyes/sumiari/eyes, piece_name)
 	for(var/atom/movable/screen/piece as anything in eyes?.screen_pieces)
 		if(piece.name == piece_name)
@@ -3834,10 +3970,16 @@ var/global/sumiari_run_headless_test = FALSE
 		var/mask_source = sumiari_filter_field(gray_mask.filters, mask_index, "render_source")
 		if(mask_source == sumiari_offscreen(SUMIARI_TARGET_SOURCE))
 			last_source = mask_index
-		else if(mask_source == sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT))
+		else if(mask_source == sumiari_offscreen(SUMIARI_TARGET_SKYSHAPE))
 			sky_clear = mask_index
 	if(!gray_mask || !last_source || sky_clear <= last_source)
 		log_world("SUMIARI TEST FAIL fire-blind sprite mask source=[last_source] sky=[sky_clear]")
+		return FALSE
+#endif
+#if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION && SUMIARI_MOON_TINT && SUMIARI_MOON_VIVID
+	var/fade_problem = sumiari_fade_problem(eyes)
+	if(fade_problem)
+		log_world("SUMIARI TEST FAIL moon fade [fade_problem]")
 		return FALSE
 #endif
 #if SUMIARI_MOON_LAMP_HANDOFF
@@ -5638,7 +5780,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		var/hang_source = sumiari_filter_field(hang_mask.filters, hang_index, "render_source")
 		if(hang_source == SUMIARI_HANG_RENDER_TARGET)
 			hang_in_mask = hang_index
-		else if(hang_source == sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT) && !hang_sky)
+		else if(hang_source == sumiari_offscreen(SUMIARI_TARGET_SKYSHAPE) && !hang_sky)
 			hang_sky = hang_index
 	if(!sumiari_overhangs(hang_mirror) || sumiari_overhangs(hang_stone) || hang_lift.plane != SUMIARI_HANG_PLANE || hang_lift.pixel_y || hang_lift.pixel_x \
 		|| !islist(hang_matrix) || hang_matrix[16] != 0.6 || hang_matrix[1] || !hang_master || hang_master.render_target != SUMIARI_HANG_RENDER_TARGET \
