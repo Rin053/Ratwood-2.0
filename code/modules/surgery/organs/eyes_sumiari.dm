@@ -666,7 +666,15 @@
 // plus the ink, sun, dim and moon relays (39 today), with a little headroom.
 #define SUMIARI_PIECE_CAP 40
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
+// A wider client view (zoomed out) raises it by the view's extra radius (sumiari view_extra), up to VIEW_EXTRA_MAX.
 #define SUMIARI_SEE_IN_DARK 8
+// Every per-tile range around the viewer was tuned for the 15x15 view (radius 7): cliff/spill/overhang 9, effects 8,
+// flora 8, glints 7, spare scan 11, spirits 4, see_in_dark 8. When the client's view is wider (zoomed out), each of
+// them grows by the view's extra radius, and the per-area caps (spots, sway, frost, reflections, overhang images...)
+// grow with the area, so the far tiles of a zoomed-out screen get the same look. VIEW_EXTRA_MAX caps it for
+// performance: a 25x25 view (radius 12, extra 5) is the widest that gets full coverage.
+#define SUMIARI_VIEW_BASE_RADIUS 7
+#define SUMIARI_VIEW_EXTRA_MAX 5
 // Darkness-sneak raises invisibility to SEE_INVISIBLE_LIVING + skill*0.55 + 1 (about 29 at legendary).
 // 35 sees that concealment and stays under SEE_INVISIBLE_OBSERVER (60), so ghosts stay hidden.
 #define SUMIARI_SEE_INVISIBLE (SEE_INVISIBLE_LIVING + 10)
@@ -800,6 +808,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	see_invisible = SUMIARI_SEE_INVISIBLE
 	lighting_alpha = SUMIARI_LIGHTING_ALPHA
 	var/vision_on = FALSE
+	// Client view radius beyond the 15x15 one (0..VIEW_EXTRA_MAX), refreshed each beauty tick (refresh_view_reach).
+	var/view_extra = 0
 	var/list/saved_render_targets
 	var/list/screen_pieces
 	// The glare sampler's color matrix is rebuilt when the sun moves, so night haze can ease without a new composite.
@@ -4461,10 +4471,41 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	beauty_client = null
 	clear_spirits()
 
+// Extra view radius for a client view (a number or "WxH"): how much wider than the 15x15 one, 0..VIEW_EXTRA_MAX.
+/proc/sumiari_view_extra(view)
+	var/list/size = getviewsize(view || world.view)
+	var/radius = CEILING((max(size[1], size[2]) - 1) / 2, 1)
+	return clamp(radius - SUMIARI_VIEW_BASE_RADIUS, 0, SUMIARI_VIEW_EXTRA_MAX)
+
+// A tile range tuned for the 15x15 view, grown by the current view's extra radius.
+/obj/item/organ/eyes/sumiari/proc/reach(base)
+	return base + view_extra
+
+// A per-area cap tuned for the 15x15 view, scaled by how much more area the current view covers.
+/obj/item/organ/eyes/sumiari/proc/area_cap(base)
+	var/wide = (SUMIARI_VIEW_BASE_RADIUS + view_extra) * 2 + 1
+	var/norm = SUMIARI_VIEW_BASE_RADIUS * 2 + 1
+	return round(base * (wide * wide) / (norm * norm))
+
+// Picks up a changed client view (zoom). On a change every cached scan is dropped so the next ticks rebuild over the
+// new area, and see_in_dark follows the view so dark tiles at the new edge still show.
+/obj/item/organ/eyes/sumiari/proc/refresh_view_reach()
+	var/extra = sumiari_view_extra(owner?.client?.view)
+	if(extra == view_extra)
+		return FALSE
+	view_extra = extra
+	bleed_cache = null
+	glint_center = null
+	fx_center = null
+	see_in_dark = SUMIARI_SEE_IN_DARK + view_extra
+	owner?.update_sight()
+	return TRUE
+
 /obj/item/organ/eyes/sumiari/proc/beauty_tick()
 	if(QDELETED(src) || !vision_on)
 		stop_night_beauty()
 		return
+	refresh_view_reach()
 	// Keep the cone's wedge over the relays (and so over the violet glow) even if the HUD was rebuilt since the
 	// pieces were presented: a wedge left at HUD_LAYER sits under the redrawn world and the glow shows through.
 	sumiari_cone_over_relays(owner, TRUE)
@@ -4502,10 +4543,10 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 		glint_age = 0
 		glint_spots = list()
 		// view(), not range(): the glints draw above the walls, so only tiles the owner sees may glint.
-		for(var/turf/T in view(SUMIARI_GLINT_RADIUS, owner))
+		for(var/turf/T in view(reach(SUMIARI_GLINT_RADIUS), owner))
 			if(sumiari_glint_spot(T))
 				glint_spots += T
-				if(length(glint_spots) >= SUMIARI_GLINT_SPOT_MAX)
+				if(length(glint_spots) >= area_cap(SUMIARI_GLINT_SPOT_MAX))
 					break
 	if(!length(glint_spots) || length(glint_images) >= SUMIARI_GLINT_MAX || !prob(SUMIARI_GLINT_CHANCE))
 		return
@@ -4547,14 +4588,14 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	var/list/near = list()
 	var/list/seen
 	for(var/obj/plant as anything in sumiari_night_flora["[center.z]"])
-		if(QDELETED(plant) || get_dist(plant, center) > SUMIARI_FLORA_RANGE || !sumiari_flora_shows(plant))
+		if(QDELETED(plant) || get_dist(plant, center) > reach(SUMIARI_FLORA_RANGE) || !sumiari_flora_shows(plant))
 			continue
 		// The halos draw above the walls, so a plant behind one shows none. One view() per tick, only when needed.
-		seen ||= view(SUMIARI_FLORA_RANGE, owner)
+		seen ||= view(reach(SUMIARI_FLORA_RANGE), owner)
 		if(!(plant in seen))
 			continue
 		near[plant] = TRUE
-		if(length(near) >= SUMIARI_FLORA_MAX)
+		if(length(near) >= area_cap(SUMIARI_FLORA_MAX))
 			break
 	for(var/plant in flora_images)
 		if(!near[plant])
@@ -4817,7 +4858,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	spare_client = owner.client
 	var/list/fires = list()
 	var/list/calm = list()
-	for(var/atom/source as anything in sumiari_emitters_near(center, SUMIARI_SPARE_SCAN))
+	for(var/atom/source as anything in sumiari_emitters_near(center, reach(SUMIARI_SPARE_SCAN)))
 		if(!get_turf(source))
 			continue
 		if(sumiari_light_is_fire(source))
@@ -4840,7 +4881,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/turf/below_center = GET_TURF_BELOW(center)
 	if(below_center)
 		var/list/fires_below = list()
-		for(var/atom/source as anything in sumiari_emitters_near(below_center, SUMIARI_SPARE_SCAN))
+		for(var/atom/source as anything in sumiari_emitters_near(below_center, reach(SUMIARI_SPARE_SCAN)))
 			if(!get_turf(source))
 				continue
 			if(sumiari_light_is_fire(source))
@@ -5033,10 +5074,10 @@ var/global/sumiari_moon_spares_enabled = TRUE
 // walked SPILL_RANGE steps (the moon bleed reads only its first BLEED_RANGE: sumiari_moon_bleed_value is 0 past it).
 // Built once per tile per tick and shared by cliff_tick and spill_tick.
 /obj/item/organ/eyes/sumiari/proc/bleed_map(turf/center)
-	var/key = "[center.x],[center.y],[center.z],[world.time]"
+	var/key = "[center.x],[center.y],[center.z],[world.time],[view_extra]"
 	if(bleed_cache && bleed_cache[1] == key)
 		return bleed_cache
-	var/margin = SUMIARI_CLIFF_RANGE + SUMIARI_SPILL_RANGE + 1
+	var/margin = reach(SUMIARI_CLIFF_RANGE) + SUMIARI_SPILL_RANGE + 1
 	var/gx0 = max(center.x - margin, 1)
 	var/gy0 = max(center.y - margin, 1)
 	var/gw = min(center.x + margin, world.maxx) - gx0 + 1
@@ -5074,8 +5115,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/gw = map[6]
 	var/gh = map[7]
 	var/list/keep = list()
-	var/turf/low = locate(max(center.x - SUMIARI_CLIFF_RANGE, 1), max(center.y - SUMIARI_CLIFF_RANGE, 1), center.z)
-	var/turf/high = locate(min(center.x + SUMIARI_CLIFF_RANGE, world.maxx), min(center.y + SUMIARI_CLIFF_RANGE, world.maxy), center.z)
+	var/cliff_reach = reach(SUMIARI_CLIFF_RANGE)
+	var/turf/low = locate(max(center.x - cliff_reach, 1), max(center.y - cliff_reach, 1), center.z)
+	var/turf/high = locate(min(center.x + cliff_reach, world.maxx), min(center.y + cliff_reach, world.maxy), center.z)
 	for(var/turf/T as anything in block(low, high))
 		var/datum/outdoor_info/outdoor = T.outdoor_effect
 		if(!outdoor || outdoor.state != SKY_BLOCKED || !outdoor.sunlight_overlay)
@@ -5145,12 +5187,13 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	hang_client = owner.client
 	var/list/keep = list()
 	var/count = 0
-	var/turf/low = locate(max(center.x - SUMIARI_CLIFF_RANGE, 1), max(center.y - SUMIARI_CLIFF_RANGE, 1), center.z)
-	var/turf/high = locate(min(center.x + SUMIARI_CLIFF_RANGE, world.maxx), min(center.y + SUMIARI_CLIFF_RANGE, world.maxy), center.z)
+	var/cliff_reach = reach(SUMIARI_CLIFF_RANGE)
+	var/turf/low = locate(max(center.x - cliff_reach, 1), max(center.y - cliff_reach, 1), center.z)
+	var/turf/high = locate(min(center.x + cliff_reach, world.maxx), min(center.y + cliff_reach, world.maxy), center.z)
 	for(var/turf/T as anything in block(low, high))
 		var/wash = -1
 		for(var/obj/thing in T)
-			if(count >= SUMIARI_HANG_MAX)
+			if(count >= area_cap(SUMIARI_HANG_MAX))
 				break
 			if(!sumiari_overhangs(thing))
 				continue
@@ -5275,8 +5318,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		return
 	cliff_client = owner.client
 	var/list/keep = list()
-	var/turf/low = locate(max(center.x - SUMIARI_CLIFF_RANGE, 1), max(center.y - SUMIARI_CLIFF_RANGE, 1), center.z)
-	var/turf/high = locate(min(center.x + SUMIARI_CLIFF_RANGE, world.maxx), min(center.y + SUMIARI_CLIFF_RANGE, world.maxy), center.z)
+	var/cliff_reach = reach(SUMIARI_CLIFF_RANGE)
+	var/turf/low = locate(max(center.x - cliff_reach, 1), max(center.y - cliff_reach, 1), center.z)
+	var/turf/high = locate(min(center.x + cliff_reach, world.maxx), min(center.y + cliff_reach, world.maxy), center.z)
 	var/list/map = bleed_map(center)
 	var/list/grid = map[2]
 	var/list/steps = map[3]
@@ -5319,7 +5363,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		var/cx = (n - 1) % gw + 1
 		var/cy = round((n - 1) / gw) + 1
 		var/turf/T = locate(gx0 + cx - 1, gy0 + cy - 1, center.z)
-		if(!T || get_dist(T, center) > SUMIARI_CLIFF_RANGE)
+		if(!T || get_dist(T, center) > cliff_reach)
 			continue
 		var/fr = sumiari_moon_seal_corner(grid, gw, gh, cx, cy, -1, -1)
 		var/fg = sumiari_moon_seal_corner(grid, gw, gh, cx, cy, 1, -1)
@@ -5542,6 +5586,18 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	if(!GLOB.sumiari_frost_skip[/obj/structure/flora/roguegrass/bush/wall] || !GLOB.sumiari_frost_skip[/obj/structure/flora/roguegrass/bush] \
 		|| GLOB.sumiari_frost_skip[/obj/structure/flora/roguegrass] || !GLOB.sumiari_frost_types[/obj/structure/flora/roguegrass])
 		bad += "frost skip"
+	// Zoom: every per-tile range and per-area cap follows the client's view (capped), and see_in_dark with it.
+	var/old_extra = eyes.view_extra
+	eyes.view_extra = 5
+	var/zoom_reach = eyes.reach(SUMIARI_CLIFF_RANGE)
+	var/zoom_cap = eyes.area_cap(SUMIARI_HANG_MAX)
+	eyes.view_extra = 0
+	var/base_cap = eyes.area_cap(SUMIARI_HANG_MAX)
+	eyes.view_extra = old_extra
+	if(sumiari_view_extra("15x15") != 0 || sumiari_view_extra(7) != 0 || sumiari_view_extra("21x15") != 3 || sumiari_view_extra("25x25") != 5 \
+		|| sumiari_view_extra("41x41") != SUMIARI_VIEW_EXTRA_MAX || sumiari_view_extra("11x11") != 0 || zoom_reach != SUMIARI_CLIFF_RANGE + 5 \
+		|| base_cap != SUMIARI_HANG_MAX || zoom_cap != round(SUMIARI_HANG_MAX * 625 / 225) || eyes.see_in_dark != SUMIARI_SEE_IN_DARK + eyes.view_extra)
+		bad += "zoom reach=[zoom_reach] cap=[zoom_cap]/[base_cap] extra21=[sumiari_view_extra("21x15")] see_in_dark=[eyes.see_in_dark]/[eyes.view_extra]"
 	// Equal openings, equal reach: a window in a south wall and one in a west wall, each with and without a roof
 	// over it, all walk the room the same (opening step 1, next tile step 2), and the unroofed one is sealed.
 	// 3x4, south outside: row 1 sky, row 2 wall|opening|wall, rows 3-4 room.
@@ -5935,8 +5991,9 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	fx_petal_sources = null
 	if(isnull(fx_bloom))
 		fx_bloom = sumiari_bloom_level()
-	var/turf/low = locate(max(center.x - SUMIARI_FX_RANGE, 1), max(center.y - SUMIARI_FX_RANGE, 1), center.z)
-	var/turf/high = locate(min(center.x + SUMIARI_FX_RANGE, world.maxx), min(center.y + SUMIARI_FX_RANGE, world.maxy), center.z)
+	var/fx_reach = reach(SUMIARI_FX_RANGE)
+	var/turf/low = locate(max(center.x - fx_reach, 1), max(center.y - fx_reach, 1), center.z)
+	var/turf/high = locate(min(center.x + fx_reach, world.maxx), min(center.y + fx_reach, world.maxy), center.z)
 	for(var/turf/T as anything in block(low, high))
 #if SUMIARI_MOON_WATER
 		if(sumiari_moon_water_enabled)
@@ -5947,7 +6004,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 			fx_rims(T, wanted)
 #endif
 #if SUMIARI_MOON_DEW
-		if(sumiari_moon_dew_enabled && LAZYLEN(fx_dew_spots) < SUMIARI_DEW_SPOTS_MAX && is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && sumiari_spare_turf_open(T))
+		if(sumiari_moon_dew_enabled && LAZYLEN(fx_dew_spots) < area_cap(SUMIARI_DEW_SPOTS_MAX) && is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && sumiari_spare_turf_open(T))
 			LAZYADD(fx_dew_spots, T)
 #endif
 #if SUMIARI_MOON_BLOOM
@@ -5979,7 +6036,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 			fx_shrine(T, wanted)
 #endif
 #if SUMIARI_MOON_PETALS
-		if(sumiari_moon_petals_enabled && LAZYLEN(fx_petal_sources) < SUMIARI_PETAL_SOURCES_MAX)
+		if(sumiari_moon_petals_enabled && LAZYLEN(fx_petal_sources) < area_cap(SUMIARI_PETAL_SOURCES_MAX))
 			fx_petal_source(T)
 #endif
 #if SUMIARI_MOON_FROST
@@ -6038,10 +6095,10 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 #if SUMIARI_MOON_STEPS
 // A walker set foot on T: a fading print, if T is in this viewer's moonlit effect area.
 /obj/item/organ/eyes/sumiari/proc/fx_footstep(turf/T, mob/living/walker)
-	if(!fx_client || !fx_center || fx_center.z != T.z || get_dist(fx_center, T) > SUMIARI_FX_RANGE)
+	if(!fx_client || !fx_center || fx_center.z != T.z || get_dist(fx_center, T) > reach(SUMIARI_FX_RANGE))
 		return
 	fx_steps = sumiari_fx_expire(fx_client, fx_steps)
-	if(LAZYLEN(fx_steps) >= SUMIARI_STEPS_MAX)
+	if(LAZYLEN(fx_steps) >= area_cap(SUMIARI_STEPS_MAX))
 		return
 	var/image/print = sumiari_step_image(T, walker.dir, walker.sumiari_step_foot)
 	LAZYSET(fx_steps, print, world.time + SUMIARI_STEP_FADE + 2)
@@ -6450,7 +6507,7 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	if(isclosedturf(T) || !sumiari_spare_turf_open(T) || share <= 0)
 		return
 	for(var/obj/plant in T)
-		if(fx_sway_count >= SUMIARI_SWAY_MAX)
+		if(fx_sway_count >= area_cap(SUMIARI_SWAY_MAX))
 			return
 		if(!is_type_in_typecache(plant, GLOB.sumiari_sway_types) || plant.invisibility || !plant.icon_state)
 			continue
@@ -6566,7 +6623,7 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 	return wet >= 2
 
 /obj/item/organ/eyes/sumiari/proc/fx_fog(turf/T, list/wanted)
-	if(fx_fog_count >= SUMIARI_FOG_MAX || ((T.x * 7 + T.y * 5) % 3) || !sumiari_spare_turf_open(T) || !sumiari_fog_ground(T))
+	if(fx_fog_count >= area_cap(SUMIARI_FOG_MAX) || ((T.x * 7 + T.y * 5) % 3) || !sumiari_spare_turf_open(T) || !sumiari_fog_ground(T))
 		return
 	fx_fog_count++
 	var/key = "f[T.x],[T.y]"
@@ -6635,7 +6692,7 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 	return FALSE
 
 /obj/item/organ/eyes/sumiari/proc/fx_beam(turf/T, list/wanted)
-	if(fx_beam_count >= SUMIARI_BEAM_MAX || ((T.x * 2 + T.y) % 3) || isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_turf_has_tree(T))
+	if(fx_beam_count >= area_cap(SUMIARI_BEAM_MAX) || ((T.x * 2 + T.y) % 3) || isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_turf_has_tree(T))
 		return
 	var/share = sumiari_fx_lamp_share(T)
 	if(share <= 0)
@@ -6701,7 +6758,7 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 )))
 
 /obj/item/organ/eyes/sumiari/proc/fx_reflect(turf/T, list/wanted)
-	if(fx_reflect_count >= SUMIARI_REFLECT_MAX || !istype(T, /turf/open/water) || !sumiari_spare_turf_open(T))
+	if(fx_reflect_count >= area_cap(SUMIARI_REFLECT_MAX) || !istype(T, /turf/open/water) || !sumiari_spare_turf_open(T))
 		return
 	var/turf/north = get_step(T, NORTH)
 	if(!north)
@@ -6713,7 +6770,7 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 		if(is_type_in_typecache(thing, GLOB.sumiari_reflect_types) && !thing.invisibility && thing.icon_state)
 			casters += thing
 	for(var/atom/caster as anything in casters)
-		if(fx_reflect_count >= SUMIARI_REFLECT_MAX)
+		if(fx_reflect_count >= area_cap(SUMIARI_REFLECT_MAX))
 			return
 		fx_reflect_count++
 		var/key = "q[T.x],[T.y],[REF(caster)]"
@@ -6730,7 +6787,7 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 
 /obj/item/organ/eyes/sumiari/proc/fx_shrine(turf/T, list/wanted)
 	var/share = sumiari_fx_lamp_share(T)
-	if(fx_shrine_count >= SUMIARI_SHRINE_MAX || !sumiari_spare_turf_open(T) || share <= 0)
+	if(fx_shrine_count >= area_cap(SUMIARI_SHRINE_MAX) || !sumiari_spare_turf_open(T) || share <= 0)
 		return
 	for(var/obj/holy in T)
 		if(!is_type_in_typecache(holy, GLOB.sumiari_shrine_types) || holy.invisibility || !holy.icon_state)
@@ -6827,7 +6884,7 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 	fx_spirits = sumiari_fx_expire(fx_client, fx_spirits)
 	if(!sumiari_moon_spirits_enabled || !fx_client || world.time < fx_spirit_next || LAZYLEN(fx_spirits) >= SUMIARI_SPIRIT_MAX)
 		return
-	var/turf/T = sumiari_spirit_spot(center)
+	var/turf/T = sumiari_spirit_spot(center, reach(SUMIARI_SPIRIT_RANGE))
 	if(!T)
 		fx_spirit_next = world.time + 2 SECONDS
 		return
@@ -6846,12 +6903,12 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 	LAZYSET(fx_spirits, spirit, world.time + sumiari_spirit_play(spirit, path, life, peak) + SUMIARI_SPIRIT_REMOVE_MARGIN)
 
 // A moonlit open-sky tile near the viewer, outside lamp pools; null if a few tries find none.
-/proc/sumiari_spirit_spot(turf/center)
+/proc/sumiari_spirit_spot(turf/center, range = SUMIARI_SPIRIT_RANGE)
 	if(!center)
 		return null
 	for(var/attempt in 1 to 6)
-		var/dx = rand(-SUMIARI_SPIRIT_RANGE, SUMIARI_SPIRIT_RANGE)
-		var/dy = rand(-(SUMIARI_SPIRIT_RANGE - 1), SUMIARI_SPIRIT_RANGE - 1)
+		var/dx = rand(-range, range)
+		var/dy = rand(-(range - 1), range - 1)
 		if(!dx && !dy)
 			continue
 		var/turf/T = locate(center.x + dx, center.y + dy, center.z)
@@ -7137,7 +7194,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	return ramp * ramp * (3 - 2 * ramp)
 
 /obj/item/organ/eyes/sumiari/proc/fx_frost(turf/T, list/wanted)
-	if(fx_frost_count >= SUMIARI_FROST_MAX || isclosedturf(T) || !sumiari_spare_turf_open(T))
+	if(fx_frost_count >= area_cap(SUMIARI_FROST_MAX) || isclosedturf(T) || !sumiari_spare_turf_open(T))
 		return
 	var/level = fx_frost_step / 20
 #if SUMIARI_FROST_PAVING
@@ -7158,7 +7215,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	var/sway_share = sumiari_fx_lamp_share(T)
 	var/sways = sumiari_moon_sway_enabled && SUMIARI_MOON_SWAY && sway_share > 0
 	for(var/obj/thing in T)
-		if(fx_frost_count >= SUMIARI_FROST_MAX)
+		if(fx_frost_count >= area_cap(SUMIARI_FROST_MAX))
 			return
 		if(!is_type_in_typecache(thing, GLOB.sumiari_frost_types) || is_type_in_typecache(thing, GLOB.sumiari_frost_skip) || thing.invisibility || !thing.icon_state)
 			continue
