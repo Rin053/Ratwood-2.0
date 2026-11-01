@@ -88,7 +88,8 @@
 // The mask is only sky * strength: a roofed room or cave is black on the sky plane and keeps plain color.
 #define SUMIARI_MOON_VIVID 1
 // Saturation around Rec.709 luma. 1 is normal color. Above about 1.9 strong reds and greens clip into neon.
-#define SUMIARI_MOON_SATURATION 1.45
+// 1.75: punchy jewel color with headroom under the neon line. The highlight knee below keeps it from clipping.
+#define SUMIARI_MOON_SATURATION 1.75
 // Faint silver sheen: this fraction of the pixel is the cool silver ink (SILVER_R/G/B above). It is a tint,
 // not a lift: the moonlit layer keeps the plain image's brightness, only the colors are richer.
 #define SUMIARI_MOON_SHEEN 0.3
@@ -100,6 +101,15 @@
 // moonlit ground reads as lit by the moon rather than as dark art. Bright pixels clip softly into the moon glow.
 // 1 = the plain image's brightness.
 #define SUMIARI_MOON_LUMINANCE 1.5
+// Soft highlight knee on the moonlit layer. A color matrix is linear, so luminance 1.5 and saturation 1.75 pushed
+// bright greens, blues and whites past 1, where they clipped flat. With the knee each world plane is graded at
+// 1 / LUMINANCE (nothing clips there), a second copy subtracts SLOPE * (graded - START / LUMINANCE) (the subtract
+// clamps at 0, so it only touches highlights), and the gain is put back once on the whole stack. Output rises
+// 1:1 up to KNEE_START, then at (1 - SLOPE) of the rate, so highlights roll into the glow instead of clipping.
+// Mobs are not kneed (their look never reaches 1). 0 turns the knee off and grades exactly as before.
+#define SUMIARI_MOON_KNEE 1
+#define SUMIARI_MOON_KNEE_START 0.72
+#define SUMIARI_MOON_KNEE_SLOPE 0.55
 // Hue shifts. Colors pop by moving hue, not by brightening. Each push below is a raw nudge on one input channel's
 // row of the color matrix. The sum is projected (sumiari_moon_hue_matrix) so every row keeps its Rec.709 luma
 // (a pushed channel is paid for by the others) and every column sums to 0 (gray stays gray). A linear matrix
@@ -110,13 +120,13 @@
 // Reds lean crimson: red input pushes a little blue.
 #define SUMIARI_MOON_HUE_CRIMSON 0
 // Browns, wood, orange, and reds lean warm umber: red input pushes more red (less yellow).
-#define SUMIARI_MOON_HUE_UMBER 0.4
+#define SUMIARI_MOON_HUE_UMBER 0.5
 // Greens lean emerald: green input pushes blue.
-#define SUMIARI_MOON_HUE_EMERALD 0.5
+#define SUMIARI_MOON_HUE_EMERALD 0.7
 // Reds and brick lean ember-umber: red input pushes green, so reddish-gray brick warms toward tan, not pink.
 #define SUMIARI_MOON_HUE_EMBER 1
 // Blues and teals lean sapphire: blue input pushes green (violet-blue toward sapphire's 216 degrees).
-#define SUMIARI_MOON_HUE_SAPPHIRE 0.2
+#define SUMIARI_MOON_HUE_SAPPHIRE 0.35
 // Mobs (GAME_PLANE_FOV_HIDDEN) under the moon: no hue push, no violet shadow. The moon relay shows sprites unlit, so
 // skin came out at full daytime chroma and read salmon against the night. Mobs get moonlight instead: chroma eased to
 // MOB_SATURATION, a MOB_SILVER share of the silver tint (luma kept), and MOB_GAIN so whites never clip.
@@ -877,18 +887,64 @@ var/global/turf/sumiari_test_dark_turf
 #else
 	var/list/mob_look = world_look
 #endif
+	var/gain = 1
+#if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
+	gain = SUMIARI_MOON_LUMINANCE
+	// A multiply plane (the open-space backdrop) scales what is under it, so it keeps the full look: the stack under
+	// it is already at 1 / gain and the gain comes back once at the end.
+	var/list/multiply_look = world_look
+	world_look = sumiari_scale_matrix_rgb(world_look, 1 / gain)
+	mob_look = sumiari_scale_matrix_rgb(mob_look, 1 / gain)
+	var/list/knee_look = sumiari_moon_knee_matrix(world_look, gain)
+	var/list/fx_look = sumiari_scale_matrix_rgb(color_matrix_identity(), 1 / gain)
+#endif
 	for(var/plane in GLOB.sumiari_vision_plane_order)
 		var/atom/movable/screen/plane_master/source = owner.hud_used.plane_masters["[plane]"]
 		if(!source)
 			continue
+#if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
+		var/list/plane_look = (plane == GAME_PLANE_FOV_HIDDEN) ? mob_look : world_look
+		if(source.blend_mode == BLEND_MULTIPLY)
+			plane_look = multiply_look
+		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = plane_look)
+#else
 		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = (plane == GAME_PLANE_FOV_HIDDEN) ? mob_look : world_look)
+#endif
+#if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
+		if(plane in GLOB.sumiari_moon_knee_planes)
+			stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_SUBTRACT, color = knee_look)
+#endif
 #if SUMIARI_MOON_FX
 		// The moon effects that belong with this plane, right on top of it, in their own colors (no moon grade).
 		var/fx_plane = sumiari_fx_plane_for(plane)
 		if(fx_plane)
+#if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
+			stacked += filter(type = "layer", render_source = sumiari_fx_target(fx_plane), blend_mode = BLEND_OVERLAY, color = fx_look)
+#else
 			stacked += filter(type = "layer", render_source = sumiari_fx_target(fx_plane), blend_mode = BLEND_OVERLAY)
 #endif
+#endif
+	if(gain != 1)
+		stacked += filter(type = "color", color = sumiari_scale_matrix_rgb(color_matrix_identity(), gain))
 	return stacked
+
+// Planes whose highlights get the knee: ground, walls, objects. Not mobs (neutral, never near 1) or open space.
+GLOBAL_LIST_INIT(sumiari_moon_knee_planes, list(FLOOR_PLANE, WALL_PLANE, GAME_PLANE_LOWER, GAME_PLANE, GAME_PLANE_UPPER))
+
+// Every RGB output of a color matrix (rows R, G, B, A and the constants) times scale. Alpha output untouched.
+/proc/sumiari_scale_matrix_rgb(list/look, scale)
+	var/list/scaled = look.Copy()
+	for(var/row in 0 to 4)
+		for(var/output in 1 to 3)
+			scaled[row * 4 + output] = look[row * 4 + output] * scale
+	return scaled
+
+// SLOPE * (look - START / gain): the part of a graded pixel above the knee, for a subtract layer. Alpha kept.
+/proc/sumiari_moon_knee_matrix(list/look, gain)
+	var/list/knee = sumiari_scale_matrix_rgb(look, SUMIARI_MOON_KNEE_SLOPE)
+	for(var/output in 1 to 3)
+		knee[16 + output] -= SUMIARI_MOON_KNEE_SLOPE * SUMIARI_MOON_KNEE_START / gain
+	return knee
 
 // Moonlight on a mob: out = gain * tint * (luma + saturation * (color - luma)). Tint is the silver ratio pulled
 // MOB_SILVER of the way from white and divided by its own luma, so a gray sprite keeps its brightness.
@@ -2519,6 +2575,8 @@ var/global/sumiari_run_headless_test = FALSE
 		return found
 	for(var/sample in thing.filters)
 		var/render_source = sumiari_filter_field(list(sample), 1, "render_source")
+		if(sumiari_filter_field(list(sample), 1, "blend_mode") == BLEND_SUBTRACT)
+			continue
 		for(var/plane in GLOB.sumiari_vision_plane_order)
 			if(render_source == sumiari_world_render_source(plane))
 				found += render_source
