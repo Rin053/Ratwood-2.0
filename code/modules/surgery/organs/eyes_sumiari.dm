@@ -4929,30 +4929,9 @@ GLOBAL_LIST_INIT(sumiari_fire_light_overrides, typecacheof(list(
 			return TRUE
 	return FALSE
 
-// Open moonlit sky, the same tiles the moon mask calls sky (open or its border), never roofed or underground. A tile
-// under an open-air walkway counts too (sumiari_moon_cover).
+// Open moonlit sky, the same tiles the moon mask calls sky (open or its border), never roofed or underground.
 /proc/sumiari_spare_turf_open(turf/T)
-	if(!T)
-		return FALSE
-	if(T.outdoor_effect && T.outdoor_effect.state != SKY_BLOCKED)
-		return TRUE
-	return sumiari_moon_cover(T)
-
-// Outdoors under an open-air walkway, bridge or terrace: an open tile in an outdoors area whose turf above is an
-// open floor in an outdoors area, itself under the open sky. The game counts it roofed (vanilla draws it as an
-// unlit room), but it is a courtyard or path in the open, so these eyes give it the full moon look like open sky
-// (the cliff images draw its sky). A second roof, a building's floor (indoors area) or a cave never counts.
-/proc/sumiari_moon_cover(turf/T)
-	if(!T || isclosedturf(T))
-		return FALSE
-	var/area/here = T.loc
-	if(!here?.outdoors)
-		return FALSE
-	var/turf/above = get_step_multiz(T, UP)
-	if(!above || isclosedturf(above) || !above.outdoor_effect || above.outdoor_effect.state == SKY_BLOCKED)
-		return FALSE
-	var/area/up = above.loc
-	return up?.outdoors
+	return T?.outdoor_effect && T.outdoor_effect.state != SKY_BLOCKED
 
 // A tile the moon reaches: open sky, or a wall face beside open sky (the moon plate spills onto it). Without the wall
 // faces, a calm light against a cliff would carve a dark gray disc out of the moonlit rock.
@@ -5413,9 +5392,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	for(var/turf/T as anything in block(low, high))
 		var/wall = isclosedturf(T) && !T.outdoor_effect
 		var/index = (T.y - gy0) * gw + (T.x - gx0) + 1
-		// A walkway-covered tile is a SKY cell with no vanilla sky overlay: its sky is drawn here.
-		var/cover = grid[index] == SUMIARI_BLEED_SKY && (!T.outdoor_effect || T.outdoor_effect.state == SKY_BLOCKED)
-		if(!wall && !cover && !(grid[index] == SUMIARI_BLEED_ROOF && steps[index]))
+		if(!wall && !(grid[index] == SUMIARI_BLEED_ROOF && steps[index]))
 			continue
 		// The same corner order the sky overlay uses (update_outdoor_effect_overlays): r SW, g SE, b NW, a NE.
 		// Seen from indoors a shut door under the sky does not light the wall faces beside it.
@@ -5696,20 +5673,6 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		|| SUMIARI_CLIFF_RANGE + sumiari_view_extra("25x25", pan_px * SUMIARI_PAN_MAX, 0) < 12 + SUMIARI_PAN_MAX + 2 \
 		|| SUMIARI_SEE_IN_DARK + sumiari_view_extra("15x15", pan_px * SUMIARI_PAN_MAX, 0) < SUMIARI_VIEW_BASE_RADIUS + SUMIARI_PAN_MAX)
 		bad += "pan reach 11=[sumiari_view_extra("15x15", pan_px * 11, 0)] wide=[sumiari_view_extra("25x25", pan_px * 11, -pan_px * 11)]"
-	// Open-air walkway cover: on the vampire lair level the courtyard under the walkway is moonlit like open sky,
-	// the manor's own rooms are not. Only checked where that map is loaded.
-	for(var/lair_z in 1 to world.maxz)
-		var/turf/court = locate(24, 4, lair_z)
-		var/turf/room = locate(24, 26, lair_z)
-		if(!istype(court?.loc, /area/rogue/outdoors/woods/vampire_lair) || isclosedturf(court) || !istype(room?.loc, /area/rogue/indoors))
-			continue
-		if(!sumiari_moon_cover(court) || !sumiari_spare_turf_open(court) || sumiari_moon_cover(room))
-			var/turf/court_up = get_step_multiz(court, UP)
-			bad += "walkway cover court=[sumiari_moon_cover(court)] room=[sumiari_moon_cover(room)] z=[lair_z] up=[court_up?.type] up_sky=[court_up?.outdoor_effect?.state] up_area=[court_up?.loc?.type]"
-		log_world("SUMIARI TEST walkway cover checked z=[lair_z]")
-		break
-	if(sumiari_moon_cover(null) || sumiari_spare_turf_open(null))
-		bad += "cover null"
 	// Midday: the look the vision gets when it is attached (spawn, login, eye insert) has no moon at all from the
 	// first frame, and a stale night look is put right by the next beauty tick.
 	if(eyes.vision_on && eyes.wash_mode == SUMIARI_WASH_LIVE && !sumiari_moon_fade_timer)
