@@ -444,8 +444,9 @@
 #define SUMIARI_MOON_REFLECT 1
 #define SUMIARI_REFLECT_MAX 40
 #define SUMIARI_REFLECT_ALPHA 105
-// 13) Noc's regard: a shrine, altar or pantheon cross standing under the open moon carries a faint silver-lilac sheen,
-// a copy of its own sprite breathing slowly with the moon, as if the god of the night sky lingers on what is his.
+// 13) Noc's regard: a shrine, altar or pantheon cross standing under the open moon carries a faint silver-lilac aura
+// behind it, breathing slowly with the moon, as if the god of the night sky lingers on what is his. Drawn beneath
+// every standing thing, so it glows around the shrine's outline and never over or around a body near it.
 // Only on moonlit open-sky tiles outside lamp pools; masked by the moon like everything else.
 #define SUMIARI_MOON_SHRINE 1
 #define SUMIARI_SHRINE_MAX 8
@@ -5755,18 +5756,21 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 		return
 
 /proc/sumiari_shrine_image(obj/holy)
-	var/image/sheen = image(loc = holy)
-	sheen.appearance = holy.appearance
-	sheen.loc = holy
-	sheen.name = ""
-	sheen.plane = SUMIARI_FX_GAME_PLANE
-	sheen.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
-	sheen.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART | KEEP_TOGETHER
-	sheen.color = sumiari_sway_shimmer_matrix()
-	sheen.alpha = sumiari_fx_alpha(SUMIARI_SHRINE_ALPHA)
-	// A soft lilac halo hugging the silhouette: the sheen spills a pixel or two into the night around it.
-	sheen.filters += filter(type = "drop_shadow", x = 0, y = 0, size = 3, offset = 1, color = sumiari_fx_tone(SUMIARI_TONE_LILAC, 200))
-	return sumiari_fx_breathe(sheen, get_turf(holy), 0.7, 21)
+	var/image/aura = image(loc = holy)
+	aura.appearance = holy.appearance
+	aura.loc = holy
+	aura.name = ""
+	// Behind everything standing in the world: the effect plane under GAME_PLANE, so the shrine itself covers the copy
+	// and any body before, beside or behind it draws over the glow. Only the light spilling past its outline shows.
+	aura.plane = SUMIARI_FX_LOWER_PLANE
+	aura.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	aura.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART | KEEP_TOGETHER
+	aura.color = sumiari_sway_shimmer_matrix()
+	aura.alpha = sumiari_fx_alpha(SUMIARI_SHRINE_ALPHA)
+	// Two soft rings: a close moon-silver one and a wide faint lilac bloom.
+	aura.filters += filter(type = "drop_shadow", x = 0, y = 0, size = 2, offset = 1, color = rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B, 170))
+	aura.filters += filter(type = "drop_shadow", x = 0, y = 0, size = 7, offset = 0, color = sumiari_fx_tone(SUMIARI_TONE_LILAC, 120))
+	return sumiari_fx_breathe(aura, get_turf(holy), 0.7, 21)
 #endif
 
 /proc/sumiari_reflect_image(atom/caster, turf/water)
@@ -6256,7 +6260,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 #if SUMIARI_MOON_SHRINE
 	var/obj/structure/fluff/psycross/cross = new(spot)
 	var/image/sheen = sumiari_shrine_image(cross)
-	if(sheen.plane != SUMIARI_FX_GAME_PLANE || sheen.loc != cross || !length(sheen.filters) || !is_type_in_typecache(cross, GLOB.sumiari_shrine_types))
+	if(sheen.plane != SUMIARI_FX_LOWER_PLANE || sheen.loc != cross || length(sheen.filters) != 2 || !is_type_in_typecache(cross, GLOB.sumiari_shrine_types))
 		bad += "shrine"
 	qdel(cross)
 #endif
