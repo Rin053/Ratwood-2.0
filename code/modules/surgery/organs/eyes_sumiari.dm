@@ -136,8 +136,8 @@
 #define SUMIARI_MOON_MOB_SILVER 0.15
 #define SUMIARI_MOON_MOB_GAIN 0.95
 // Mobs take the moon too (Ryan, 7:25 PM), skin-safe. Where a mob stands in moonlight it gets the same kind of grade as
-// the world: chroma up (MOB_GRADE_SATURATION around Rec.709 luma) and a MOB_GRADE_SHEEN share of the silver-lilac
-// moon tone (luma kept), but none of the world's hue pushes. Skin turns salmon or pink when its blue rises against its
+// the world: its LUMINANCE (times MOB_GRADE_GAIN), chroma up (MOB_GRADE_SATURATION around Rec.709 luma), a
+// MOB_GRADE_SHEEN share of the world's silver sheen and its violet shadow lift, but none of the world's hue pushes. Skin turns salmon or pink when its blue rises against its
 // green; plain saturation lowers blue against green on every warm tone, so skin goes richer and more golden, never
 // pinker. MOB_GRADE_EMBER is a small extra guard: red above luma lends a little to green. No cool shift on mobs.
 // Where: the same moon mask as the ground (open sky only, off roofs and caves with the soft roof-line feather, off
@@ -147,12 +147,9 @@
 // 0 (or sumiari_moon_mob_grade_enabled off, applied when the moon relay is next rebuilt) = the neutral mob look above.
 #define SUMIARI_MOON_MOB_GRADE 1
 #define SUMIARI_MOB_GRADE_SATURATION 1.6
-#define SUMIARI_MOB_GRADE_SHEEN 0.2
+#define SUMIARI_MOB_GRADE_SHEEN 0.3
 #define SUMIARI_MOB_GRADE_EMBER 0.05
-#define SUMIARI_MOB_GRADE_GAIN 0.94
-#define SUMIARI_MOB_GRADE_TONE_R 201
-#define SUMIARI_MOB_GRADE_TONE_G 192
-#define SUMIARI_MOB_GRADE_TONE_B 242
+#define SUMIARI_MOB_GRADE_GAIN 0.78
 
 // ---------------------------------------------------------------------------------------------
 // Night beauty. Midnight only. Everything below draws only on open moonlit sky that no lamp, fire, or sun lights,
@@ -190,7 +187,12 @@
 //    (k * indigo * (1 - luma)). Only a trace of red (blue >> green > red): a larger red share on top of the cool
 //    sheen turned dim brown brick pink.
 #define SUMIARI_NIGHT_SHADOWS 1
-#define SUMIARI_SHADOW_VIOLET 0.12
+//    The lift is kept small (0.035): at 0.12 it was a large share of a dark pixel's value but a small share of its
+//    lighter neighbour's, so every dark ground texture turned into blue-and-brown speckle (the "grain" around the
+//    character; the grain overlay itself barely mattered). The cool cast now comes mostly from SHADOW_CAST, a gentle
+//    multiplicative lean toward the violet that tints every pixel in proportion and so adds no speckle.
+#define SUMIARI_SHADOW_VIOLET 0.035
+#define SUMIARI_SHADOW_CAST 0.12
 #define SUMIARI_SHADOW_R 0.1
 #define SUMIARI_SHADOW_G 0.45
 #define SUMIARI_SHADOW_B 1
@@ -1073,7 +1075,7 @@ var/global/turf/sumiari_test_dark_turf
 	// The knee comes off once, from its own plate. Five extra layers on this relay (one per kneed plane) pushed the
 	// filter list past what the client renders, and the whole moonlit world drew black.
 	if(knee_plate)
-		knee_plate.filters = sumiari_moon_knee_filters(knee_look)
+		knee_plate.filters = sumiari_moon_knee_filters(knee_look, sumiari_moon_knee_matrix(mob_look, gain))
 		stacked += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_KNEE), blend_mode = BLEND_SUBTRACT)
 #endif
 	if(gain != 1)
@@ -1081,10 +1083,12 @@ var/global/turf/sumiari_test_dark_turf
 	return stacked
 
 // The knee plate: each kneed plane's highlight excess over the knee, stacked in draw order like the world.
-/proc/sumiari_moon_knee_filters(list/knee_look)
+/proc/sumiari_moon_knee_filters(list/knee_look, list/mob_knee)
 	var/list/out = list()
 	for(var/plane in GLOB.sumiari_vision_plane_order)
-		if(plane in GLOB.sumiari_moon_knee_planes)
+		if(plane == GAME_PLANE_FOV_HIDDEN)
+			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = mob_knee)
+		else if(plane in GLOB.sumiari_moon_knee_planes)
 			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = knee_look)
 	return out
 
@@ -1123,24 +1127,36 @@ GLOBAL_LIST_INIT(sumiari_moon_knee_planes, list(FLOOR_PLANE, WALL_PLANE, GAME_PL
 
 var/global/sumiari_moon_mob_grade_enabled = TRUE
 
-// The skin-safe moon grade for mobs: gain * ((1 - sheen) * saturation + sheen * lilac tint) plus the ember guard
-// (red's excess over luma moves EMBER of itself from the red output to the green). Gray stays gray-lilac.
+// The skin-safe moon grade for mobs, in the same light as the ground: the world's LUMINANCE, its silver sheen tint
+// and its violet shadow lift, at a slightly gentler saturation, plus the ember guard (red's excess over luma moves
+// EMBER of itself from the red output to the green) so skin never turns salmon. A mob used to get gain 0.94 against
+// the ground's 1.5, so it read dark and muddy on moonlit grass. Whites get the knee like the world (moon_stack_filters).
 /proc/sumiari_moon_mob_grade_matrix()
 	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
-	var/list/tone = list(SUMIARI_MOB_GRADE_TONE_R / 255, SUMIARI_MOB_GRADE_TONE_G / 255, SUMIARI_MOB_GRADE_TONE_B / 255)
-	var/tone_luma = tone[1] * luma[1] + tone[2] * luma[2] + tone[3] * luma[3]
+	var/list/tint = list(SUMIARI_MOON_SHEEN_R, SUMIARI_MOON_SHEEN_G, SUMIARI_MOON_SHEEN_B)
+	var/gain = SUMIARI_MOON_LUMINANCE * SUMIARI_MOB_GRADE_GAIN
 	var/list/look = color_matrix_identity()
 	look = look.Copy()
 	for(var/input in 1 to 3)
 		var/red_excess = (input == 1 ? 1 : 0) - luma[input]
 		for(var/output in 1 to 3)
 			var/saturated = luma[input] * (1 - SUMIARI_MOB_GRADE_SATURATION) + (input == output ? SUMIARI_MOB_GRADE_SATURATION : 0)
-			var/sheen = luma[input] * tone[output] / tone_luma
-			look[(input - 1) * 4 + output] = SUMIARI_MOB_GRADE_GAIN * ((1 - SUMIARI_MOB_GRADE_SHEEN) * saturated + SUMIARI_MOB_GRADE_SHEEN * sheen)
-		look[(input - 1) * 4 + 1] -= SUMIARI_MOB_GRADE_GAIN * SUMIARI_MOB_GRADE_EMBER * red_excess
-		look[(input - 1) * 4 + 2] += SUMIARI_MOB_GRADE_GAIN * SUMIARI_MOB_GRADE_EMBER * red_excess
+			var/sheen = SUMIARI_INK_SLOPE * luma[input] * tint[output]
+			look[(input - 1) * 4 + output] = gain * ((1 - SUMIARI_MOB_GRADE_SHEEN) * saturated + SUMIARI_MOB_GRADE_SHEEN * sheen)
+		look[(input - 1) * 4 + 1] -= gain * SUMIARI_MOB_GRADE_EMBER * red_excess
+		look[(input - 1) * 4 + 2] += gain * SUMIARI_MOB_GRADE_EMBER * red_excess
 	for(var/output in 1 to 3)
 		look[16 + output] = 0
+#if SUMIARI_NIGHT_SHADOWS
+	var/list/violet = sumiari_shadow_violet()
+	for(var/output in 1 to 3)
+		if(!sumiari_night_beauty_enabled)
+			break
+		look[16 + output] += SUMIARI_SHADOW_VIOLET * violet[output]
+		var/cast = 1 + SUMIARI_SHADOW_CAST * (violet[output] - 0.5)
+		for(var/input in 1 to 3)
+			look[(input - 1) * 4 + output] = look[(input - 1) * 4 + output] * cast - gain * SUMIARI_SHADOW_VIOLET * luma[input] * violet[output]
+#endif
 	return look
 
 // live draws that stack on the ink relay and masks it with *sumiari_mask.
@@ -1632,8 +1648,9 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 		if(!sumiari_night_beauty_enabled)
 			break
 		vivid[16 + output] += SUMIARI_SHADOW_VIOLET * violet[output]
+		var/cast = 1 + SUMIARI_SHADOW_CAST * (violet[output] - 0.5)
 		for(var/input in 1 to 3)
-			vivid[(input - 1) * 4 + output] -= SUMIARI_MOON_LUMINANCE * SUMIARI_SHADOW_VIOLET * luma[input] * violet[output]
+			vivid[(input - 1) * 4 + output] = vivid[(input - 1) * 4 + output] * cast - SUMIARI_MOON_LUMINANCE * SUMIARI_SHADOW_VIOLET * luma[input] * violet[output]
 #endif
 	return vivid
 
