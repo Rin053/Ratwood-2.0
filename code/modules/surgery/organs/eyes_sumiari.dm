@@ -604,6 +604,10 @@
 #define SUMIARI_SENSE_ALPHA_LOW 30
 #define SUMIARI_SENSE_ALPHA_HIGH 70
 #define SUMIARI_SENSE_PULSE (3 SECONDS)
+// A silhouette fades in and out over this, rather than popping, when a body slips out of sight or back into it.
+#define SUMIARI_SENSE_FADE (0.4 SECONDS)
+// Longest glide for one step of a sensed body (its own glide time, capped here).
+#define SUMIARI_SENSE_GLIDE_MAX (1 SECONDS)
 // Soft edge on the silhouette, in pixels.
 #define SUMIARI_SENSE_BLUR 1.5
 // Pale ink-wash fill (0-1 per channel).
@@ -817,9 +821,15 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/list/spill_keys
 	// One bleed walk per tick, shared by the cliff (moon bleed) and spill passes: list(key, grid, steps, x0, y0, w, h).
 	var/list/bleed_cache
-	// Night senses: body -> image shown to sense_client, and body -> the dir/lying the image was copied at.
+	// Night senses: body -> the pulse image shown to sense_client (it rides that body's anchor), body -> anchor, body
+	// -> the appearance key its silhouette was copied at, body -> timer of a fade-out under way, the bodies in range
+	// whose steps and turns are watched, and the turf every anchor is hosted on.
 	var/list/sensed_images
+	var/list/sensed_anchors
 	var/list/sensed_shapes
+	var/list/sense_fading
+	var/list/sense_watched
+	var/turf/sense_host
 	var/client/sense_client
 	var/sense_timer
 	// Night beauty: the client the images were shown to, live glints (image -> expiry), and flora halos (plant -> image).
@@ -4257,19 +4267,44 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	spill_tick()
 	fx_tick(TRUE)
 
+// Gone at once (vision off, another client, the eyes leaving): no fade, nothing left behind.
 /obj/item/organ/eyes/sumiari/proc/clear_sensed()
-	for(var/mob/living/L as anything in sensed_images)
-		var/image/shape = sensed_images[L]
-		sense_client?.images -= shape
+	for(var/mob/living/L as anything in sensed_anchors)
+		drop_sensed(L)
+	for(var/mob/living/L as anything in sense_watched)
+		unwatch_sensed(L)
 	sensed_images = null
+	sensed_anchors = null
 	sensed_shapes = null
+	sense_fading = null
+	sense_watched = null
+	sense_host = null
 
 /obj/item/organ/eyes/sumiari/proc/drop_sensed(mob/living/L)
-	var/image/shape = sensed_images?[L]
-	if(shape)
-		sense_client?.images -= shape
-	sensed_images -= L
-	sensed_shapes -= L
+	var/image/pulse = sensed_images?[L]
+	if(pulse)
+		sense_client?.images -= pulse
+		pulse.overlays.Cut()
+	var/fade_timer = sense_fading?[L]
+	if(fade_timer)
+		deltimer(fade_timer)
+	var/obj/effect/abstract/sumiari_sense_anchor/anchor = sensed_anchors?[L]
+	if(anchor)
+		qdel(anchor)
+	LAZYREMOVE(sensed_images, L)
+	LAZYREMOVE(sensed_anchors, L)
+	LAZYREMOVE(sensed_shapes, L)
+	LAZYREMOVE(sense_fading, L)
+
+// Fades a silhouette out over SENSE_FADE, then drops it. Shown again before then, it fades back in from where it is.
+/obj/item/organ/eyes/sumiari/proc/hide_sensed(mob/living/L)
+	var/obj/effect/abstract/sumiari_sense_anchor/anchor = sensed_anchors?[L]
+	if(!anchor)
+		return
+	if(sense_fading?[L])
+		return
+	animate(anchor, alpha = 0, time = SUMIARI_SENSE_FADE, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+	LAZYSET(sense_fading, L, addtimer(CALLBACK(src, PROC_REF(drop_sensed), L), SUMIARI_SENSE_FADE + 1, TIMER_STOPPABLE))
 
 // Why the senses are off for this viewer right now, or null when they work.
 /obj/item/organ/eyes/sumiari/proc/sense_blocked()
@@ -4298,58 +4333,218 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 		clear_sensed()
 		sense_client = null
 	if(sense_blocked())
-		clear_sensed()
+		for(var/mob/living/L as anything in sensed_anchors)
+			hide_sensed(L)
+		for(var/mob/living/L as anything in sense_watched)
+			unwatch_sensed(L)
 		return
 	sense_client = owner.client
-	var/list/found = sumiari_sense_targets(owner)
-	for(var/mob/living/L as anything in sensed_images)
+	var/list/nearby = list()
+	var/list/found = sumiari_sense_targets(owner, null, nearby)
+	// Bodies in range are watched, so a step behind a wall or out of it shows or fades at once, not on the next tick.
+	for(var/mob/living/L as anything in sense_watched)
+		if(!nearby[L])
+			unwatch_sensed(L)
+	for(var/mob/living/L as anything in nearby)
+		watch_sensed(L)
+	rehost_sensed()
+	for(var/mob/living/L as anything in sensed_anchors)
 		if(!found[L])
-			drop_sensed(L)
+			hide_sensed(L)
 	for(var/mob/living/L as anything in found)
 		show_sensed(L)
 
-/obj/item/organ/eyes/sumiari/proc/show_sensed(mob/living/L)
-	var/turf/here = get_turf(owner)
-	var/turf/there = get_turf(L)
-	if(!here || !there)
+/obj/item/organ/eyes/sumiari/proc/watch_sensed(mob/living/L)
+	if(sense_watched?[L] || L == owner)
 		return
-	var/shape_key = "[L.dir]-[L.lying]-[L.icon_state]-[length(L.overlays)]"
-	var/image/shape = sensed_images?[L]
-	if(shape && sensed_shapes?[L] != shape_key)
-		drop_sensed(L)
-		shape = null
-	if(!shape)
-		shape = sumiari_sense_image(L, owner)
-		LAZYSET(sensed_images, L, shape)
-		LAZYSET(sensed_shapes, L, shape_key)
-		sense_client.images += shape
-	shape.pixel_x = ((there.x - here.x) * world.icon_size) + L.pixel_x - owner.pixel_x
-	shape.pixel_y = ((there.y - here.y) * world.icon_size) + L.pixel_y - owner.pixel_y
+	LAZYSET(sense_watched, L, TRUE)
+	RegisterSignal(L, COMSIG_MOVABLE_MOVED, PROC_REF(on_sensed_moved))
+	RegisterSignal(L, COMSIG_ATOM_DIR_CHANGE, PROC_REF(on_sensed_dir))
+	RegisterSignal(L, COMSIG_PARENT_QDELETING, PROC_REF(on_sensed_deleted))
 
-// The flat pale silhouette, riding on the viewer so it draws even where the body's own tile does not.
-/proc/sumiari_sense_image(mob/living/L, mob/living/viewer)
-	var/image/shape = image(loc = viewer)
-	shape.appearance = L.appearance
-	shape.loc = viewer
+/obj/item/organ/eyes/sumiari/proc/unwatch_sensed(mob/living/L)
+	if(!sense_watched?[L])
+		return
+	LAZYREMOVE(sense_watched, L)
+	UnregisterSignal(L, list(COMSIG_MOVABLE_MOVED, COMSIG_ATOM_DIR_CHANGE, COMSIG_PARENT_QDELETING))
+
+/obj/item/organ/eyes/sumiari/proc/on_sensed_deleted(mob/living/L)
+	SIGNAL_HANDLER
+	unwatch_sensed(L)
+	drop_sensed(L)
+
+// A watched body stepped: re-judge it alone, and glide its silhouette with the step.
+/obj/item/organ/eyes/sumiari/proc/on_sensed_moved(mob/living/L, atom/old_loc, movement_dir, forced)
+	SIGNAL_HANDLER
+	if(sense_blocked() || !sense_client)
+		return
+	var/reason = sumiari_sense_reason(owner, L, null)
+	if(copytext(reason, 1, 7) != "sensed")
+		hide_sensed(L)
+		return
+	if(!sensed_anchors?[L] && sense_shown_count() >= SUMIARI_SENSE_MAX)
+		return
+	show_sensed(L, TRUE)
+
+// The silhouette turns the moment its body does. The 0.5 s tick also re-reads dir, for code that sets dir directly.
+/obj/item/organ/eyes/sumiari/proc/on_sensed_dir(mob/living/L, old_dir, new_dir)
+	SIGNAL_HANDLER
+	sense_turn(L, new_dir)
+
+/obj/item/organ/eyes/sumiari/proc/sense_turn(mob/living/L, new_dir)
+	var/obj/effect/abstract/sumiari_sense_anchor/anchor = sensed_anchors?[L]
+	if(anchor && anchor.dir != new_dir)
+		anchor.dir = new_dir
+	var/image/pulse = sensed_images?[L]
+	if(pulse && pulse.dir != new_dir)
+		pulse.dir = new_dir
+
+/obj/item/organ/eyes/sumiari/proc/sense_shown_count()
+	return length(sensed_anchors) - length(sense_fading)
+
+// Every anchor rides one host turf the Sumiari sees. It changes only when that turf leaves the Sumiari's sight (or z),
+// so a step by the Sumiari does not touch the silhouettes at all.
+/obj/item/organ/eyes/sumiari/proc/rehost_sensed()
+	var/turf/here = get_turf(owner)
+	if(!here)
+		return
+	if(sense_host && sense_host.z == here.z && get_dist(sense_host, here) <= SUMIARI_SENSE_RANGE && (sense_host in view(SUMIARI_SENSE_RANGE, owner)))
+		return
+	sense_host = here
+	for(var/mob/living/L as anything in sensed_anchors)
+		var/obj/effect/abstract/sumiari_sense_anchor/anchor = sensed_anchors[L]
+		anchor.set_host(here)
+		sense_place(L, anchor, FALSE)
+
+/obj/item/organ/eyes/sumiari/proc/show_sensed(mob/living/L, glide = FALSE)
+	var/turf/there = get_turf(L)
+	if(!there)
+		return
+	if(!sense_host)
+		rehost_sensed()
+	if(!sense_host)
+		return
+	var/obj/effect/abstract/sumiari_sense_anchor/anchor = sensed_anchors?[L]
+	var/image/pulse = sensed_images?[L]
+	var/fresh = !anchor
+	if(fresh)
+		anchor = new
+		anchor.alpha = 0
+		anchor.dir = L.dir
+		anchor.set_host(sense_host)
+		LAZYSET(sensed_anchors, L, anchor)
+	if(!pulse)
+		pulse = sumiari_sense_pulse(anchor)
+		pulse.dir = L.dir
+		LAZYSET(sensed_images, L, pulse)
+		// Animated only once the client holds it. (The self-test runs with no client and checks the pieces.)
+		sense_client?.images += pulse
+		sumiari_sense_pulse_start(pulse)
+	var/shape_key = sumiari_sense_shape_key(L)
+	if(sensed_shapes?[L] != shape_key)
+		// Swapping the overlay keeps the image, its pulse and its fade: the silhouette changes clothes, it does not blink.
+		pulse.overlays = list(sumiari_sense_silhouette(L))
+		LAZYSET(sensed_shapes, L, shape_key)
+	if(isturf(L.loc))
+		watch_sensed(L)
+	sense_turn(L, L.dir)
+	sense_place(L, anchor, glide && !fresh)
+	var/fade_timer = sense_fading?[L]
+	if(fade_timer)
+		deltimer(fade_timer)
+		LAZYREMOVE(sense_fading, L)
+	if(anchor.alpha != 255)
+		animate(anchor, alpha = 255, time = SUMIARI_SENSE_FADE, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+
+// Puts the anchor over the body's tile, as an offset from the host turf. One step glides over the body's own glide
+// time, so the silhouette walks with the body; anything longer (a teleport, a rehost) is a jump.
+/obj/item/organ/eyes/sumiari/proc/sense_place(mob/living/L, obj/effect/abstract/sumiari_sense_anchor/anchor, glide)
+	var/turf/there = get_turf(L)
+	var/turf/host = anchor.host
+	if(!there || !host)
+		return
+	var/to_x = (there.x - host.x) * world.icon_size
+	var/to_y = (there.y - host.y) * world.icon_size
+	if(anchor.pixel_x == to_x && anchor.pixel_y == to_y)
+		return
+	var/steps = max(abs(to_x - anchor.pixel_x), abs(to_y - anchor.pixel_y)) / world.icon_size
+	var/time = world.tick_lag
+	if(glide && steps <= 1)
+		time = clamp((world.icon_size / max(L.glide_size, 1)) * world.tick_lag, world.tick_lag, SUMIARI_SENSE_GLIDE_MAX)
+	animate(anchor, pixel_x = to_x, pixel_y = to_y, time = time, flags = ANIMATION_PARALLEL)
+
+// Appearance changes that need a fresh silhouette. Not dir: the anchor turns the one already shown.
+/proc/sumiari_sense_shape_key(mob/living/L)
+	return "[L.lying]-[L.icon]-[L.icon_state]-[length(L.overlays)]-[length(L.underlays)]-[L.pixel_x],[L.pixel_y]"
+
+// The silhouette's carrier: an empty movable in the vis_contents of a turf the Sumiari sees (never on a turf itself,
+// so nothing in the world finds it, and with no icon, so no other viewer sees anything). The client draws a client
+// image only where its loc is drawn, so the body's own tile, behind a wall, cannot carry it; and an image takes its
+// loc's dir, so it cannot ride the Sumiari either (that turned every silhouette with the viewer). The anchor holds the
+// body's dir, the offset to the body's tile (glided with the body's steps) and the fade alpha the image inherits.
+/obj/effect/abstract/sumiari_sense_anchor
+	name = ""
+	icon = null
+	icon_state = null
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	anchored = TRUE
+	density = FALSE
+	appearance_flags = KEEP_APART
+	vis_flags = NONE
+	var/turf/host
+
+/obj/effect/abstract/sumiari_sense_anchor/proc/set_host(turf/T)
+	if(host == T)
+		return
+	animate(src)
+	host?.vis_contents -= src
+	host = T
+	T?.vis_contents += src
+
+/obj/effect/abstract/sumiari_sense_anchor/Destroy()
+	animate(src)
+	host?.vis_contents -= src
+	host = null
+	return ..()
+
+// The client image: no icon of its own, the silhouette as its one overlay, pulsing. Alpha is not reset, so the
+// anchor's fade multiplies the pulse.
+/proc/sumiari_sense_pulse(obj/effect/abstract/sumiari_sense_anchor/anchor)
+	var/image/pulse = image(loc = anchor)
+	pulse.name = ""
+	pulse.plane = SUMIARI_RELAY_PLANE
+	pulse.layer = SUMIARI_SENSE_LAYER
+	pulse.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	pulse.appearance_flags = RESET_COLOR | RESET_TRANSFORM | KEEP_APART
+	pulse.alpha = SUMIARI_SENSE_ALPHA_LOW
+	return pulse
+
+/proc/sumiari_sense_pulse_start(image/pulse)
+	animate(pulse, alpha = SUMIARI_SENSE_ALPHA_HIGH, time = SUMIARI_SENSE_PULSE / 2, loop = -1, easing = SINE_EASING)
+	animate(alpha = SUMIARI_SENSE_ALPHA_LOW, time = SUMIARI_SENSE_PULSE / 2, easing = SINE_EASING)
+
+// The flat pale shape of the body as it looks now (clothes, hair, held things, lying), drawn in the image's dir.
+/proc/sumiari_sense_silhouette(mob/living/L)
+	var/mutable_appearance/shape = new(L)
 	shape.name = ""
-	shape.plane = SUMIARI_RELAY_PLANE
-	shape.layer = SUMIARI_SENSE_LAYER
+	shape.plane = FLOAT_PLANE
+	shape.layer = FLOAT_LAYER
 	shape.invisibility = 0
 	shape.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
-	shape.appearance_flags = RESET_TRANSFORM | RESET_COLOR | RESET_ALPHA | KEEP_APART | KEEP_TOGETHER
+	shape.appearance_flags = RESET_COLOR | KEEP_TOGETHER
+	// Color first: assigning color can reset alpha.
 	shape.color = sumiari_sense_tone_matrix()
+	shape.alpha = 255
 	shape.filters = list(filter(type = "blur", size = SUMIARI_SENSE_BLUR))
-	shape.alpha = SUMIARI_SENSE_ALPHA_LOW
-	animate(shape, alpha = SUMIARI_SENSE_ALPHA_HIGH, time = SUMIARI_SENSE_PULSE / 2, loop = -1, easing = SINE_EASING)
-	animate(alpha = SUMIARI_SENSE_ALPHA_LOW, time = SUMIARI_SENSE_PULSE / 2, easing = SINE_EASING)
 	return shape
 
 // Every pixel becomes the pale tone. Sprite alpha is kept, so the outline is the body's own shape.
 /proc/sumiari_sense_tone_matrix()
 	return list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, SUMIARI_SENSE_TONE_R, SUMIARI_SENSE_TONE_G, SUMIARI_SENSE_TONE_B, 0)
 
-// Bodies the senses show now, as body -> reason. Scans the turfs in range and the containers on them.
-/proc/sumiari_sense_targets(mob/living/carbon/viewer, list/report)
+// Bodies the senses show now, as body -> reason. Scans the turfs in range and the containers on them. nearby, when
+// given, collects every other living body in range, shown or not (the ones whose steps are watched).
+/proc/sumiari_sense_targets(mob/living/carbon/viewer, list/report, list/nearby)
 	. = list()
 	var/turf/center = get_turf(viewer)
 	if(!center)
@@ -4368,6 +4563,8 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 				var/reason = sumiari_sense_reason(viewer, L, visible)
 				if(report && L != viewer)
 					report += "[L]@[L.x],[L.y] [reason]"
+				if(nearby && L != viewer && isturf(L.loc))
+					nearby[L] = TRUE
 				if(copytext(reason, 1, 7) != "sensed" || count >= SUMIARI_SENSE_MAX)
 					continue
 				.[L] = reason
@@ -4410,10 +4607,36 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 #endif
 		else
 			why = "out of sight"
-	var/wash = sumiari_turf_intensity(there)
+	// A body the eyes cannot see (behind a wall, in a closet) is judged without the lights mobs carry: the torch or
+	// lantern in its own hand lights its side of the wall, not the Sumiari's, and almost every player carries one at
+	// night, so counting it hid player characters while light-less beasts and NPCs showed. Lamps, fires, the sun and
+	// a torch on the floor still count. A sneaker in plain sight is judged by all the light, as before.
+	var/wash = (why == "sneaking") ? sumiari_turf_intensity(there) : sumiari_sense_hidden_wash(there)
 	if(wash >= SUMIARI_SENSE_DARK_MAX)
 		return "lit [round(wash, 0.01)]"
 	return "sensed: [why] wash=[round(wash, 0.01)]"
+
+// The tile wash without the light of anything a mob holds, wears or carries.
+/proc/sumiari_sense_hidden_wash(turf/T)
+	var/list/sample = sumiari_light_sample(T)
+	if(!isturf(T) || !T.has_dynamic_lighting())
+		return sample["intensity"]
+	var/carried = 0
+	for(var/atom/movable/source as anything in sumiari_emitters_near(T, 6))
+		if(sumiari_light_carrier(source))
+			carried += sumiari_point_falloff(T, source)
+	return CLAMP01(((sample["lamps"] + sample["sun"]) * SUMIARI_LIGHT_GAIN) + max(sample["movable"] - carried, 0))
+
+// The mob holding, wearing or carrying (a level or two down, a lantern in a bag) this light, or null.
+/proc/sumiari_light_carrier(atom/movable/source)
+	var/atom/at = source.loc
+	for(var/i in 1 to 3)
+		if(!at || isturf(at))
+			return null
+		if(ismob(at))
+			return at
+		at = at.loc
+	return null
 
 /proc/sumiari_sense_report(mob/living/carbon/C)
 	var/obj/item/organ/eyes/sumiari/eyes = C?.getorganslot(ORGAN_SLOT_EYES)
@@ -4446,6 +4669,8 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 		if(copytext(reason, 1, length(cases[L]) + 1) != cases[L])
 			log_world("SUMIARI TEST FAIL senses [cases[L]] gave [reason]")
 			return FALSE
+	if(!sumiari_sweep_sense_bodies(body, trash))
+		return FALSE
 	var/list/tone = sumiari_apply_matrix(sumiari_sense_tone_matrix(), 0.1, 0.9, 0.3)
 	if(abs(tone[1] - SUMIARI_SENSE_TONE_R) > 0.001 || abs(tone[3] - SUMIARI_SENSE_TONE_B) > 0.001)
 		log_world("SUMIARI TEST FAIL senses tone [tone.Join(",")]")
@@ -4453,6 +4678,77 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	log_world("SUMIARI TEST senses PASS range=[SUMIARI_SENSE_RANGE] dark_max=[SUMIARI_SENSE_DARK_MAX] interval=[SUMIARI_SENSE_INTERVAL]")
 	return TRUE
 
+
+// A player character (a human with a lit torch in hand) out of sight is sensed; its silhouette takes its dir and
+// turns with it, rides an anchor (not the viewer), fades in and fades out instead of popping.
+/proc/sumiari_sweep_sense_bodies(mob/living/carbon/human/body, list/trash)
+	var/turf/dark = sumiari_test_dark_turf || get_turf(body)
+	var/mob/living/carbon/human/player = new(dark)
+	trash += player
+	var/before = sumiari_turf_intensity(dark)
+	var/obj/item/flashlight/flare/torch/torch = new(dark)
+	trash += torch
+	torch.on = TRUE
+	torch.update_brightness()
+	if(!player.put_in_hands(torch, FALSE, TRUE, TRUE))
+		player.put_in_hand(torch, 1, TRUE)
+	var/lit = sumiari_turf_intensity(dark)
+	var/hidden = sumiari_sense_hidden_wash(dark)
+	if(torch.loc != player || !torch.light_on || lit <= before + 0.05 || abs(hidden - before) > 0.02)
+		log_world("SUMIARI TEST FAIL senses player torch held=[torch.loc == player] before=[before] lit=[lit] hidden=[hidden]")
+		return FALSE
+	var/reason_checked = FALSE
+	if(before < SUMIARI_SENSE_DARK_MAX && get_turf(body) != dark && get_dist(body, dark) <= SUMIARI_SENSE_RANGE)
+		reason_checked = TRUE
+		var/reason = sumiari_sense_reason(body, player, list())
+		if(copytext(reason, 1, 7) != "sensed")
+			log_world("SUMIARI TEST FAIL senses player with torch out of sight gave [reason]")
+			return FALSE
+	var/obj/item/organ/eyes/sumiari/eyes = body.getorganslot(ORGAN_SLOT_EYES)
+	if(!istype(eyes))
+		log_world("SUMIARI TEST FAIL senses bodies: no sumiari eyes")
+		return FALSE
+	var/client/held_client = eyes.sense_client
+	eyes.sense_client = body.client
+	player.setDir(WEST)
+	eyes.show_sensed(player)
+	var/obj/effect/abstract/sumiari_sense_anchor/anchor = eyes.sensed_anchors?[player]
+	var/image/pulse = eyes.sensed_images?[player]
+	var/list/bad = list()
+	if(!anchor || !pulse)
+		bad += "not shown"
+	else
+		if((body.client && !(pulse in body.client.images)) || pulse.loc != anchor)
+			bad += "image not on anchor"
+		if(!anchor.host || !(anchor in anchor.host.vis_contents) || anchor.loc)
+			bad += "anchor host"
+		if(anchor.pixel_x != (dark.x - anchor.host.x) * world.icon_size || anchor.pixel_y != (dark.y - anchor.host.y) * world.icon_size)
+			bad += "offset [anchor.pixel_x],[anchor.pixel_y]"
+		if(anchor.dir != WEST || pulse.dir != WEST)
+			bad += "dir [anchor.dir]/[pulse.dir] not the body's"
+		body.setDir(NORTH)
+		player.setDir(EAST)
+		if(anchor.dir != EAST || pulse.dir != EAST)
+			bad += "turn [anchor.dir]/[pulse.dir] did not follow the body"
+		// animate() sets the end value at once: 255 means a fade in was started from 0.
+		if(anchor.alpha != 255 || (pulse.appearance_flags & RESET_ALPHA) || length(pulse.overlays) != 1)
+			bad += "fade in alpha=[anchor.alpha] flags=[pulse.appearance_flags] overlays=[length(pulse.overlays)]"
+		eyes.hide_sensed(player)
+		if(anchor.alpha != 0 || !eyes.sense_fading?[player] || (body.client && !(pulse in body.client.images)))
+			bad += "fade out alpha=[anchor.alpha] fading=[eyes.sense_fading?[player] ? 1 : 0]"
+		eyes.show_sensed(player)
+		if(anchor.alpha != 255 || eyes.sense_fading?[player] || eyes.sensed_anchors?[player] != anchor)
+			bad += "fade back alpha=[anchor.alpha]"
+		eyes.drop_sensed(player)
+		eyes.unwatch_sensed(player)
+		if((body.client && (pulse in body.client.images)) || eyes.sensed_anchors?[player] || !QDELETED(anchor))
+			bad += "drop left pieces"
+	eyes.sense_client = held_client
+	if(length(bad))
+		log_world("SUMIARI TEST FAIL senses bodies [bad.Join("; ")]")
+		return FALSE
+	log_world("SUMIARI TEST senses bodies PASS before=[before] lit=[lit] hidden=[hidden] reason_checked=[reason_checked] client=[body.client ? 1 : 0]")
+	return TRUE
 
 // ---------------------------------------------------------------------------------------------
 // Night beauty. See SUMIARI_NIGHT_* at the top. The moon shadows ride the moon relay's color (masked to open
