@@ -508,6 +508,9 @@
 // earth or grass. Nothing at dusk, growing from FROST_START to full at FROST_FULL (small hours), melting away from
 // FROST_MELT to FROST_GONE at dawn. Frost on a swaying tuft sways with it. Breathes faintly with the moon.
 #define SUMIARI_MOON_FROST 1
+// Frost lines along paving borders (the 1 px silver line and the fainter inner one) are removed (Ryan: no edge lines).
+// Frost on grass tips and stone tops stays.
+#define SUMIARI_FROST_PAVING 0
 #define SUMIARI_FROST_MAX 140
 #define SUMIARI_FROST_ALPHA 170
 #define SUMIARI_FROST_PAVING_ALPHA 120
@@ -6425,6 +6428,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	if(fx_frost_count >= SUMIARI_FROST_MAX || isclosedturf(T) || !sumiari_spare_turf_open(T))
 		return
 	var/level = fx_frost_step / 20
+#if SUMIARI_FROST_PAVING
 	if(is_type_in_typecache(T, GLOB.sumiari_frost_paving))
 		var/sides = 0
 		for(var/side in GLOB.cardinals)
@@ -6438,6 +6442,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 				var/image/paving = sumiari_fx_style(image(sumiari_frost_paving_icon(sides), T), SUMIARI_FX_FLOOR_PLANE)
 				paving.alpha = sumiari_fx_alpha(SUMIARI_FROST_PAVING_ALPHA * level)
 				fx_put(key, "[sides]|[fx_frost_step]", sumiari_fx_breathe(paving, T, SUMIARI_PULSE_DEPTH * 0.5, 11))
+#endif
 	var/sway_share = sumiari_fx_lamp_share(T)
 	var/sways = sumiari_moon_sway_enabled && SUMIARI_MOON_SWAY && sway_share > 0
 	for(var/obj/thing in T)
@@ -6755,9 +6760,11 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	if((frost.alpha != sumiari_fx_alpha(SUMIARI_FROST_ALPHA * 0.5) && !islist(frost.color)) || length(frost.filters) != 1 || frost.loc != frost_tuft)
 		bad += "frost image"
 	qdel(frost_tuft)
+#if SUMIARI_FROST_PAVING
 	var/icon/paving_icon = sumiari_frost_paving_icon(NORTH)
 	if(paving_icon.GetPixel(10, 32) == null || paving_icon.GetPixel(10, 1) != null)
 		bad += "frost paving"
+#endif
 #endif
 #if SUMIARI_MOON_STEPS
 	var/image/print = sumiari_step_image(spot, EAST, TRUE)
@@ -6809,5 +6816,5 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] sprite_rims=[SUMIARI_MOON_SPRITE_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST] steps=[SUMIARI_MOON_STEPS] spirits=[SUMIARI_MOON_SPIRITS]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] sprite_rims=[SUMIARI_MOON_SPRITE_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST] frost_paving=[SUMIARI_FROST_PAVING] steps=[SUMIARI_MOON_STEPS] spirits=[SUMIARI_MOON_SPIRITS]")
 	return TRUE
