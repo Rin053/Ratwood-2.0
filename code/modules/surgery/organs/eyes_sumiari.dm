@@ -4543,8 +4543,14 @@ GLOBAL_LIST_INIT(sumiari_fire_light_overrides, typecacheof(list(
 
 // Really lighting right now: lighting_atom and overlay_lighting put the shared marker on an emitter only while it is lit.
 // light_on alone is TRUE on an unlit condensed-light orb.
+// A non-fire light the moon spares: a marked static light, or a lit movable one (kneestingers glow by movable light,
+// so their pool sits in the cookie the moon mask subtracts, and only the spare gives the moon back to it).
 /proc/sumiari_spare_emits(atom/movable/source)
-	return istype(source) && GLOB.sumiari_light_marker && (GLOB.sumiari_light_marker in source.vis_contents)
+	if(!istype(source))
+		return FALSE
+	if(source.light_system == MOVABLE_LIGHT)
+		return source.light_on && source.light_power > 0 && source.light_outer_range > 0
+	return GLOB.sumiari_light_marker && (GLOB.sumiari_light_marker in source.vis_contents)
 
 /atom/movable/screen/plane_master/sumiari_moon_spare
 	name = "sumiari moon spare plane master"
@@ -4584,6 +4590,11 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		else if(sumiari_spare_emits(source))
 			calm += source
 	var/list/fire_lit = sumiari_spare_fire_tiles(fires)
+	// The movable flames in view, for the moon effects' lamp gate (sumiari_fx_lamp_light), which runs right after.
+	sumiari_fx_movable_fires = list()
+	for(var/atom/source as anything in fires)
+		if(source.light_system == MOVABLE_LIGHT)
+			sumiari_fx_movable_fires += source
 	// Open space shows the level below: a candle or forge down there must keep the tiles above it gray too, and a
 	// kneestinger down there must keep its glow in moon color when seen from above (its gray cookie shows through).
 	var/list/fire_lit_below
@@ -5218,7 +5229,7 @@ var/global/sumiari_moon_steps_enabled = TRUE
 	var/turf/T = pick(fx_petal_sources)
 	if(!prob(SUMIARI_PETAL_CHANCE * (0.6 + 0.8 * sumiari_fx_breath_now(T)) * sumiari_fx_lamp_share(T)))
 		return
-	var/image/petal = sumiari_petal_image(sumiari_petal_landing(T))
+	var/image/petal = sumiari_petal_image(sumiari_petal_landing(T), sumiari_turf_has_tree(T))
 	LAZYSET(fx_petals, petal, world.time + SUMIARI_PETAL_FALL + SUMIARI_PETAL_REST + SUMIARI_PETAL_FADE + 2)
 	fx_client.images += petal
 	sumiari_petal_play(petal)
@@ -5582,11 +5593,30 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 
 // Moon effect checks that do not depend on the map or the time of day.
 // Lamp, fire and movable light on a tile (reads vanilla lighting only; the sun and moon do not count).
+// Only fire counts (Ryan): a kneestinger, glow moss or light orb never turns the moon effects off. Static light is
+// weighed by the flame share of each corner's sources; movable light comes only from the flames spare_tick found.
+var/global/list/sumiari_fx_movable_fires = list()
+
 /proc/sumiari_fx_lamp_light(turf/T)
-	var/total = T.dynamic_lumcount
+	var/total = 0
+	for(var/atom/source as anything in sumiari_fx_movable_fires)
+		if(!QDELETED(source))
+			total += sumiari_point_falloff(T, source)
 	for(var/datum/lighting_corner/corner as anything in T.corners)
-		if(corner)
-			total += (corner.lum_r + corner.lum_g + corner.lum_b) / 12
+		if(!corner)
+			continue
+		var/lum = (corner.lum_r + corner.lum_g + corner.lum_b) / 12
+		if(lum <= 0)
+			continue
+		var/fire = 0
+		var/all = 0
+		for(var/datum/light_source/light as anything in corner.affecting)
+			var/strength = abs(light.effect_str?[corner])
+			all += strength
+			if(sumiari_light_is_fire(light.source_atom))
+				fire += strength
+		if(all > 0)
+			total += lum * fire / all
 	return total
 
 /proc/sumiari_fx_lamp_lit(turf/T)
@@ -5963,12 +5993,15 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 		return front
 	return T
 
-/proc/sumiari_petal_image(turf/T)
-	var/variant = rand(1, 4)
+// A tree lets go of leaves (emerald or warm umber, now and then an amethyst one), from up in its lower canopy over
+// the tile in front, so the leaf slips out from under the branches and drifts down in plain view. Flowers and
+// bushes shed petals from just above themselves.
+/proc/sumiari_petal_image(turf/T, from_tree = FALSE)
+	var/variant = from_tree ? pick(3, 3, 4, 4, 5) : rand(1, 4)
 	var/image/petal = sumiari_fx_style(image(sumiari_petal_icon(variant), T), SUMIARI_FX_GAME_PLANE)
 	var/start_x = rand(-10, 10)
 	petal.pixel_x = start_x
-	petal.pixel_y = rand(14, 30)
+	petal.pixel_y = from_tree ? rand(30, 42) : rand(14, 30)
 	petal.alpha = 0
 	return petal
 
@@ -5987,26 +6020,40 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 	animate(alpha = peak, time = SUMIARI_PETAL_REST)
 	animate(alpha = 0, time = SUMIARI_PETAL_FADE, easing = SINE_EASING)
 
-// A small soft petal or leaf in the middle of a 32x32 icon: 1 amethyst petal, 2 lilac petal, 3 emerald leaf, 4 umber leaf.
-// A 4x4 rounded body with a feathered tip, and a moon-silver rim on its upper edge so even the dark leaves catch the
-// moonlight and read against grass.
+// A small soft petal or leaf in the middle of a 32x32 icon: 1 amethyst petal, 2 lilac petal, 3 emerald leaf, 4 umber leaf,
+// 5 amethyst leaf. A petal is a 4x4 rounded body with a feathered tip; a leaf is a longer pointed blade (7x4) with a
+// stem and a pale midrib. Both wear a moon-silver rim on the upper edge so even the dark ones catch the moonlight
+// and read against grass.
 /proc/sumiari_petal_icon(variant)
 	var/static/list/made = list()
 	if(made["[variant]"])
 		return made["[variant]"]
-	var/tone = list(SUMIARI_TONE_AMETHYST, SUMIARI_TONE_LILAC, SUMIARI_TONE_EMERALD, SUMIARI_TONE_UMBER)[variant]
-	var/rim = (variant == 1) ? SUMIARI_TONE_LILAC : rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B)
+	var/tone = list(SUMIARI_TONE_AMETHYST, SUMIARI_TONE_LILAC, SUMIARI_TONE_EMERALD, SUMIARI_TONE_UMBER, SUMIARI_TONE_AMETHYST)[variant]
+	var/rim = (variant == 1 || variant == 5) ? SUMIARI_TONE_LILAC : rgb(SUMIARI_FX_SILVER_R, SUMIARI_FX_SILVER_G, SUMIARI_FX_SILVER_B)
 	var/icon/petal = sumiari_blank_icon()
+	if(variant >= 3)
+		// Stem at the lower left, blade rising to a point at the upper right.
+		petal.DrawBox(sumiari_fx_tone(tone, 150), 11, 13)
+		petal.DrawBox(sumiari_fx_tone(tone, 170), 13, 14, 14, 14)
+		petal.DrawBox(sumiari_fx_tone(tone, 255), 12, 15, 17, 15)
+		petal.DrawBox(sumiari_fx_tone(tone, 255), 13, 16, 18, 16)
+		petal.DrawBox(sumiari_fx_tone(rim, 230), 15, 17, 18, 17)
+		petal.DrawBox(sumiari_fx_tone(rim, 140), 19, 18)
+		petal.DrawBox(sumiari_fx_tone(rim, 110), 14, 17)
+		// The midrib: a paler line along the blade, the leaf's tone mixed toward the rim.
+		var/list/a = rgb2num(tone)
+		var/list/b = rgb2num(rim)
+		var/midrib = rgb(round(a[1] * 0.55 + b[1] * 0.45), round(a[2] * 0.55 + b[2] * 0.45), round(a[3] * 0.55 + b[3] * 0.45))
+		petal.DrawBox(midrib, 13, 15, 14, 15)
+		petal.DrawBox(midrib, 15, 16, 17, 16)
+		made["[variant]"] = petal
+		return petal
 	petal.DrawBox(sumiari_fx_tone(tone, 170), 15, 14, 16, 14)
 	petal.DrawBox(sumiari_fx_tone(tone, 255), 14, 15, 17, 16)
 	petal.DrawBox(sumiari_fx_tone(rim, 230), 15, 17, 16, 17)
 	petal.DrawBox(sumiari_fx_tone(rim, 120), 14, 17)
-	if(variant >= 3)
-		petal.DrawBox(sumiari_fx_tone(tone, 200), 18, 16)
-		petal.DrawBox(sumiari_fx_tone(tone, 110), 13, 14)
-	else
-		petal.DrawBox(sumiari_fx_tone(tone, 120), 18, 16)
-		petal.DrawBox(sumiari_fx_tone(tone, 120), 17, 17)
+	petal.DrawBox(sumiari_fx_tone(tone, 120), 18, 16)
+	petal.DrawBox(sumiari_fx_tone(tone, 120), 17, 17)
 	made["[variant]"] = petal
 	return petal
 
