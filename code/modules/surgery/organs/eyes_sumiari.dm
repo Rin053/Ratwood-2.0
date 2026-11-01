@@ -4628,21 +4628,25 @@ var/global/sumiari_moon_spares_enabled = TRUE
 				if((dx * dx) + (dy * dy) > range * range)
 					continue
 				var/turf/T = locate(origin.x + dx, origin.y + dy, origin.z)
-				if(!T || fire_lit[T])
+				if(!T)
 					continue
+				var/fire_keep = sumiari_spare_fire_keep(fire_lit, T)
 				if(below)
-					// Only through open space, onto moonlit ground down there that no flame down there reaches.
+					// Only through open space, onto moonlit ground down there that no flame down there lights.
 					var/turf/down = locate(lamp.x + dx, lamp.y + dy, lamp.z)
-					if(!istransparentturf(T) || !down || (fire_lit_below && fire_lit_below[down]))
+					if(!istransparentturf(T) || !down)
 						continue
+					fire_keep = min(fire_keep, sumiari_spare_fire_keep(fire_lit_below, down))
 					if(!sumiari_spare_moonlit(down) && !sumiari_spare_moonlit(T))
 						continue
 				else
 					if(!sumiari_spare_moonlit(T))
 						continue
-					if(fire_lit_below && istransparentturf(T) && fire_lit_below[GET_TURF_BELOW(T)])
-						continue
-				var/strength = sumiari_spare_strength(source, dx, dy)
+					if(istransparentturf(T))
+						fire_keep = min(fire_keep, sumiari_spare_fire_keep(fire_lit_below, GET_TURF_BELOW(T)))
+				if(fire_keep <= 0)
+					continue
+				var/strength = round(sumiari_spare_strength(source, dx, dy) * fire_keep * 16) / 16
 				if(strength < SUMIARI_SPARE_MIN)
 					continue
 				tiles += list(list(dx, dy, strength))
@@ -4684,8 +4688,11 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			sorted += source
 	return sorted
 
-// Tiles a flame can light: within its range (plus half a tile) and in its view, so a wall candle behind a wall
-// does not keep the open sky outside gray. One view() per flame per tick.
+// Tiles a flame can light, each with how much flame light lands there (its falloff, summed over the flames): within
+// its range (plus half a tile) and in its view, so a wall candle behind a wall does not keep the open sky outside
+// gray. One view() per flame per tick. A tile only in reach of a flame's faint tail (a firebowl's range is 12) holds a
+// tiny value, not TRUE: it used to block every spare out there, and a kneestinger far from any fire cut a round gray
+// hole in the moon look. sumiari_spare_fire_keep() turns the value into how much of a spare survives.
 /proc/sumiari_spare_fire_tiles(list/fires)
 	var/list/lit = list()
 	for(var/atom/fire as anything in fires)
@@ -4697,8 +4704,17 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			var/dx = F.x - T.x
 			var/dy = F.y - T.y
 			if((dx * dx) + (dy * dy) <= reach * reach)
-				lit[T] = TRUE
+				lit[T] = (lit[T] || 0) + max(sumiari_spare_falloff(fire, dx, dy), 0.001)
 	return lit
+
+// How much of a spare a tile keeps by the flame light on it, with the moon effects' own lamp ramp: all of it under
+// FX_LAMP_LIT (the faint tail, where the full moon look shows anyway), none past FX_LAMP_FULL (really firelit, gray).
+/proc/sumiari_spare_fire_keep(list/fire_lit, turf/T)
+	var/wash = fire_lit?[T]
+	if(!wash)
+		return 1
+	var/t = clamp((wash - SUMIARI_FX_LAMP_LIT) / (SUMIARI_FX_LAMP_FULL - SUMIARI_FX_LAMP_LIT), 0, 1)
+	return 1 - t * t * (3 - 2 * t)
 
 // The light's own falloff at an offset from its tile, the same shape the lighting system draws: distance with the
 // lighting height, inner range, falloff curve, power, and how bright its color is. Any light system.
@@ -4898,6 +4914,11 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		bad += "near flame not blocking"
 	if(far && fire.light_outer_range < 4 && fire_lit[far])
 		bad += "far flame blocking range=[fire.light_outer_range]"
+	// A flame's faint tail keeps the spare (a kneestinger far from the fire stays moonlit); a firelit tile drops it.
+	var/list/tail = list()
+	tail[origin] = 0.05
+	if(sumiari_spare_fire_keep(tail, origin) != 1 || (near && !near.opacity && sumiari_spare_fire_keep(fire_lit, near) > 0.5))
+		bad += "spare fire keep tail=[sumiari_spare_fire_keep(tail, origin)] near=[near ? sumiari_spare_fire_keep(fire_lit, near) : -1]"
 	qdel(fire)
 	if(length(eyes.screen_pieces) > SUMIARI_PIECE_CAP)
 		bad += "pieces=[length(eyes.screen_pieces)]"
