@@ -418,6 +418,14 @@
 #define SUMIARI_BEAM_MAX 14
 #define SUMIARI_BEAM_ALPHA 60
 #define SUMIARI_BEAM_LEAN 0.12
+// 9) Rippling reflections: a tree, rock, post, statue, lamp post or wall standing just north of open-sky water lays a
+// soft upside-down reflection on that water tile: its sprite flipped, cut to the tile, fading toward the far edge, a
+// shade darker and bluer than the thing itself, wavering a pixel side to side on a slow ripple. Under the water's
+// silver ripple dashes; masked by the moon like everything else, so it vanishes in a lamp pool or under a roof.
+#define SUMIARI_MOON_REFLECT 1
+#define SUMIARI_REFLECT_MAX 40
+#define SUMIARI_REFLECT_ALPHA 105
+#define SUMIARI_REFLECT_PERIOD 26
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
 // or a sneaker faded into the dark. It is a client image, so only the Sumiari sees it.
@@ -615,6 +623,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/fx_fog_count = 0
 	// Beams: shafts this scan.
 	var/fx_beam_count = 0
+	// Reflections this scan.
+	var/fx_reflect_count = 0
 	// Bloom: how open the night flowers are drawn right now (null until the first scan).
 	var/fx_bloom
 	var/beauty_timer
@@ -4493,6 +4503,7 @@ var/global/sumiari_moon_pulse = SUMIARI_MOON_PULSE
 var/global/sumiari_moon_sway_enabled = TRUE
 var/global/sumiari_moon_fog_enabled = TRUE
 var/global/sumiari_moon_beams_enabled = TRUE
+var/global/sumiari_moon_reflect_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4704,6 +4715,10 @@ var/global/sumiari_moon_beams_enabled = TRUE
 		if(sumiari_moon_beams_enabled)
 			fx_beam(T, wanted)
 #endif
+#if SUMIARI_MOON_REFLECT
+		if(sumiari_moon_reflect_enabled)
+			fx_reflect(T, wanted)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
@@ -4713,6 +4728,7 @@ var/global/sumiari_moon_beams_enabled = TRUE
 	fx_sway_count = 0
 	fx_fog_count = 0
 	fx_beam_count = 0
+	fx_reflect_count = 0
 
 // Effects that change between scans. Each effect adds its own part here.
 /obj/item/organ/eyes/sumiari/proc/fx_live(turf/center)
@@ -5203,6 +5219,72 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	made = beam
 	return beam
 
+// 9) Rippling reflections.
+GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
+	/obj/structure/flora/roguetree,
+	/obj/structure/flora/newtree,
+	/obj/structure/flora/tree,
+	/obj/structure/flora/sakura,
+	/obj/structure/flora/maple,
+	/obj/structure/flora/rogueshroom,
+	/obj/structure/flora/roguegrass/bush,
+	/obj/structure/roguerock,
+	/obj/structure/fluff,
+	/obj/machinery/light/roguestreet,
+)))
+
+/obj/item/organ/eyes/sumiari/proc/fx_reflect(turf/T, list/wanted)
+	if(fx_reflect_count >= SUMIARI_REFLECT_MAX || !istype(T, /turf/open/water) || !sumiari_spare_turf_open(T))
+		return
+	var/turf/north = get_step(T, NORTH)
+	if(!north)
+		return
+	var/list/casters = list()
+	if(isclosedturf(north) && north.icon_state)
+		casters += north
+	for(var/obj/thing in north)
+		if(is_type_in_typecache(thing, GLOB.sumiari_reflect_types) && !thing.invisibility && thing.icon_state)
+			casters += thing
+	for(var/atom/caster as anything in casters)
+		if(fx_reflect_count >= SUMIARI_REFLECT_MAX)
+			return
+		fx_reflect_count++
+		var/key = "q[T.x],[T.y],[REF(caster)]"
+		var/state = "[caster.icon]|[caster.icon_state]|[caster.dir]|[caster.pixel_x]"
+		if(fx_want(key, state, wanted))
+			fx_put(key, state, sumiari_reflect_image(caster, T))
+
+/proc/sumiari_reflect_image(atom/caster, turf/water)
+	var/image/mirror = sumiari_fx_style(image(sumiari_reflect_icon(caster.icon, caster.icon_state, caster.dir, caster.pixel_x), water), SUMIARI_FX_GAME_PLANE)
+	mirror.layer = 0.5
+	// A shade darker and cooler, toward sapphire night water.
+	mirror.color = list(0.5, 0, 0.04, 0, 0, 0.56, 0.06, 0, 0, 0, 0.7, 0, 0, 0, 0, 1, 0.02, 0.03, 0.08, 0)
+	mirror.alpha = sumiari_fx_alpha(SUMIARI_REFLECT_ALPHA)
+	var/period = SUMIARI_REFLECT_PERIOD + ((water.x * 13 + water.y * 7) % 5) * 3
+	animate(mirror, transform = matrix(1, 0.03, 0, 0, 1, 0), pixel_x = 1, time = period / 2, delay = (water.x * 7 + water.y * 3) % period, loop = -1, easing = SINE_EASING)
+	animate(transform = matrix(1, -0.03, 0, 0, 1, 0), pixel_x = -1, time = period / 2, easing = SINE_EASING)
+	return sumiari_fx_breathe(mirror, water, SUMIARI_PULSE_DEPTH * 0.5, 9)
+
+// The caster's sprite flipped top to bottom, cut to the 32x32 tile below it (its own foot lands at the top edge),
+// fading from 100% at the top to 15% at the bottom. Cached per sprite and offset.
+/proc/sumiari_reflect_icon(source_icon, source_state, source_dir, offset_x)
+	var/static/list/made = list()
+	var/key = "[source_icon]|[source_state]|[source_dir]|[offset_x]"
+	if(made[key])
+		return made[key]
+	var/icon/flipped = icon(source_icon, source_state, source_dir, 1)
+	var/height = flipped.Height()
+	flipped.Flip(NORTH)
+	var/left = 1 - offset_x
+	flipped.Crop(left, height - 31, left + 31, height)
+	var/icon/fade = sumiari_blank_icon()
+	for(var/py in 1 to 32)
+		var/opacity = 0.15 + 0.85 * (py - 1) / 31
+		fade.DrawBox(rgb(255, 255, 255, round(255 * opacity)), 1, py, 32, py)
+	flipped.Blend(fade, ICON_MULTIPLY)
+	made[key] = flipped
+	return flipped
+
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
 #if SUMIARI_MOON_FX
@@ -5318,9 +5400,17 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	if(beam.plane != SUMIARI_FX_UPPER_PLANE || beam.loc != spot)
 		bad += "beam image"
 #endif
+#if SUMIARI_MOON_REFLECT
+	var/obj/structure/roguerock/mirror_rock = new(spot)
+	var/icon/mirror_icon = sumiari_reflect_icon(mirror_rock.icon, mirror_rock.icon_state, mirror_rock.dir, 0)
+	var/image/mirror = sumiari_reflect_image(mirror_rock, spot)
+	if(mirror_icon.Width() != 32 || mirror_icon.Height() != 32 || mirror.plane != SUMIARI_FX_GAME_PLANE || mirror.layer >= 1 || mirror.loc != spot)
+		bad += "reflect"
+	qdel(mirror_rock)
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT]")
 	return TRUE
