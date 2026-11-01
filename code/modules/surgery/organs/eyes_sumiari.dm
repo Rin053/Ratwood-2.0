@@ -531,9 +531,9 @@
 #define SUMIARI_WASH_LIVE "live"
 #define SUMIARI_WASH_INK "ink"
 #define SUMIARI_WASH_COLOR "color"
-// 11 plates (the 10 mask plates plus the moon mask), each a master plus the child that draws the capture,
-// plus the ink, sun, and moon relays.
-#define SUMIARI_PIECE_CAP 32
+// The mask, cookie, knee, dim and moon plates, each a master plus the child that draws the capture,
+// plus the ink, sun, dim and moon relays (36 today), with a little headroom.
+#define SUMIARI_PIECE_CAP 40
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 #define SUMIARI_SEE_IN_DARK 8
 // Darkness-sneak raises invisibility to SEE_INVISIBLE_LIVING + skill*0.55 + 1 (about 29 at legendary).
@@ -579,6 +579,16 @@
 #define SUMIARI_TARGET_COOKIE_BLUE "sumiari_cookie_b"
 #define SUMIARI_PLANE_KNEE -68
 #define SUMIARI_TARGET_KNEE "sumiari_knee"
+// Proportional darkvision. Without it every pixel drew at its sprite's own brightness whatever the light, so a
+// shadow a human sees as darker read as bright as lit ground (flat floor, no falloff). The dim plate is the raw
+// light a human sees as luma (static lighting plus the movable-light cookie, emitter sprites full, before the wash gain),
+// and the dim relay lays black over the whole view at alpha (1 - FLOOR) * (1 - light). Drawn brightness is then
+// sprite * (FLOOR + (1 - FLOOR) * light): pitch black keeps FLOOR of its brightness, in color, and every step
+// brighter for a human is a step brighter here, with the same falloff and shape. Full light is untouched.
+#define SUMIARI_DARKVISION 1
+#define SUMIARI_DARKVISION_FLOOR 0.36
+#define SUMIARI_PLANE_DIM -69
+#define SUMIARI_TARGET_DIM "sumiari_dim"
 
 // Stored in place of a null render_target. BYOND drops a list entry whose value is null.
 #define SUMIARI_NO_TARGET ""
@@ -980,6 +990,28 @@ var/global/turf/sumiari_test_dark_turf
 #endif
 		filter(type = "color", color = sumiari_matrix_gray_to_alpha()),
 	))
+#if SUMIARI_DARKVISION
+	// Human brightness is luma, not the max channel the wash uses: a red-lit room is much darker to a human than
+	// its brightest channel says. Static: luma(color) at the plane's alpha over opaque white, so 1 - A * (1 - luma).
+	// Movable lights add their cookie's luma (they add light for a human). Emitter sprites are full.
+	var/list/dim_cookie = list()
+	var/list/lumas = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
+	var/list/cookie_targets = list(SUMIARI_TARGET_COOKIE_RED, SUMIARI_TARGET_COOKIE_GREEN, SUMIARI_TARGET_COOKIE_BLUE)
+	for(var/channel in 1 to 3)
+		var/w = lumas[channel]
+		dim_cookie += filter(type = "layer", render_source = sumiari_offscreen(cookie_targets[channel]), blend_mode = BLEND_ADD, color = list(w, 0, 0, 0, 0, w, 0, 0, 0, 0, w, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+	var/list/dim_filters = list(
+		filter(type = "color", color = list(lumas[1], lumas[1], lumas[1], 0, lumas[2], lumas[2], lumas[2], 0, lumas[3], lumas[3], lumas[3], 0, 0, 0, 0, 1, 0, 0, 0, 0)),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_ALPHA), flags = FILTER_UNDERLAY, color = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1)),
+	)
+	dim_filters += dim_cookie
+	dim_filters += list(
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_ADD),
+		filter(type = "color", color = sumiari_matrix_dim_alpha()),
+	)
+	add_plate(SUMIARI_PLANE_DIM, SUMIARI_TARGET_DIM, SUMIARI_LIGHTING_SOURCE, dim_filters)
+#endif
 	// *SUNLIGHT_PLANE, not the lighting-plane light image. A campfire is full-bright on *lighting and black here.
 	add_plate(SUMIARI_PLANE_GLARE, SUMIARI_TARGET_GLARE, SUNLIGHTING_RENDER_TARGET, list(
 		filter(type = "color", color = sumiari_matrix_glare_to_alpha()),
@@ -1001,6 +1033,16 @@ var/global/turf/sumiari_test_dark_turf
 	sun.blockscharging = FALSE
 	screen_pieces += ink
 	screen_pieces += sun
+#if SUMIARI_DARKVISION
+	// Over every relay, under fullscreen and the HUD. Glow sprites above the lighting stay full, as for a human.
+	var/atom/movable/screen/sumiari_relay/dim = new
+	dim.name = "sumiari dim"
+	dim.plane = SUMIARI_RELAY_PLANE
+	dim.layer = SUMIARI_RELAY_LAYER_BASE + 5
+	dim.alpha = 0
+	dim.blockscharging = FALSE
+	screen_pieces += dim
+#endif
 
 // Drop wash filters from the world plane masters. Backdrop filters (occlusion, blur, sight blockers) stay.
 /obj/item/organ/eyes/sumiari/proc/clear_master_wash(mob/living/carbon/M)
@@ -1179,6 +1221,16 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	var/atom/movable/screen/sumiari_relay/ink = sumiari_find_piece(src, "sumiari ink")
 	var/atom/movable/screen/sumiari_relay/sun = sumiari_find_piece(src, "sumiari sun")
 	var/atom/movable/screen/sumiari_relay/moon = sumiari_find_piece(src, "sumiari moon")
+	var/atom/movable/screen/sumiari_relay/dim = sumiari_find_piece(src, "sumiari dim")
+	if(dim)
+		dim.alpha = 0
+		dim.filters = null
+		if(wash_mode == SUMIARI_WASH_LIVE && sumiari_darkvision_enabled)
+			dim.filters = list(
+				filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_DIM)),
+				filter(type = "alpha", render_source = sumiari_world_render_source(ABOVE_LIGHTING_PLANE), flags = MASK_INVERSE),
+			)
+			dim.alpha = 255
 	if(wash_mode != SUMIARI_WASH_LIVE)
 		if(ink)
 			ink.alpha = 0
@@ -1529,6 +1581,13 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 /proc/sumiari_matrix_light_gain()
 	var/gain = SUMIARI_LIGHT_GAIN
 	return list(gain, 0, 0, 0, 0, gain, 0, 0, 0, 0, gain, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+
+var/global/sumiari_darkvision_enabled = TRUE
+
+// Black RGB, alpha = (1 - FLOOR) * (1 - R): the share of a pixel's brightness a human loses to the dark.
+/proc/sumiari_matrix_dim_alpha()
+	var/depth = 1 - SUMIARI_DARKVISION_FLOOR
+	return list(0, 0, 0, -depth, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, depth)
 
 // White RGB, alpha = R. The alpha mask filter reads that alpha.
 /proc/sumiari_matrix_gray_to_alpha()
