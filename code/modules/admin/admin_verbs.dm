@@ -239,6 +239,7 @@ GLOBAL_PROTECT(admin_verbs_debug)
 	/datum/admins/proc/create_or_modify_area,
 	/client/proc/returntolobby,
 	/client/proc/set_tod_override,
+	/client/proc/set_time_of_day,
 	/client/proc/stresstest_chat,
 	/client/proc/performance_stress_test, // Uncomment these if you tick the performance stress test .dm file
 	/client/proc/cleanup_stress_test_mobs
@@ -553,6 +554,50 @@ GLOBAL_PROTECT(admin_verbs_hideable)
 		GLOB.todoverride = null
 		world << "[ckey] has disabled the time of day override."
 	settod()
+
+/client/proc/set_time_of_day()
+	set category = "Debug"
+	set name = "Set Time of Day"
+	set desc = "Move the real in-game clock to a chosen time of day. The sky changes at once and the clock keeps running."
+	if(!check_rights(R_DEBUG))
+		return
+	var/list/choices = list(
+		"Dawn (8:30)" = 8.5,
+		"Sunrise (9:45)" = 9.75,
+		"Day (12:00)" = 12,
+		"Sunset (15:15)" = 15.25,
+		"Dusk (15:45)" = 15.75,
+		"Night (0:00)" = 0
+	)
+	var/choice = input(src, "Jump the in-game clock to which time of day?", "Set Time of Day") as null|anything in choices
+	if(!choice)
+		return
+	set_station_time_of_day(choices[choice] HOURS)
+	log_admin("[key_name(usr)] set the time of day to [choice] (station time now [station_time_timestamp("hh:mm")]).")
+	message_admins("[key_name_admin(usr)] set the time of day to [choice].")
+	SSblackbox.record_feedback("tally", "admin_verb", 1, "Set Time of Day") //If you are copy-pasting this, ensure the 2nd parameter is unique to the new proc!
+
+/// Moves the real station clock to new_time (deciseconds since midnight) and updates the sky immediately.
+/// The clock keeps advancing normally afterwards.
+/proc/set_station_time_of_day(new_time)
+	new_time = ((new_time % 864000) + 864000) % 864000
+	SSticker.gametime_offset = (SSticker.gametime_offset + new_time - station_time() + 864000) % 864000
+	// Let the real clock drive the label again.
+	GLOB.todoverride = null
+	if(SSoutdoor_effects.initialized)
+		// get_time_of_day() only ever sets next_day, so clear any stale value from the old time first.
+		SSoutdoor_effects.next_day = FALSE
+		SSoutdoor_effects.get_time_of_day()
+		// Snap rather than fade, and make newly created sunlight screens start on the new colour too.
+		SSoutdoor_effects.last_color = SSoutdoor_effects.picked_color
+		for(var/atom/movable/screen/fullscreen/lighting_backdrop/sunlight/SP in SSoutdoor_effects.sunlighting_planes)
+			animate(SP)
+			SP.color = SSoutdoor_effects.picked_color
+		sumiari_on_sun_changed()
+	if(SSnightshift.initialized)
+		SSnightshift.check_nightshift() // runs settod() and pushes the new tod to mobs/objects now
+	else
+		settod()
 
 /client/proc/stresstest_chat()
 	set name = "Stress Chat"
