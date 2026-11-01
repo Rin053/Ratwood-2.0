@@ -282,6 +282,14 @@
 #define SUMIARI_WATER_PERIOD 34
 #define SUMIARI_WATER_CORE_ALPHA 150
 #define SUMIARI_WATER_END_ALPHA 60
+// 2) Moon-edge highlights. A wall or cliff tile gets a two-pixel pale rim (bright outer pixel, faint inner one) along
+// each north, west and east side that meets open sky; trees, rocks, big mushrooms and bushes on open sky get a
+// one-pixel rim on the edges of their own sprite that face the moon (up and left): the sprite, solid silver, minus
+// itself shifted one pixel away from the moon. The moon mask decides how bright each rim ends up.
+#define SUMIARI_MOON_RIMS 1
+#define SUMIARI_RIM_OUTER_ALPHA 170
+#define SUMIARI_RIM_INNER_ALPHA 55
+#define SUMIARI_RIM_SPRITE_ALPHA 150
 
 // Night senses. In true darkness the eyes catch a faint ink-wash silhouette of a living body close by
 // that they cannot otherwise see: behind a wall, door, or other obstacle, inside a closet or crate,
@@ -4160,6 +4168,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 // Moon effects. See SUMIARI_MOON_FX at the top.
 
 var/global/sumiari_moon_water_enabled = TRUE
+var/global/sumiari_moon_rims_enabled = TRUE
 
 /atom/movable/screen/plane_master/sumiari_fx_floor
 	name = "sumiari moon effects (ground) plane master"
@@ -4285,6 +4294,10 @@ var/global/sumiari_moon_water_enabled = TRUE
 		if(sumiari_moon_water_enabled)
 			fx_water(T, wanted)
 #endif
+#if SUMIARI_MOON_RIMS
+		if(sumiari_moon_rims_enabled)
+			fx_rims(T, wanted)
+#endif
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
@@ -4352,6 +4365,71 @@ var/global/sumiari_moon_water_enabled = TRUE
 	made["[variant]"] = ripples
 	return ripples
 
+// 2) Moon-edge highlights.
+GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
+	/obj/structure/flora/roguetree,
+	/obj/structure/roguerock,
+	/obj/structure/flora/rogueshroom,
+	/obj/structure/flora/roguegrass/bush,
+)))
+
+/obj/item/organ/eyes/sumiari/proc/fx_rims(turf/T, list/wanted)
+	if(isclosedturf(T))
+		var/sides = 0
+		for(var/side in list(NORTH, WEST, EAST))
+			var/turf/next = get_step(T, side)
+			if(next && !isclosedturf(next) && sumiari_spare_turf_open(next))
+				sides |= side
+		if(!sides)
+			return
+		var/key = "e[T.x],[T.y]"
+		if(fx_want(key, "[sides]", wanted))
+			fx_put(key, "[sides]", sumiari_fx_style(image(sumiari_rim_icon(sides), T), SUMIARI_FX_LOWER_PLANE))
+		return
+	if(!sumiari_spare_turf_open(T))
+		return
+	for(var/obj/thing in T)
+		if(!is_type_in_typecache(thing, GLOB.sumiari_rim_types) || thing.invisibility || !thing.icon_state)
+			continue
+		var/key = "r[REF(thing)]"
+		var/state = "[thing.icon]|[thing.icon_state]|[thing.dir]|[thing.plane]"
+		if(fx_want(key, state, wanted))
+			fx_put(key, state, sumiari_rim_image(thing))
+
+// The wall rim for a set of sides (NORTH, WEST, EAST bits): outer pixel bright, the one inside it faint.
+/proc/sumiari_rim_icon(sides)
+	var/static/list/made = list()
+	if(made["[sides]"])
+		return made["[sides]"]
+	var/icon/rim = sumiari_blank_icon()
+	if(sides & NORTH)
+		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_INNER_ALPHA), 1, 31, 32, 31)
+	if(sides & WEST)
+		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_INNER_ALPHA), 2, 1, 2, 32)
+	if(sides & EAST)
+		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_INNER_ALPHA), 31, 1, 31, 32)
+	if(sides & NORTH)
+		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_OUTER_ALPHA), 1, 32, 32, 32)
+	if(sides & WEST)
+		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_OUTER_ALPHA), 1, 1, 1, 32)
+	if(sides & EAST)
+		rim.DrawBox(sumiari_fx_silver(SUMIARI_RIM_OUTER_ALPHA), 32, 1, 32, 32)
+	made["[sides]"] = rim
+	return rim
+
+// The object's own sprite in solid silver, minus itself shifted one pixel right and down: what is left are the
+// pixels whose up-left neighbour is outside the sprite, the edge that faces the moon. Rides the object (its offset
+// and transform), so it stays glued to the sprite.
+/proc/sumiari_rim_image(obj/thing)
+	var/image/rim = image(thing.icon, thing, thing.icon_state)
+	rim.dir = thing.dir
+	sumiari_fx_style(rim, sumiari_fx_plane_near(thing.plane))
+	rim.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
+	rim.color = sumiari_solid_matrix(sumiari_fx_silver(255))
+	rim.alpha = SUMIARI_RIM_SPRITE_ALPHA
+	rim.filters = list(filter(type = "alpha", icon = sumiari_flora_cutout(thing), x = 1, y = -1, flags = MASK_INVERSE))
+	return rim
+
 // Moon effect checks that do not depend on the map or the time of day.
 /proc/sumiari_sweep_moon_fx(obj/item/organ/eyes/sumiari/eyes)
 	var/list/bad = list()
@@ -4377,9 +4455,19 @@ var/global/sumiari_moon_water_enabled = TRUE
 	if(ripple.plane != SUMIARI_FX_GAME_PLANE || ripple.loc != spot || !ripple.icon)
 		bad += "water image"
 #endif
+#if SUMIARI_MOON_RIMS
+	var/icon/rim_icon = sumiari_rim_icon(NORTH | WEST)
+	if(!rim_icon || rim_icon.GetPixel(10, 32) == null || rim_icon.GetPixel(1, 10) == null || rim_icon.GetPixel(32, 10) != null || rim_icon.GetPixel(16, 16) != null)
+		bad += "rim icon"
+	var/obj/structure/roguerock/rock = new(spot)
+	var/image/rock_rim = sumiari_rim_image(rock)
+	if(rock_rim.plane != SUMIARI_FX_LOWER_PLANE || length(rock_rim.filters) != 1 || rock_rim.loc != rock)
+		bad += "rim image plane=[rock_rim.plane]"
+	qdel(rock)
+#endif
 #endif
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS]")
 	return TRUE
