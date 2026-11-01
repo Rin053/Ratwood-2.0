@@ -372,6 +372,10 @@
 // one-pixel rim on the edges of their own sprite that face the moon (up and left): the sprite, solid silver, minus
 // itself shifted one pixel away from the moon. The moon mask decides how bright each rim ends up.
 #define SUMIARI_MOON_RIMS 1
+// The sprite rims (trees, rocks, big mushrooms, bushes) are removed (Ryan): the rim was built from the plant's
+// still sprite, so on a bush that sways for the viewer it stayed behind and drew a pale dotted arc out past the
+// leaning bush into the dark ground. 0 keeps only the wall/cliff catch-light above.
+#define SUMIARI_MOON_SPRITE_RIMS 0
 #define SUMIARI_RIM_OUTER_ALPHA 85
 // Pixels of the side sliver, fading from RIM_SIDE_ALPHA at the top to nothing.
 #define SUMIARI_RIM_SIDE_LENGTH 10
@@ -5437,6 +5441,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 			var/image/edge = sumiari_fx_style(image(sumiari_rim_icon(sides), T), SUMIARI_FX_LOWER_PLANE)
 			fx_put(key, "[sides]", sumiari_fx_fade_in(sumiari_fx_breathe(edge, T, SUMIARI_PULSE_DEPTH * 0.5, 3), sumiari_fx_alpha(255)))
 		return
+#if SUMIARI_MOON_SPRITE_RIMS
 	if(!sumiari_spare_turf_open(T))
 		return
 	for(var/obj/thing in T)
@@ -5446,6 +5451,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 		var/state = "[thing.icon]|[thing.icon_state]|[thing.dir]|[thing.plane]"
 		if(fx_want(key, state, wanted))
 			fx_put(key, state, sumiari_rim_image(thing))
+#endif
 
 // The wall rim for a set of sides (NORTH, WEST, EAST bits): a soft top catch-light, short fading slivers at the sides.
 /proc/sumiari_rim_icon(sides)
@@ -6388,12 +6394,14 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	// Top edge plus a short side fade (SUMIARI_RIM_SIDE_LENGTH px) down the west side only.
 	if(!rim_icon || rim_icon.GetPixel(10, 32) == null || rim_icon.GetPixel(1, 30) == null || rim_icon.GetPixel(1, 32 - SUMIARI_RIM_SIDE_LENGTH - 1) != null || rim_icon.GetPixel(32, 30) != null || rim_icon.GetPixel(16, 16) != null)
 		bad += "rim icon"
+#if SUMIARI_MOON_SPRITE_RIMS
 	var/obj/structure/roguerock/rock = new(spot)
 	var/image/rock_rim = sumiari_rim_image(rock)
 	// Two cutout masks: the sprite's own body offset away, and its body behind (rims only where body backs them).
 	if(rock_rim.plane != SUMIARI_FX_LOWER_PLANE || length(rock_rim.filters) != 2 || rock_rim.loc != rock)
 		bad += "rim image plane=[rock_rim.plane]"
 	qdel(rock)
+#endif
 #endif
 #if SUMIARI_MOON_DEW
 	var/image/dew = sumiari_dew_image(spot)
@@ -6546,5 +6554,5 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	if(length(bad))
 		log_world("SUMIARI TEST FAIL moon fx [bad.Join(" ")]")
 		return FALSE
-	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST] steps=[SUMIARI_MOON_STEPS]")
+	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] sprite_rims=[SUMIARI_MOON_SPRITE_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST] steps=[SUMIARI_MOON_STEPS]")
 	return TRUE
