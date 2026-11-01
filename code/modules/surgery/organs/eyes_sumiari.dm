@@ -245,6 +245,12 @@
 // 4, not 8: the sky plate is already a per-corner gradient and the wall faces carry the ledges, so 8 only smeared
 // the grade across the view down through open space, which read as a blurred lower level.
 #define SUMIARI_MOON_EDGE_BLUR 4
+// Open-sky cut on the sun plane before it becomes the moon and the skylight. The vanilla sun plane is 1 on open sky
+// but also spreads indoors (outdoor_datum calc_sunlight_spread: GLOBAL_LIGHT_RANGE tiles through doorways, windows
+// and curtains, falloff 1 at the shared corner, ~0.53 one tile in, ~0.18 two in), so a roofed room by a window
+// used to take the moon look. The cut maps SKY_CUT..1 to 0..1: only open sky (1) passes, and the doorway or window
+// tile itself keeps a soft edge a few pixels wide; every roofed tile past it is 0, the plain cave look.
+#define SUMIARI_MOON_SKY_CUT 0.8
 #define SUMIARI_MOON_FADE_IN_START (15.5 HOURS)
 #define SUMIARI_MOON_FADE_IN_END (16 HOURS)
 #define SUMIARI_MOON_FADE_OUT_START (8 HOURS)
@@ -1800,7 +1806,7 @@ var/global/sumiari_moon_handoff_enabled = TRUE
 /proc/sumiari_skylight_filters(fade)
 	if(isnull(fade))
 		fade = sumiari_moon_fade()
-	. = list()
+	. = list(filter(type = "color", color = sumiari_matrix_sky_cut()))
 #if SUMIARI_MOON_CLIFFS
 	. += filter(type = "layer", render_source = SUMIARI_CLIFF_RENDER_TARGET, blend_mode = BLEND_ADD)
 #endif
@@ -1902,7 +1908,7 @@ var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 	if(isnull(fade))
 		fade = sumiari_moon_fade(night_override)
 #if SUMIARI_MOON_VIVID
-	. = list()
+	. = list(filter(type = "color", color = sumiari_matrix_sky_cut()))
 #if SUMIARI_MOON_CLIFFS
 	// Wall faces join the sky copy first, in sky units, so everything after treats them like lit ground.
 	. += filter(type = "layer", render_source = SUMIARI_CLIFF_RENDER_TARGET, blend_mode = BLEND_ADD)
@@ -1932,7 +1938,7 @@ var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 #endif
 	. += filter(type = "color", color = sumiari_matrix_moon_alpha(sumiari_moon_strength(night_override) * SUMIARI_MOON_VIVID_LAMP_FADE * fade))
 #else
-	. = list()
+	. = list(filter(type = "color", color = sumiari_matrix_sky_cut()))
 #if SUMIARI_MOON_CLIFFS
 	. += filter(type = "layer", render_source = SUMIARI_CLIFF_RENDER_TARGET, blend_mode = BLEND_ADD)
 #endif
@@ -1945,6 +1951,13 @@ var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 
 // Sky R copied to gray and scaled, alpha forced to 1. Scaling the sky down before the lamp subtract and the
 // strength back up after it gives strength * (sky - gain * lamp) without a second lamp copy.
+// Sun plane R -> (R - SKY_CUT) / (1 - SKY_CUT) on RGB, alpha kept (see SUMIARI_MOON_SKY_CUT). Indoor sun spread
+// (below SKY_CUT) clamps to 0.
+/proc/sumiari_matrix_sky_cut()
+	var/k = 1 / (1 - SUMIARI_MOON_SKY_CUT)
+	var/c = -SUMIARI_MOON_SKY_CUT * k
+	return list(k, k, k, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, c, c, c, 0)
+
 /proc/sumiari_matrix_sky_scaled(scale)
 	return list(scale, scale, scale, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
 
@@ -3711,8 +3724,17 @@ var/global/sumiari_run_headless_test = FALSE
 	for(var/moon_index in 1 to length(eyes.moon_plate.filters))
 		if(sumiari_filter_field(eyes.moon_plate.filters, moon_index, "render_source") == sumiari_offscreen(SUMIARI_TARGET_SOURCE))
 			moon_has_source = TRUE
-	if(length(eyes.moon_plate.filters) != 3 + source_subtracts + lamp_subtracts + SUMIARI_MOON_SPARES_NONFIRE + SUMIARI_MOON_CLIFFS || moon_has_source != !!source_subtracts || (source_subtracts && sumiari_filter_field(eyes.moon_plate.filters, 3 + lamp_subtracts + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE)) || (lamp_subtracts && sumiari_filter_field(eyes.moon_plate.filters, 4 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_COOKIE)))
+	if(length(eyes.moon_plate.filters) != 4 + source_subtracts + lamp_subtracts + SUMIARI_MOON_SPARES_NONFIRE + SUMIARI_MOON_CLIFFS || moon_has_source != !!source_subtracts || (source_subtracts && sumiari_filter_field(eyes.moon_plate.filters, 4 + lamp_subtracts + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE)) || (lamp_subtracts && sumiari_filter_field(eyes.moon_plate.filters, 5 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_COOKIE)))
 		log_world("SUMIARI TEST FAIL moon vivid mask filters=[length(eyes.moon_plate.filters)] source=[moon_has_source]/[source_subtracts]")
+		return FALSE
+	// Indoor sun spread never becomes moon: the moon and skylight plates open with the sky cut, which passes open sky
+	// (1) and zeroes the vanilla spread into roofed rooms through doorways, windows and curtains (<= ~0.53 one tile in).
+	var/list/sky_cut = sumiari_matrix_sky_cut()
+	var/list/cut_open = sumiari_apply_matrix(sky_cut, 1, 1, 1)
+	var/list/cut_room = sumiari_apply_matrix(sky_cut, 0.53, 0.53, 0.53)
+	var/list/cut_edge = sumiari_apply_matrix(sky_cut, SUMIARI_MOON_SKY_CUT, SUMIARI_MOON_SKY_CUT, SUMIARI_MOON_SKY_CUT)
+	if(cut_open[1] < 0.99 || max(cut_room[1], 0) > 0 || max(cut_edge[1], 0) > 0.001 || !length(eyes.moon_plate.filters) || sumiari_filter_kind(eyes.moon_plate.filters[1]) != "color" || !eyes.skylight_plate || !length(eyes.skylight_plate.filters) || sumiari_filter_kind(eyes.skylight_plate.filters[1]) != "color")
+		log_world("SUMIARI TEST FAIL indoor sky cut open=[cut_open[1]] room=[cut_room[1]] edge=[cut_edge[1]]")
 		return FALSE
 #if SUMIARI_MOON_FIRE_BLIND && SUMIARI_DARKVISION
 	// And the gray mask clears open night sky after the emitter-sprite max, so the sprite itself is not grayed there.
@@ -4991,7 +5013,8 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/atom/movable/screen/plane_master/cliff_master = eyes.owner?.hud_used?.plane_masters["[SUMIARI_CLIFF_PLANE]"]
 	if(!cliff_master || cliff_master.render_target != SUMIARI_CLIFF_RENDER_TARGET)
 		bad += "cliff plane master"
-	if(sumiari_filter_field(moon_filters, 1, "render_source") != SUMIARI_CLIFF_RENDER_TARGET || sumiari_filter_field(moon_filters, 1, "blend_mode") != BLEND_ADD)
+	// Filter 1 is the open-sky cut (SUMIARI_MOON_SKY_CUT); the cliff faces join right after it.
+	if(sumiari_filter_field(moon_filters, 2, "render_source") != SUMIARI_CLIFF_RENDER_TARGET || sumiari_filter_field(moon_filters, 2, "blend_mode") != BLEND_ADD)
 		bad += "moon mask has no cliff add"
 	var/list/half = sumiari_cliff_matrix(1, 0.5, 0, 0)
 	if(half[1] != 1 || half[5] != 0.5 || half[20] != 1)
