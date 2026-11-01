@@ -190,7 +190,9 @@
 // Moon fade: the whole moon look fades in across the dusk step and out across the first half hour of dawn,
 // next to the sky's own color fade, instead of snapping at 16:00 and 8:00 station time. Station time.
 // Feather on the moon mask's open-sky edge, in pixels (a blur on the sky copy): no hard line at a ledge or roof.
-#define SUMIARI_MOON_EDGE_BLUR 8
+// 4, not 8: the sky plate is already a per-corner gradient and the wall faces carry the ledges, so 8 only smeared
+// the grade across the view down through open space, which read as a blurred lower level.
+#define SUMIARI_MOON_EDGE_BLUR 4
 #define SUMIARI_MOON_FADE_IN_START (15.5 HOURS)
 #define SUMIARI_MOON_FADE_IN_END (16 HOURS)
 #define SUMIARI_MOON_FADE_OUT_START (8 HOURS)
@@ -230,7 +232,7 @@
 #define SUMIARI_SPARE_FEATHER 2
 #define SUMIARI_SPARE_COVER 1.6
 #define SUMIARI_SPARE_MIN 0.04
-#define SUMIARI_SPARE_BLUR 8
+#define SUMIARI_SPARE_BLUR 4
 
 // Moonlit wall faces. The moon mask reads the sky plane: every open or roofed tile draws its four lighting corners'
 // sunFalloff there (the vanilla per-corner sky light), but a closed turf (cliff, wall) draws nothing, so the moon
@@ -1326,6 +1328,9 @@ var/global/turf/sumiari_test_dark_turf
 		// stopping on a tile line. Before the lamp subtract, so firelit pixels stay exactly gray.
 		filter(type = "blur", size = SUMIARI_MOON_EDGE_BLUR),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_LIGHT), blend_mode = BLEND_SUBTRACT),
+		// Movable lights too (a held torch, a lantern): their pool is gray for these eyes, so the moon stays off it.
+		// The cookie is the same brightness the gray mask reads, so the moon never decides what is lit.
+		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_COOKIE), blend_mode = BLEND_SUBTRACT),
 		filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_SOURCE), blend_mode = BLEND_SUBTRACT),
 	)
 #if SUMIARI_MOON_SPARES_NONFIRE
@@ -3090,7 +3095,7 @@ var/global/sumiari_run_headless_test = FALSE
 	if(!(vivid[2] - vivid[1] > 0.2) || !(vivid_gray[3] > vivid_gray[1]) || abs(vivid_gray[2] / SUMIARI_MOON_LUMINANCE - 0.5) > 0.03 || abs(vivid_luma - 0.4431) > 0.03 || !(orange[1] > orange[2] && orange[2] > orange[3]) || brick_chroma > 0.08)
 		log_world("SUMIARI TEST FAIL moon vivid matrix green=[vivid[1]],[vivid[2]],[vivid[3]] gray=[vivid_gray[1]],[vivid_gray[2]],[vivid_gray[3]]")
 		return FALSE
-	if(length(eyes.moon_plate.filters) != 5 + SUMIARI_MOON_SPARES_NONFIRE + SUMIARI_MOON_CLIFFS || sumiari_filter_field(eyes.moon_plate.filters, 4 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE))
+	if(length(eyes.moon_plate.filters) != 6 + SUMIARI_MOON_SPARES_NONFIRE + SUMIARI_MOON_CLIFFS || sumiari_filter_field(eyes.moon_plate.filters, 5 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_SOURCE) || sumiari_filter_field(eyes.moon_plate.filters, 4 + SUMIARI_MOON_CLIFFS, "render_source") != sumiari_offscreen(SUMIARI_TARGET_COOKIE))
 		log_world("SUMIARI TEST FAIL moon vivid mask filters=[length(eyes.moon_plate.filters)]")
 		return FALSE
 #else
@@ -4246,7 +4251,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	if(!spare_master || spare_master.render_target != SUMIARI_SPARE_RENDER_TARGET)
 		bad += "spare plane master"
 	var/list/moon_filters = sumiari_moon_mask_filters(TRUE)
-	if(sumiari_filter_field(moon_filters, 5 + SUMIARI_MOON_CLIFFS, "render_source") != SUMIARI_SPARE_RENDER_TARGET || sumiari_filter_field(moon_filters, 5 + SUMIARI_MOON_CLIFFS, "blend_mode") != BLEND_ADD)
+	if(sumiari_filter_field(moon_filters, 6 + SUMIARI_MOON_CLIFFS, "render_source") != SUMIARI_SPARE_RENDER_TARGET || sumiari_filter_field(moon_filters, 6 + SUMIARI_MOON_CLIFFS, "blend_mode") != BLEND_ADD)
 		bad += "moon mask has no spare add"
 #if SUMIARI_MOON_CLIFFS
 	var/atom/movable/screen/plane_master/cliff_master = eyes.owner?.hud_used?.plane_masters["[SUMIARI_CLIFF_PLANE]"]
