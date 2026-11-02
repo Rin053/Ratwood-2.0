@@ -105,7 +105,9 @@
 		if(hud_used.fov.alpha == 0)
 			return
 	// The sprite itself goes on the hidden GAME_PLANE_OWNER (the FOV_HIDDEN plane master layers it above other mobs,
-	// past the cone mask, under canopies). The override left on the atom's own plane is an invisible click target.
+	// past the cone mask, under canopies). The override is only a click target: it must not draw, because
+	// GAME_PLANE_UPPER takes the moon's world grade (saturation 1.75, emerald hue) and a visible copy there
+	// turns the wearer neon lime as soon as they walk into moonlight.
 	cone_redraw(src, layer, RESET_TRANSFORM|KEEP_TOGETHER|PIXEL_SCALE)
 	if(buckled)
 		cone_redraw(buckled, buckled.layer, RESET_TRANSFORM|KEEP_TOGETHER)
@@ -119,9 +121,12 @@
 	proxy.layer = draw_layer
 	proxy.pixel_x = 0
 	proxy.pixel_y = 0
-	proxy.alpha = 1 // not 0: a fully transparent image takes no clicks
 	proxy.mouse_opacity = MOUSE_OPACITY_OPAQUE
-	proxy.appearance_flags = flags
+	// Flags before alpha/color: assigning appearance_flags after can restore the copied sprite's alpha of 255.
+	proxy.appearance_flags = flags | RESET_ALPHA
+	// RGB off, sprite alpha kept. Alpha 0 takes no clicks; 1 is enough to hit.
+	proxy.color = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+	proxy.alpha = 1
 	var/image/shown = image(thing, thing)
 	shown.plane = GAME_PLANE_OWNER
 	shown.layer = draw_layer
