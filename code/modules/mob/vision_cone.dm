@@ -104,29 +104,48 @@
 	if(hud_used?.fov)
 		if(hud_used.fov.alpha == 0)
 			return
-	// The sprite itself goes on the hidden GAME_PLANE_OWNER (the FOV_HIDDEN plane master layers it above other mobs,
-	// past the cone mask, under canopies). The override is only a click target: it must not draw, because
-	// GAME_PLANE_UPPER takes the moon's world grade (saturation 1.75, emerald hue) and a visible copy there
-	// turns the wearer neon lime as soon as they walk into moonlight.
+	// The sprite the player sees is on the hidden GAME_PLANE_OWNER (layered in by the FOV_HIDDEN plane master,
+	// above other mobs, past the cone mask, under canopies). That plane takes the moon's mob grade.
+	// The override is a second image and has to sit on a plane the client actually draws. An override on the
+	// hidden owner plane does not suppress the atom, so the real sprite stays on the game plane, takes the
+	// moon's emerald grade, and turns green until the moon mask fades off.
 	cone_redraw(src, layer, RESET_TRANSFORM|KEEP_TOGETHER|PIXEL_SCALE)
 	if(buckled)
 		cone_redraw(buckled, buckled.layer, RESET_TRANSFORM|KEEP_TOGETHER)
 	if(pulling)
 		cone_redraw(pulling, pulling.layer, RESET_TRANSFORM|KEEP_TOGETHER)
 
+// Blank of the same canvas as thing. RGB is 0 and alpha is 1, baked into the icon: a glide cannot put the
+// sprite back, which is what a color matrix on a copied body did mid-step. mouse_opacity 2 still hits it.
+/proc/cone_click_mask(atom/movable/thing)
+	var/static/list/cache = list()
+	var/static/icon/fallback
+	if(!thing?.icon)
+		if(!fallback)
+			fallback = icon('icons/mob/vision_cone.dmi', "combat", SOUTH, 1)
+			fallback.MapColors(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 / 255)
+		return fallback
+	var/key = "[thing.icon]|[thing.icon_state]|[thing.dir]"
+	var/icon/masked = cache[key]
+	if(masked)
+		return masked
+	masked = icon(thing.icon, thing.icon_state, thing.dir, 1)
+	masked.MapColors(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 / 255)
+	cache[key] = masked
+	return masked
+
 /mob/living/proc/cone_redraw(atom/movable/thing, draw_layer, flags)
-	var/image/proxy = image(thing, thing)
+	// Nothing of the body is in this image, so the upper plane's moon grade has nothing to paint and a
+	// mid-step glide has nothing to leave behind. It is the override, on a plane that is really drawn,
+	// which is what keeps the atom off the game plane.
+	var/image/proxy = image(cone_click_mask(thing), thing)
 	proxy.override = 1
 	proxy.plane = GAME_PLANE_UPPER
 	proxy.layer = draw_layer
 	proxy.pixel_x = 0
 	proxy.pixel_y = 0
 	proxy.mouse_opacity = MOUSE_OPACITY_OPAQUE
-	// Flags before alpha/color: assigning appearance_flags after can restore the copied sprite's alpha of 255.
-	proxy.appearance_flags = flags | RESET_ALPHA
-	// RGB off, sprite alpha kept. Alpha 0 takes no clicks; 1 is enough to hit.
-	proxy.color = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
-	proxy.alpha = 1
+	proxy.appearance_flags = RESET_TRANSFORM|RESET_COLOR|RESET_ALPHA|PIXEL_SCALE|KEEP_APART
 	var/image/shown = image(thing, thing)
 	shown.plane = GAME_PLANE_OWNER
 	shown.layer = draw_layer
