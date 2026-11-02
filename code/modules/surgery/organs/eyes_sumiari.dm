@@ -237,10 +237,10 @@
 // images on a turf or a plant, so they move with the world. There is no screen-space night effect at all: the
 // moon look is only color on the world (the moon relay), cut by the moon mask.
 #define SUMIARI_BEAUTY_PLANE FULLSCREEN_PLANE
-// Moon fade, on station time, following how bright that time of day is. Dawn (8:00) is still a dark sky, so the
-// night look stays through it and fades out across the brightening into sunrise (9:30), when the day is bright
-// enough for the gray wash. It fades back in across dusk (15:30-16:00), once the sky has dimmed, and is full
-// at midnight.
+// Moon fade, on fixed station hours, lined up with the sunlight color. The plane adds that color. Dusk (15:30)
+// is still a bright add (peak about 0.72-0.76). Midnight blends it to black over the next hour, so the night
+// look fades in across the dim half, 16:30-17:00, and is full once the sky is black. It fades out across
+// 7:30-8:00 and is gone at 8:00, when the dawn color (peak about 0.23-0.48) is already on.
 // Feather on the moon mask's open-sky edge, in pixels (a blur on the sky copy): no hard line at a ledge or roof.
 // Kept small: the sky plate is already a per-corner gradient and the wall faces carry the ledges; a wider blur
 // smears the grade down through open space, which reads as a blurred lower level.
@@ -251,10 +251,10 @@
 // window the moon look. The cut maps SKY_CUT..1 to 0..1: only open sky (1) passes, and the doorway or window
 // tile itself keeps a soft edge a few pixels wide; every roofed tile past it is 0, the plain cave look.
 #define SUMIARI_MOON_SKY_CUT 0.8
-#define SUMIARI_MOON_FADE_IN_START (15.5 HOURS)
-#define SUMIARI_MOON_FADE_IN_END (16 HOURS)
-#define SUMIARI_MOON_FADE_OUT_START (8.5 HOURS)
-#define SUMIARI_MOON_FADE_OUT_END (9.5 HOURS)
+#define SUMIARI_MOON_FADE_IN_START (16.5 HOURS)
+#define SUMIARI_MOON_FADE_IN_END (17 HOURS)
+#define SUMIARI_MOON_FADE_OUT_START (7.5 HOURS)
+#define SUMIARI_MOON_FADE_OUT_END (8 HOURS)
 // While a fade runs, the moon mask and the halos are animated toward the next sample every tick.
 // Real time. Only ticks inside a fade window.
 #define SUMIARI_MOON_FADE_TICK (2 SECONDS)
@@ -2012,7 +2012,8 @@ var/global/sumiari_moon_fire_blind = SUMIARI_MOON_FIRE_BLIND
 	return station_time(FALSE, wtime)
 
 // Moon fade, 0..1, at a station time (null: now). 1 through the night, 0 by day, a smoothstep ramp across
-// SUMIARI_MOON_FADE_IN_* (dusk, once the sky has dimmed) and SUMIARI_MOON_FADE_OUT_* (dawn into sunrise, once the sky has brightened).
+// the fixed hours SUMIARI_MOON_FADE_IN_* (16:30-17:00, dim half of the blend to black) and
+// SUMIARI_MOON_FADE_OUT_* (7:30-8:00, done when the dawn color is on).
 /proc/sumiari_moon_phase(time)
 	if(isnull(time))
 		time = sumiari_station_time()
@@ -3108,13 +3109,17 @@ var/global/sumiari_run_headless_test = FALSE
 		return FALSE
 	return TRUE
 
-// 71,42,9 is bloody water. Life calls check_drowning, which extinguishes a normal torch. A lamptern is not extinguishable, so it keeps emitting.
+// Life calls check_drowning, which extinguishes a normal torch on open water. A lamptern is not extinguishable, so it keeps emitting.
+// The old bloody-water coordinate is bedrock now, so this takes the first open water tile.
 /proc/sumiari_probe_hook_torch(turf/origin)
-	var/turf/spot = locate(71, 42, 9)
+	var/turf/spot
+	for(var/turf/open/water/water in world)
+		spot = water
+		break
 	if(!isturf(spot))
 		spot = origin
-	if(!isturf(spot))
-		log_world("SUMIARI HOOK FAIL no turf")
+	if(!istype(spot, /turf/open/water))
+		log_world("SUMIARI TEST FAIL no open water for the torch")
 		return FALSE
 	sumiari_hook_place_line(spot, "sync")
 	var/obj/item/flashlight/flare/torch/held = sumiari_hook_spawn(spot)
@@ -3766,25 +3771,30 @@ var/global/sumiari_run_headless_test = FALSE
 			return
 		return sample:blend_mode
 
-// Dawn and dusk fade every moon piece together. The phase only falls across dawn and only rises across dusk, and
-// the ink gray on open sky (wash w times the clear factor 1 - fade * shape) is the straight line w * (1 - fade).
+// Dawn and dusk fade every moon piece together. The phase only falls across the fade-out hours and only rises
+// across the fade-in hours, and the ink gray on open sky (wash w times the clear factor 1 - fade * shape) is
+// the straight line w * (1 - fade).
 /proc/sumiari_fade_problem(obj/item/organ/eyes/sumiari/eyes)
 	var/last = 2
-	for(var/t in round(7.98 * 36000) to round(8.52 * 36000) step 100)
+	var/dawn_from = SUMIARI_MOON_FADE_OUT_START - 0.02 HOURS
+	var/dawn_to = SUMIARI_MOON_FADE_OUT_END + 0.02 HOURS
+	for(var/t in round(dawn_from) to round(dawn_to) step 100)
 		var/phase = sumiari_moon_phase(t)
 		if(phase > last + 0.0001)
 			return "dawn rises at [t] [phase]>[last]"
 		last = phase
-	if(sumiari_moon_phase(round(7.98 * 36000)) < 0.999 || sumiari_moon_phase(round(8.52 * 36000)) > 0.001)
-		return "dawn ends [sumiari_moon_phase(round(7.98 * 36000))]/[sumiari_moon_phase(round(8.52 * 36000))]"
+	if(sumiari_moon_phase(round(dawn_from)) < 0.999 || sumiari_moon_phase(round(dawn_to)) > 0.001)
+		return "dawn ends [sumiari_moon_phase(round(dawn_from))]/[sumiari_moon_phase(round(dawn_to))]"
 	last = -1
-	for(var/t in round(15.48 * 36000) to round(16.02 * 36000) step 100)
+	var/dusk_from = SUMIARI_MOON_FADE_IN_START - 0.02 HOURS
+	var/dusk_to = SUMIARI_MOON_FADE_IN_END + 0.02 HOURS
+	for(var/t in round(dusk_from) to round(dusk_to) step 100)
 		var/phase = sumiari_moon_phase(t)
 		if(phase < last - 0.0001)
 			return "dusk falls at [t] [phase]<[last]"
 		last = phase
-	if(sumiari_moon_phase(round(15.48 * 36000)) > 0.001 || sumiari_moon_phase(round(16.02 * 36000)) < 0.999)
-		return "dusk ends [sumiari_moon_phase(round(15.48 * 36000))]/[sumiari_moon_phase(round(16.02 * 36000))]"
+	if(sumiari_moon_phase(round(dusk_from)) > 0.001 || sumiari_moon_phase(round(dusk_to)) < 0.999)
+		return "dusk ends [sumiari_moon_phase(round(dusk_from))]/[sumiari_moon_phase(round(dusk_to))]"
 	var/was_blind = sumiari_moon_fire_blind
 	sumiari_moon_fire_blind = TRUE
 	for(var/wash in list(0.25, 0.5, 1))
@@ -4029,13 +4039,13 @@ var/global/sumiari_run_headless_test = FALSE
 		log_world("SUMIARI TEST FAIL moon strength day=[sumiari_moon_strength(FALSE)] night=[sumiari_moon_strength(TRUE)]")
 		return FALSE
 	// Moon fade: hours -> expected phase (smoothstep, so the midpoints are exactly 0.5).
-	var/list/fade_cases = list("12" = 0, "22" = 1, "3" = 1, "15.5" = 0, "15.75" = 0.5, "16" = 1, "8" = 1, "8.5" = 1, "9" = 0.5, "9.5" = 0)
+	var/list/fade_cases = list("12" = 0, "22" = 1, "3" = 1, "16.5" = 0, "16.75" = 0.5, "17" = 1, "7.5" = 1, "7.75" = 0.5, "8" = 0, "10" = 0)
 	for(var/hours in fade_cases)
 		var/phase = sumiari_moon_phase(text2num(hours) HOURS)
 		if(abs(phase - fade_cases[hours]) > 0.001)
 			log_world("SUMIARI TEST FAIL moon fade at [hours]h = [phase], expected [fade_cases[hours]]")
 			return FALSE
-	if(!sumiari_moon_fading(15.6 HOURS) || !sumiari_moon_fading(9 HOURS) || sumiari_moon_fading(8.1 HOURS) || sumiari_moon_fading(20 HOURS) || sumiari_moon_fading(12 HOURS))
+	if(!sumiari_moon_fading(16.6 HOURS) || !sumiari_moon_fading(7.6 HOURS) || sumiari_moon_fading(8 HOURS) || sumiari_moon_fading(17 HOURS) || sumiari_moon_fading(15.6 HOURS) || sumiari_moon_fading(20 HOURS) || sumiari_moon_fading(12 HOURS))
 		log_world("SUMIARI TEST FAIL moon fade windows")
 		return FALSE
 	log_world("SUMIARI TEST moon PASS silver=[gray[1]],[gray[2]],[gray[3]] strength=[night_strength] vivid=[SUMIARI_MOON_VIVID] saturation=[SUMIARI_MOON_SATURATION] sheen=[SUMIARI_MOON_SHEEN] hue=[SUMIARI_MOON_HUE_SHIFT] luma=[vivid_luma] live=[sumiari_moon_strength()] fade=[sumiari_moon_fade()]")
