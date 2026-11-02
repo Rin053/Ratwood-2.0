@@ -260,6 +260,9 @@
 #define SUMIARI_MOON_FADE_TICK (2 SECONDS)
 // How often the client-image features (1 and 6) refresh.
 #define SUMIARI_BEAUTY_INTERVAL (1 SECONDS)
+// How long a bleed walk and its per-tile classes stay valid. A move to a new tile rebuilds the walk at once; a door,
+// shutter or curtain is picked up on the next rebuild, at most this long after it changes.
+#define SUMIARI_BLEED_HOLD (2 SECONDS)
 // Peak alpha of the vivid layer on open sky at night. 1 means a moonlit pixel is fully the vivid color.
 #define SUMIARI_MOON_VIVID_STRENGTH 1
 // Lamp fade for the vivid layer: vivid alpha is strength * (sky - fade * lamp wash), and an emitter's own sprite
@@ -342,8 +345,9 @@
 // would cover the real thing. The relay is cut by the moon mask (open-sky corner light, minus lamp and fire light,
 // times the dusk/dawn fade, feathered), so an effect is exactly as strong as the moon look on its own pixel: none in
 // caves, indoors, by day or by a fire, and a soft fade at every edge. Nothing here is screen-sized: no overlay, wash
-// or grain. The tiles are scanned only near the owner (FX_RANGE), on each step and every FX_RESCAN beauty ticks,
-// and an image is only rebuilt when its tile's state changes. Each effect has a define (compiled in or not) and a
+// or grain. The tiles are scanned only near the owner (FX_RANGE). A one-tile step rescans the new edge (the old edge
+// gained a neighbor); the whole square is scanned every FX_RESCAN ticks, and an image is only rebuilt when its
+// tile's state changes. Each effect has a define (compiled in or not) and a
 // global (View Variables can flip it live); sumiari_night_beauty_enabled turns all of them off at once.
 #define SUMIARI_MOON_FX 1
 #define SUMIARI_FX_RANGE 8
@@ -806,6 +810,9 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/applied_fade = null
 	// Client view radius beyond the 15x15 one (0..VIEW_EXTRA_MAX), refreshed each beauty tick (refresh_view_reach).
 	var/view_extra = 0
+	// area_cap depends only on view_extra. The cached value is dropped when the view changes.
+	var/area_cap_extra = -1
+	var/list/area_cap_values
 	// The z the vision was last worked out for (view_turf), so a look up or down a level recaptures the planes.
 	var/last_view_z = null
 	var/list/saved_render_targets
@@ -821,8 +828,31 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/client/spill_client
 	var/list/spill_images
 	var/list/spill_keys
-	// One bleed walk per tick, shared by the cliff (moon bleed) and spill passes: list(key, grid, steps, x0, y0, w, h).
+	// One bleed walk per place, held for BLEED_HOLD, shared by the cliff (moon bleed) and spill passes:
+	// list(key, grid, steps, x0, y0, w, h, openings, shut). cliff_drawn is that list once its images are current.
 	var/list/bleed_cache
+	var/bleed_cache_at = 0
+	// Pre-opening classes and the shut-floor indices they came from, so a one-tile step can shift them instead of
+	// classifying the square again. bleed_slid is TRUE when this pass reused that overlap. bleed_filled counts the
+	// tiles actually classified.
+	var/list/bleed_raw
+	var/list/bleed_floor
+	var/bleed_z = 0
+	var/bleed_filled = 0
+	var/bleed_slid = FALSE
+	var/list/cliff_drawn
+	// Where the wall faces and the sun cuts were last drawn, so a one-tile step only visits the new edge.
+	var/turf/cliff_center
+	var/cliff_indoors = FALSE
+	var/turf/spill_center
+	var/spill_indoors = FALSE
+	var/spill_sample = 0
+	var/spill_sample_set = FALSE
+	var/spill_full_at = -1
+	// world.time of the last cliff/spill/effect pass, and the turf it was built at, so a move and a beauty tick in the
+	// same tick do the walk once.
+	var/terrain_at = -1
+	var/turf/terrain_center
 	// Night senses: body -> the pulse image shown to sense_client (it rides that body's anchor), body -> anchor, body
 	// -> the appearance key its silhouette was copied at, body -> timer of a fade-out under way, the bodies in range
 	// whose steps and turns are watched, and the turf every anchor is hosted on.
@@ -856,15 +886,24 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	// Dew: grass tiles found by the last scan, and the live sparkles (image -> expiry).
 	var/list/fx_dew_spots
 	var/list/fx_dew_images
-	// Sway: how many plants this scan has swaying (capped at SWAY_MAX).
+	// Sway: how many plants this scan has swaying (capped at SWAY_MAX). The caps are the area_cap values for this
+	// view, filled once per scan so the tile loop does not recompute them.
 	var/fx_sway_count = 0
+	var/cap_sway = 0
 	// Fog: wisps this scan.
 	var/fx_fog_count = 0
+	var/cap_fog = 0
 	// Beams: shafts this scan.
 	var/fx_beam_count = 0
+	var/cap_beam = 0
 	// Reflections this scan.
 	var/fx_reflect_count = 0
+	var/cap_reflect = 0
 	var/fx_shrine_count = 0
+	var/cap_shrine = 0
+	var/cap_dew = 0
+	var/cap_petal = 0
+	var/cap_frost = 0
 	// Petals: trees and flowers found by the last scan, and the petals in the air (image -> expiry).
 	var/list/fx_petal_sources
 	var/list/fx_petals
@@ -4275,9 +4314,21 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	SIGNAL_HANDLER
 	sense_tick()
 	place_beauty()
+	terrain_pass(TRUE)
+
+// Cliff faces, the sun spill and the moon effects, once per tile per tick. A step and the beauty tick land in the
+// same tick often enough that doing both was a second full walk of the same square.
+/obj/item/organ/eyes/sumiari/proc/terrain_pass(moved = FALSE)
+	var/turf/center = view_turf()
+	if(center && fx_center && terrain_at == world.time && terrain_center == center && vision_on && wash_mode == SUMIARI_WASH_LIVE && sumiari_is_moon_night() && !(moved && fx_center != center))
+		return
+	terrain_at = world.time
+	terrain_center = center
+	sumiari_scan_cache_begin()
 	cliff_tick()
 	spill_tick()
-	fx_tick(TRUE)
+	fx_tick(moved)
+	sumiari_scan_cache_end()
 
 // Gone at once (vision off, another client, the eyes leaving): no fade, nothing left behind.
 /obj/item/organ/eyes/sumiari/proc/clear_sensed()
@@ -4940,10 +4991,29 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	return range(dist, center)
 
 // A per-area cap tuned for the 15x15 view, scaled by how much more area the current view covers.
+// The ratio depends only on view_extra, and the scan asks for the same few bases hundreds of times a tick.
 /obj/item/organ/eyes/sumiari/proc/area_cap(base)
+	if(area_cap_extra != view_extra || !area_cap_values)
+		area_cap_extra = view_extra
+		area_cap_values = list()
+	if(!isnull(area_cap_values["[base]"]))
+		return area_cap_values["[base]"]
 	var/wide = (SUMIARI_VIEW_BASE_RADIUS + view_extra) * 2 + 1
 	var/norm = SUMIARI_VIEW_BASE_RADIUS * 2 + 1
-	return round(base * (wide * wide) / (norm * norm))
+	var/capped = round(base * (wide * wide) / (norm * norm))
+	area_cap_values["[base]"] = capped
+	return capped
+
+// The caps the tile loop compares against. One call per scan, not one per tile.
+/obj/item/organ/eyes/sumiari/proc/cache_area_caps()
+	cap_dew = area_cap(SUMIARI_DEW_SPOTS_MAX)
+	cap_petal = area_cap(SUMIARI_PETAL_SOURCES_MAX)
+	cap_sway = area_cap(SUMIARI_SWAY_MAX)
+	cap_fog = area_cap(SUMIARI_FOG_MAX)
+	cap_beam = area_cap(SUMIARI_BEAM_MAX)
+	cap_reflect = area_cap(SUMIARI_REFLECT_MAX)
+	cap_shrine = area_cap(SUMIARI_SHRINE_MAX)
+	cap_frost = area_cap(SUMIARI_FROST_MAX)
 
 // Picks up a changed client view (zoom) or pan. On a change every cached scan is dropped so the next ticks rebuild over the
 // new area, and see_in_dark follows the view so dark tiles at the new edge still show.
@@ -4995,9 +5065,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	// pieces were presented: a wedge left at HUD_LAYER sits under the redrawn world and the glow shows through.
 	sumiari_cone_over_relays(owner, TRUE)
 	spare_tick()
-	cliff_tick()
-	spill_tick()
-	fx_tick()
+	terrain_pass()
 	if(beauty_client && beauty_client != owner?.client)
 		clear_beauty()
 	if(!sumiari_night_beauty_enabled || sense_blocked() || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
@@ -5287,6 +5355,10 @@ GLOBAL_LIST_INIT(sumiari_fire_light_overrides, typecacheof(list(
 /proc/sumiari_spare_turf_open(turf/T)
 	return T?.outdoor_effect && T.outdoor_effect.state != SKY_BLOCKED
 
+// The scan and the bleed walk ask this of every tile, several times. Inlined for the rest of this file so that is a
+// couple of reads instead of a call. The proc above stays for anything included later.
+#define sumiari_spare_turf_open(T) ((T) && (T).outdoor_effect && (T).outdoor_effect.state != SKY_BLOCKED)
+
 // A tile the moon reaches: open sky, or a wall face beside open sky (the moon plate spills onto it). Without the wall
 // faces, a calm light against a cliff would carve a dark gray disc out of the moonlit rock.
 /proc/sumiari_spare_moonlit(turf/T)
@@ -5297,7 +5369,8 @@ GLOBAL_LIST_INIT(sumiari_fire_light_overrides, typecacheof(list(
 	if(!isclosedturf(T))
 		return FALSE
 	for(var/dir in GLOB.cardinals)
-		if(sumiari_spare_turf_open(get_step(T, dir)))
+		var/turf/beside = get_step(T, dir)
+		if(sumiari_spare_turf_open(beside))
 			return TRUE
 	return FALSE
 
@@ -5552,23 +5625,55 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	seal_images = null
 	seal_keys = null
 	cliff_client = null
+	cliff_drawn = null
+	cliff_center = null
 
 // The bleed walk around the owner (cliff square plus SPILL_RANGE + 1, so a spill from just off screen still walks in),
 // walked SPILL_RANGE steps (the moon bleed reads only its first BLEED_RANGE: sumiari_moon_bleed_value is 0 past it).
-// Built once per tile per tick and shared by cliff_tick and spill_tick.
+// Built once per place, held for BLEED_HOLD, and shared by cliff_tick and spill_tick. A one-tile step shifts the
+// square and classifies only the new edge. The hold expiring, a longer move, or a new view classifies the whole
+// square, so a door or shutter is picked up then.
 /obj/item/organ/eyes/sumiari/proc/bleed_map(turf/center)
-	var/key = "[center.x],[center.y],[center.z],[world.time],[view_extra]"
-	if(bleed_cache && bleed_cache[1] == key)
+	var/key = "[center.x],[center.y],[center.z],[view_extra]"
+	if(bleed_cache && bleed_cache[1] == key && world.time < bleed_cache_at + SUMIARI_BLEED_HOLD)
 		return bleed_cache
 	var/margin = reach(SUMIARI_CLIFF_RANGE) + SUMIARI_SPILL_RANGE + 1
 	var/gx0 = max(center.x - margin, 1)
 	var/gy0 = max(center.y - margin, 1)
 	var/gw = min(center.x + margin, world.maxx) - gx0 + 1
 	var/gh = min(center.y + margin, world.maxy) - gy0 + 1
-	var/list/grid = sumiari_moon_bleed_cells(gx0, gy0, gw, gh, center.z)
+	if(bleed_cache && bleed_raw && bleed_floor && bleed_z == center.z && world.time < bleed_cache_at + SUMIARI_BLEED_HOLD && bleed_cache[6] == gw && bleed_cache[7] == gh)
+		var/dx = gx0 - bleed_cache[4]
+		var/dy = gy0 - bleed_cache[5]
+		if(dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1)
+			if(!dx && !dy)
+				bleed_slid = TRUE
+				bleed_filled = 0
+				bleed_cache = list(key, bleed_cache[2], bleed_cache[3], gx0, gy0, gw, gh, bleed_cache[8], bleed_cache[9])
+				return bleed_cache
+			var/list/raw = sumiari_bleed_shift_grid(bleed_raw, dx, dy, gw, gh)
+			var/list/floor = sumiari_bleed_shift_floor(bleed_floor, dx, dy, gw, gh)
+			var/filled = sumiari_moon_bleed_fill(raw, floor, gx0, gy0, gw, gh, center.z)
+			return bleed_store(key, raw, floor, gx0, gy0, gw, gh, center.z, TRUE, filled)
+	var/list/fresh = new /list(gw * gh)
+	var/list/fresh_floor = list()
+	var/fresh_filled = sumiari_moon_bleed_fill(fresh, fresh_floor, gx0, gy0, gw, gh, center.z)
+	return bleed_store(key, fresh, fresh_floor, gx0, gy0, gw, gh, center.z, FALSE, fresh_filled)
+
+// Opens the raw classes, walks them, and stores the result. A slide keeps the previous timestamp so the hold still
+// expires and the next pass classifies every tile.
+/obj/item/organ/eyes/sumiari/proc/bleed_store(key, list/raw, list/floor, gx0, gy0, gw, gh, z, slid, filled)
+	var/list/grid = raw.Copy()
 	var/list/openings = sumiari_moon_bleed_openings(grid, gw, gh)
 	var/list/steps = sumiari_moon_bleed_grid(grid, gw, gh, SUMIARI_SPILL_RANGE)
-	var/list/shut = sumiari_moon_shut_openings(grid, gw, gh, sumiari_moon_shut_floor(grid, gx0, gy0, gw, gh, center.z))
+	var/list/shut = sumiari_moon_shut_openings(grid, gw, gh, floor)
+	bleed_raw = raw
+	bleed_floor = floor
+	bleed_z = z
+	bleed_slid = slid
+	bleed_filled = filled
+	if(!slid)
+		bleed_cache_at = world.time
 	bleed_cache = list(key, grid, steps, gx0, gy0, gw, gh, openings, shut)
 	return bleed_cache
 
@@ -5611,6 +5716,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	spill_images = null
 	spill_keys = null
 	spill_client = null
+	spill_center = null
+	spill_sample_set = FALSE
+	spill_full_at = -1
 	bleed_cache = null
 
 // Every step and every beauty tick, day or night, while the vision is on: roofed tiles around the owner whose vanilla
@@ -5633,11 +5741,47 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/gh = map[7]
 	var/list/shut = map[9]
 	var/indoors = owner_indoors(center)
+	var/datum/lighting_corner/sample_corner = center.corners ? center.corners[1] : null
+	var/sample = sample_corner ? sample_corner.sunFalloff : 0
+	var/sun_same = spill_sample_set && sample == spill_sample
+	var/due = world.time >= spill_full_at + (1 SECONDS)
+	var/turf/was = spill_center
+	// Standing still, with the sun where it was: the cuts already on screen stay until the next full pass.
+	if(was == center && sun_same && !due && indoors == spill_indoors)
+		return
+	// A one-tile step with the sun settled only visits tiles that just entered the square. The overlap already has
+	// the right cut, and the new edge of the bleed walk is too far out to change a corner still on screen. Once a
+	// second the whole square is done, so a sun that is easing still catches up.
+	var/rim = bleed_slid && sun_same && !due && spill_images && was && was.z == center.z && get_dist(was, center) == 1 && indoors == spill_indoors
+	if(!rim)
+		spill_full_at = world.time
+	spill_sample = sample
+	spill_sample_set = TRUE
+	spill_center = center
+	spill_indoors = indoors
 	var/list/keep = list()
 	var/cliff_reach = reach(SUMIARI_CLIFF_RANGE)
-	var/turf/low = locate(max(center.x - cliff_reach, 1), max(center.y - cliff_reach, 1), center.z)
-	var/turf/high = locate(min(center.x + cliff_reach, world.maxx), min(center.y + cliff_reach, world.maxy), center.z)
+	var/x0 = max(center.x - cliff_reach, 1)
+	var/y0 = max(center.y - cliff_reach, 1)
+	var/x1 = min(center.x + cliff_reach, world.maxx)
+	var/y1 = min(center.y + cliff_reach, world.maxy)
+	var/ox0 = 1
+	var/oy0 = 1
+	var/ox1 = 0
+	var/oy1 = 0
+	if(rim)
+		ox0 = max(was.x - cliff_reach, 1)
+		oy0 = max(was.y - cliff_reach, 1)
+		ox1 = min(was.x + cliff_reach, world.maxx)
+		oy1 = min(was.y + cliff_reach, world.maxy)
+		for(var/turf/old as anything in spill_images)
+			if(old && old.z == center.z && old.x >= ox0 && old.x <= ox1 && old.y >= oy0 && old.y <= oy1 && old.x >= x0 && old.x <= x1 && old.y >= y0 && old.y <= y1)
+				keep[old] = TRUE
+	var/turf/low = locate(x0, y0, center.z)
+	var/turf/high = locate(x1, y1, center.z)
 	for(var/turf/T as anything in block(low, high))
+		if(rim && T.x >= ox0 && T.x <= ox1 && T.y >= oy0 && T.y <= oy1)
+			continue
 		var/datum/outdoor_info/outdoor = T.outdoor_effect
 		if(!outdoor || !outdoor.sunlight_overlay)
 			continue
@@ -5695,15 +5839,19 @@ var/global/sumiari_moon_spares_enabled = TRUE
 // Can outdoor light reach this corner (dx, dy = +-1) of the 1-based grid cell (cx, cy)? Yes if any of the four cells
 // meeting there is unshut open sky or roofed floor the walk reached.
 /proc/sumiari_spill_corner_open(list/grid, list/steps, w, h, cx, cy, dx, dy)
-	for(var/list/offset in list(list(0, 0), list(dx, 0), list(0, dy), list(dx, dy)))
-		var/x = cx + offset[1]
-		var/y = cy + offset[2]
-		if(x < 1 || y < 1 || x > w || y > h)
-			continue
-		var/n = (y - 1) * w + x
-		if(grid[n] == SUMIARI_BLEED_SKY || (grid[n] == SUMIARI_BLEED_ROOF && steps[n]))
-			return TRUE
-	return FALSE
+	if(sumiari_spill_cell_open(grid, steps, w, h, cx, cy))
+		return TRUE
+	if(sumiari_spill_cell_open(grid, steps, w, h, cx + dx, cy))
+		return TRUE
+	if(sumiari_spill_cell_open(grid, steps, w, h, cx, cy + dy))
+		return TRUE
+	return sumiari_spill_cell_open(grid, steps, w, h, cx + dx, cy + dy)
+
+/proc/sumiari_spill_cell_open(list/grid, list/steps, w, h, x, y)
+	if(x < 1 || y < 1 || x > w || y > h)
+		return FALSE
+	var/n = (y - 1) * w + x
+	return grid[n] == SUMIARI_BLEED_SKY || (grid[n] == SUMIARI_BLEED_ROOF && steps[n])
 
 // The vanilla sun overlay (create_sunlight_overlay) with these corners, as this viewer's image over the turf's own:
 // same plane, a layer above the turf's underlays, opaque, so it replaces the vanilla value on that tile.
@@ -5732,8 +5880,6 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	cliff_client = owner.client
 	var/list/keep = list()
 	var/cliff_reach = reach(SUMIARI_CLIFF_RANGE)
-	var/turf/low = locate(max(center.x - cliff_reach, 1), max(center.y - cliff_reach, 1), center.z)
-	var/turf/high = locate(min(center.x + cliff_reach, world.maxx), min(center.y + cliff_reach, world.maxy), center.z)
 	var/list/map = bleed_map(center)
 	var/list/grid = map[2]
 	var/list/steps = map[3]
@@ -5742,8 +5888,38 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/gw = map[6]
 	var/gh = map[7]
 	var/list/shut = map[9]
+	// Same walk as the pass that drew these faces: the corners have not changed, so the images are still right.
+	if(map == cliff_drawn)
+		return
+	cliff_drawn = map
 	var/indoors = owner_indoors(center)
+	var/turf/was = cliff_center
+	// A one-tile step keeps every face still on screen. Only tiles that just entered are measured, and the seals
+	// already up stay: a new opening is out at the edge of the bleed walk, past this square.
+	var/rim = bleed_slid && cliff_images && was && was.z == center.z && get_dist(was, center) == 1 && indoors == cliff_indoors
+	cliff_center = center
+	cliff_indoors = indoors
+	var/x0 = max(center.x - cliff_reach, 1)
+	var/y0 = max(center.y - cliff_reach, 1)
+	var/x1 = min(center.x + cliff_reach, world.maxx)
+	var/y1 = min(center.y + cliff_reach, world.maxy)
+	var/ox0 = 1
+	var/oy0 = 1
+	var/ox1 = 0
+	var/oy1 = 0
+	if(rim)
+		ox0 = max(was.x - cliff_reach, 1)
+		oy0 = max(was.y - cliff_reach, 1)
+		ox1 = min(was.x + cliff_reach, world.maxx)
+		oy1 = min(was.y + cliff_reach, world.maxy)
+		for(var/turf/old as anything in cliff_images)
+			if(old && old.z == center.z && old.x >= ox0 && old.x <= ox1 && old.y >= oy0 && old.y <= oy1 && old.x >= x0 && old.x <= x1 && old.y >= y0 && old.y <= y1)
+				keep[old] = TRUE
+	var/turf/low = locate(x0, y0, center.z)
+	var/turf/high = locate(x1, y1, center.z)
 	for(var/turf/T as anything in block(low, high))
+		if(rim && T.x >= ox0 && T.x <= ox1 && T.y >= oy0 && T.y <= oy1)
+			continue
 		var/wall = isclosedturf(T) && !T.outdoor_effect
 		var/index = (T.y - gy0) * gw + (T.x - gx0) + 1
 		if(!wall && !(grid[index] == SUMIARI_BLEED_ROOF && steps[index]))
@@ -5776,7 +5952,13 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	// these eyes it is sealed at moon night: an overlay on the sun plane, over the vanilla one, keeping only the corners
 	// that touch real open sky, so the tile reads like a roofed opening and the cliff image above lights it like one.
 	var/list/sealed = list()
+	if(rim)
+		for(var/turf/T as anything in seal_images)
+			if(T && T.z == center.z && T.x >= x0 && T.x <= x1 && T.y >= y0 && T.y <= y1)
+				sealed[T] = TRUE
 	for(var/n in map[8])
+		if(rim)
+			break
 		var/cx = (n - 1) % gw + 1
 		var/cy = round((n - 1) / gw) + 1
 		var/turf/T = locate(gx0 + cx - 1, gy0 + cy - 1, center.z)
@@ -5810,14 +5992,18 @@ var/global/sumiari_moon_spares_enabled = TRUE
 
 // 1 if a corner of a sealed opening touches a real open-sky cell (unshut SKY), else 0.
 /proc/sumiari_moon_seal_corner(list/grid, w, h, cx, cy, dx, dy)
-	for(var/list/offset in list(list(dx, 0), list(0, dy), list(dx, dy)))
-		var/x = cx + offset[1]
-		var/y = cy + offset[2]
-		if(x < 1 || y < 1 || x > w || y > h)
-			continue
-		if(grid[(y - 1) * w + x] == SUMIARI_BLEED_SKY)
-			return 1
+	if(sumiari_seal_cell_sky(grid, w, h, cx + dx, cy))
+		return 1
+	if(sumiari_seal_cell_sky(grid, w, h, cx, cy + dy))
+		return 1
+	if(sumiari_seal_cell_sky(grid, w, h, cx + dx, cy + dy))
+		return 1
 	return 0
+
+/proc/sumiari_seal_cell_sky(list/grid, w, h, x, y)
+	if(x < 1 || y < 1 || x > w || y > h)
+		return FALSE
+	return grid[(y - 1) * w + x] == SUMIARI_BLEED_SKY
 
 // What the sky overlay would draw on an open tile with these corners (create_sunlight_overlay), on the cliff plane.
 /proc/sumiari_cliff_image(turf/T, fr, fg, fb, fa)
@@ -5842,6 +6028,8 @@ var/global/sumiari_moon_spares_enabled = TRUE
 /proc/sumiari_moon_shut(turf/T)
 	if(!T || isclosedturf(T) || T.opacity)
 		return TRUE
+	if(!length(T.contents))
+		return FALSE
 	for(var/atom/movable/thing as anything in T)
 		if(thing.opacity)
 			return TRUE
@@ -5857,18 +6045,69 @@ var/global/sumiari_moon_spares_enabled = TRUE
 // Cells for the bleed walk over a w x h block from (x0, y0), row-major from the south-west.
 /proc/sumiari_moon_bleed_cells(x0, y0, w, h, z)
 	var/list/grid = new /list(w * h)
+	sumiari_moon_bleed_fill(grid, list(), x0, y0, w, h, z)
+	return grid
+
+// Fills null cells of grid. A shut floor (a door, window, shutter or curtain, or shut sky) is appended to floor, so
+// the shut-opening pass does not have to locate those tiles again. Returns how many cells were classified.
+/proc/sumiari_moon_bleed_fill(list/grid, list/floor, x0, y0, w, h, z)
+	. = 0
 	var/index = 0
 	for(var/y in y0 to y0 + h - 1)
 		for(var/x in x0 to x0 + w - 1)
 			index++
+			if(!isnull(grid[index]))
+				continue
+			. = . + 1
 			var/turf/T = locate(x, y, z)
 			if(!T || isclosedturf(T))
 				grid[index] = SUMIARI_BLEED_WALL
 			else if(sumiari_spare_turf_open(T))
-				grid[index] = sumiari_moon_shut(T) ? SUMIARI_BLEED_SKY_SHUT : SUMIARI_BLEED_SKY
+				if(sumiari_moon_shut(T))
+					grid[index] = SUMIARI_BLEED_SKY_SHUT
+					floor += index
+				else
+					grid[index] = SUMIARI_BLEED_SKY
+			else if(sumiari_moon_shut(T))
+				grid[index] = SUMIARI_BLEED_WALL
+				floor += index
 			else
-				grid[index] = sumiari_moon_shut(T) ? SUMIARI_BLEED_WALL : SUMIARI_BLEED_ROOF
+				grid[index] = SUMIARI_BLEED_ROOF
+
+// The previous square shifted by (dx, dy) cells. Cells that slid in stay null so the fill classifies only those.
+/proc/sumiari_bleed_shift_grid(list/old_grid, dx, dy, w, h)
+	var/list/grid = new /list(w * h)
+	var/n = 0
+	for(var/y in 0 to h - 1)
+		for(var/x in 0 to w - 1)
+			n++
+			var/sx = x + dx
+			var/sy = y + dy
+			if(sx < 0 || sy < 0 || sx >= w || sy >= h)
+				continue
+			grid[n] = old_grid[sy * w + sx + 1]
 	return grid
+
+// Shut-floor indices moved with the square. An index that slid off the edge is dropped.
+/proc/sumiari_bleed_shift_floor(list/old_floor, dx, dy, w, h)
+	var/list/floor = list()
+	for(var/n in old_floor)
+		var/x = (n - 1) % w
+		var/y = round((n - 1) / w)
+		var/nx = x - dx
+		var/ny = y - dy
+		if(nx < 0 || ny < 0 || nx >= w || ny >= h)
+			continue
+		floor += ny * w + nx + 1
+	return floor
+
+/proc/sumiari_bleed_lists_match(list/a, list/b)
+	if(!islist(a) || !islist(b) || length(a) != length(b))
+		return FALSE
+	for(var/i in 1 to length(a))
+		if(a[i] != b[i])
+			return FALSE
+	return TRUE
 
 // A door, window or doorway in a wall line counts as the first roofed step whether or not the map put a roof over it.
 // Roofs are the turfs on the z above, and mappers roof a wall row differently on different sides of a building (often
@@ -5897,13 +6136,14 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			. += n
 
 // Steps in from open sky (1..BLEED_RANGE, 0 = not reached) for every ROOF cell: a cardinal walk from SKY cells
-// (not SKY_SHUT) through ROOF cells only.
+// (not SKY_SHUT) through ROOF cells only. The four directions are written out; a fresh offset list per cell was
+// most of the cost of this walk.
 /proc/sumiari_moon_bleed_grid(list/grid, w, h, range = SUMIARI_BLEED_RANGE)
 	var/list/steps = new /list(w * h)
 	var/list/frontier = list()
-	for(var/index in 1 to w * h)
+	var/cells = w * h
+	for(var/index in 1 to cells)
 		steps[index] = 0
-	for(var/index in 1 to w * h)
 		if(grid[index] == SUMIARI_BLEED_SKY)
 			frontier += index
 	for(var/step in 1 to range)
@@ -5911,19 +6151,30 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		for(var/index in frontier)
 			var/x = (index - 1) % w
 			var/y = round((index - 1) / w)
-			for(var/list/offset in list(list(1, 0), list(-1, 0), list(0, 1), list(0, -1)))
-				var/nx = x + offset[1]
-				var/ny = y + offset[2]
-				if(nx < 0 || ny < 0 || nx >= w || ny >= h)
-					continue
-				var/n = ny * w + nx + 1
-				if(grid[n] != SUMIARI_BLEED_ROOF || steps[n])
-					continue
-				steps[n] = step
-				next += n
-		frontier = next
-		if(!length(frontier))
+			var/n
+			if(x + 1 < w)
+				n = index + 1
+				if(grid[n] == SUMIARI_BLEED_ROOF && !steps[n])
+					steps[n] = step
+					next += n
+			if(x > 0)
+				n = index - 1
+				if(grid[n] == SUMIARI_BLEED_ROOF && !steps[n])
+					steps[n] = step
+					next += n
+			if(y + 1 < h)
+				n = index + w
+				if(grid[n] == SUMIARI_BLEED_ROOF && !steps[n])
+					steps[n] = step
+					next += n
+			if(y > 0)
+				n = index - w
+				if(grid[n] == SUMIARI_BLEED_ROOF && !steps[n])
+					steps[n] = step
+					next += n
+		if(!length(next))
 			break
+		frontier = next
 	return steps
 
 // Moon at a tile's middle d steps in.
@@ -5937,13 +6188,40 @@ var/global/sumiari_moon_spares_enabled = TRUE
 // its value, the rest 0.
 /proc/sumiari_moon_bleed_corner(list/grid, list/steps, w, h, cx, cy, dx, dy, wall)
 	. = 0
-	for(var/list/offset in list(list(0, 0), list(dx, 0), list(0, dy), list(dx, dy)))
-		var/x = cx + offset[1]
-		var/y = cy + offset[2]
-		if(x < 1 || y < 1 || x > w || y > h)
-			continue
-		var/n = (y - 1) * w + x
-		var/cell = grid[n]
+	var/x = cx
+	var/y = cy
+	var/n
+	var/cell
+	if(x >= 1 && y >= 1 && x <= w && y <= h)
+		n = (y - 1) * w + x
+		cell = grid[n]
+		if(cell == SUMIARI_BLEED_SKY || (wall && cell == SUMIARI_BLEED_SKY_SHUT))
+			return 1
+		if(cell == SUMIARI_BLEED_ROOF)
+			. = max(., sumiari_moon_bleed_value(steps[n]))
+	x = cx + dx
+	y = cy
+	if(x >= 1 && y >= 1 && x <= w && y <= h)
+		n = (y - 1) * w + x
+		cell = grid[n]
+		if(cell == SUMIARI_BLEED_SKY || (wall && cell == SUMIARI_BLEED_SKY_SHUT))
+			return 1
+		if(cell == SUMIARI_BLEED_ROOF)
+			. = max(., sumiari_moon_bleed_value(steps[n]))
+	x = cx
+	y = cy + dy
+	if(x >= 1 && y >= 1 && x <= w && y <= h)
+		n = (y - 1) * w + x
+		cell = grid[n]
+		if(cell == SUMIARI_BLEED_SKY || (wall && cell == SUMIARI_BLEED_SKY_SHUT))
+			return 1
+		if(cell == SUMIARI_BLEED_ROOF)
+			. = max(., sumiari_moon_bleed_value(steps[n]))
+	x = cx + dx
+	y = cy + dy
+	if(x >= 1 && y >= 1 && x <= w && y <= h)
+		n = (y - 1) * w + x
+		cell = grid[n]
 		if(cell == SUMIARI_BLEED_SKY || (wall && cell == SUMIARI_BLEED_SKY_SHUT))
 			return 1
 		if(cell == SUMIARI_BLEED_ROOF)
@@ -5999,6 +6277,30 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		|| sumiari_spill_corner_open(shut_spill_row, shut_spill_steps, 4, 1, 3, 1, -1, 1) || sumiari_spill_corner_open(shut_spill_row, shut_spill_steps, 4, 1, 4, 1, 1, 1) \
 		|| sumiari_spill_corner_open(sky_shut_spill_row, sky_shut_spill_steps, 3, 1, 2, 1, -1, 1))
 		bad += "spill walk long=[long_steps.Join(",")] shut=[shut_spill_steps.Join(",")]"
+	// A one-tile step shifts the bleed square. The shifted walk must match a fresh one, classify only the new edge,
+	// and its shut floors must match the locate pass.
+	var/turf/bleed_here = get_turf(eyes.owner)
+	var/turf/bleed_east = get_step(bleed_here, EAST)
+	if(bleed_here && bleed_east)
+		eyes.bleed_cache = null
+		eyes.bleed_raw = null
+		var/list/bleed_from = eyes.bleed_map(bleed_here)
+		var/bleed_full_n = eyes.bleed_filled
+		var/list/bleed_slid_map = eyes.bleed_map(bleed_east)
+		var/bleed_slide_n = eyes.bleed_filled
+		var/bleed_did_slide = eyes.bleed_slid
+		var/list/bleed_slid_grid = bleed_slid_map[2].Copy()
+		var/list/bleed_slid_steps = bleed_slid_map[3].Copy()
+		var/list/bleed_slid_shut = bleed_slid_map[9].Copy()
+		eyes.bleed_cache = null
+		eyes.bleed_raw = null
+		var/list/bleed_fresh = eyes.bleed_map(bleed_east)
+		var/list/bleed_located = sumiari_moon_shut_openings(bleed_fresh[2], bleed_fresh[6], bleed_fresh[7], sumiari_moon_shut_floor(bleed_fresh[2], bleed_fresh[4], bleed_fresh[5], bleed_fresh[6], bleed_fresh[7], bleed_east.z))
+		if(!sumiari_bleed_lists_match(bleed_slid_grid, bleed_fresh[2]) || !sumiari_bleed_lists_match(bleed_slid_steps, bleed_fresh[3]) || !sumiari_bleed_lists_match(bleed_slid_shut, bleed_fresh[9]) || !sumiari_bleed_lists_match(bleed_fresh[9], bleed_located) || (bleed_did_slide && bleed_slide_n > bleed_full_n / 2) || !bleed_from)
+			bad += "bleed slide filled=[bleed_slide_n]/[bleed_full_n] slid=[bleed_did_slide]"
+		eyes.bleed_cache = null
+		eyes.bleed_raw = null
+		eyes.bleed_floor = null
 	var/image/spill_cut = sumiari_spill_image(get_turf(eyes.owner), 1, 0, 0.5, 0)
 	var/list/spill_matrix = spill_cut.color
 	if(spill_cut.plane != SUNLIGHTING_PLANE || spill_cut.layer <= TURF_LAYER || spill_cut.blend_mode != BLEND_OVERLAY || !islist(spill_matrix) || spill_matrix[1] != 1 || spill_matrix[5] != 0 || spill_matrix[9] != 0.5 || spill_matrix[20] != 1)
@@ -6418,8 +6720,9 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	fx_age = 0
 	fx_client = null
 
-// Every beauty tick, and on every step (moved). Rescans the tiles around the owner when they changed tile or every
-// FX_RESCAN ticks; the per-tick live parts (dew, bloom) run on the timer only.
+// Every beauty tick, and on every step (moved). A one-tile step rescans only the new edge; the whole square is
+// scanned when there is nothing to slide from, the step is longer than one tile, or every FX_RESCAN ticks. The
+// per-tick live parts (dew, bloom) run on the timer only.
 /obj/item/organ/eyes/sumiari/proc/fx_tick(moved = FALSE)
 #if SUMIARI_MOON_FX
 	if(fx_client && fx_client != owner?.client)
@@ -6431,27 +6734,61 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	if(fx_center && fx_center.z != center.z)
 		clear_fx()
 	fx_client = owner.client
-	if(fx_center != center || ++fx_age >= SUMIARI_FX_RESCAN)
+	var/same = fx_center == center
+	var/one = fx_center && fx_center.z == center.z && get_dist(fx_center, center) == 1
+	var/full = !same && !one
+	if((same || one) && ++fx_age >= SUMIARI_FX_RESCAN)
+		full = TRUE
+	if(full || one)
+		var/turf/was = fx_center
 		fx_center = center
-		fx_age = 0
-		fx_scan(center)
+		if(full)
+			fx_age = 0
+			fx_scan(center)
+		else
+			fx_scan(center, was)
 	if(!moved)
 		fx_live(center)
 #endif
 
-/obj/item/organ/eyes/sumiari/proc/fx_scan(turf/center)
+// was is the previous center when this is a one-tile slide; null scans the whole square.
+/obj/item/organ/eyes/sumiari/proc/fx_scan(turf/center, turf/was)
 	var/list/wanted = list()
 	// Shade: turf -> TRUE/FALSE, whether it blocks the moon, filled as the shade asks.
 	var/list/blockers = list()
-	fx_dew_spots = null
 	fx_scan_counters_reset()
-	fx_petal_sources = null
+	cache_area_caps()
 	if(isnull(fx_bloom))
 		fx_bloom = sumiari_bloom_level()
 	var/fx_reach = reach(SUMIARI_FX_RANGE)
-	var/turf/low = locate(max(center.x - fx_reach, 1), max(center.y - fx_reach, 1), center.z)
-	var/turf/high = locate(min(center.x + fx_reach, world.maxx), min(center.y + fx_reach, world.maxy), center.z)
+	var/x0 = max(center.x - fx_reach, 1)
+	var/y0 = max(center.y - fx_reach, 1)
+	var/x1 = min(center.x + fx_reach, world.maxx)
+	var/y1 = min(center.y + fx_reach, world.maxy)
+	var/ix0 = 0
+	var/iy0 = 0
+	var/ix1 = -1
+	var/iy1 = -1
+	if(was && was.z == center.z)
+		// Strictly inside the old square and still inside the new one: its neighbors were already scanned, and it
+		// did not gain one. The old edge is left out so a shade or a beam picks up the tile that just entered.
+		ix0 = max(max(was.x - fx_reach, 1) + 1, x0)
+		iy0 = max(max(was.y - fx_reach, 1) + 1, y0)
+		ix1 = min(min(was.x + fx_reach, world.maxx) - 1, x1)
+		iy1 = min(min(was.y + fx_reach, world.maxy) - 1, y1)
+	if(ix0 <= ix1 && iy0 <= iy1)
+		fx_dew_spots = fx_spots_inside(fx_dew_spots, center.z, ix0, iy0, ix1, iy1)
+		fx_petal_sources = fx_spots_inside(fx_petal_sources, center.z, ix0, iy0, ix1, iy1)
+		fx_scan_keep(wanted, center.z, ix0, iy0, ix1, iy1)
+		fx_scan_seed(wanted)
+	else
+		fx_dew_spots = null
+		fx_petal_sources = null
+	var/turf/low = locate(x0, y0, center.z)
+	var/turf/high = locate(x1, y1, center.z)
 	for(var/turf/T as anything in block(low, high))
+		if(T.x >= ix0 && T.x <= ix1 && T.y >= iy0 && T.y <= iy1)
+			continue
 #if SUMIARI_MOON_WATER
 		if(sumiari_moon_water_enabled)
 			fx_water(T, wanted)
@@ -6461,7 +6798,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 			fx_rims(T, wanted)
 #endif
 #if SUMIARI_MOON_DEW
-		if(sumiari_moon_dew_enabled && LAZYLEN(fx_dew_spots) < area_cap(SUMIARI_DEW_SPOTS_MAX) && is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && sumiari_spare_turf_open(T))
+		if(sumiari_moon_dew_enabled && LAZYLEN(fx_dew_spots) < cap_dew && is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && sumiari_spare_turf_open(T))
 			LAZYADD(fx_dew_spots, T)
 #endif
 #if SUMIARI_MOON_BLOOM
@@ -6493,7 +6830,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 			fx_shrine(T, wanted)
 #endif
 #if SUMIARI_MOON_PETALS
-		if(sumiari_moon_petals_enabled && LAZYLEN(fx_petal_sources) < area_cap(SUMIARI_PETAL_SOURCES_MAX))
+		if(sumiari_moon_petals_enabled && LAZYLEN(fx_petal_sources) < cap_petal)
 			fx_petal_source(T)
 #endif
 #if SUMIARI_MOON_FROST
@@ -6517,6 +6854,45 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	fx_shrine_count = 0
 	fx_frost_count = 0
 	fx_frost_step = round(sumiari_frost_level() * 20)
+
+// Spots still strictly inside the kept square. The edge is scanned again and adds its own.
+/obj/item/organ/eyes/sumiari/proc/fx_spots_inside(list/spots, z, x0, y0, x1, y1)
+	if(!spots)
+		return null
+	var/list/kept = list()
+	for(var/turf/spot as anything in spots)
+		if(spot && spot.z == z && spot.x >= x0 && spot.x <= x1 && spot.y >= y0 && spot.y <= y1)
+			kept += spot
+	return kept
+
+// Images whose tile is still inside the kept square stay up. Everything else is rebuilt or dropped by the scan.
+/obj/item/organ/eyes/sumiari/proc/fx_scan_keep(list/wanted, z, x0, y0, x1, y1)
+	for(var/key in fx_images)
+		var/image/picture = fx_images[key]
+		var/turf/at = picture?.loc
+		if(!isturf(at))
+			at = get_turf(picture)
+		if(!at || at.z != z || at.x < x0 || at.x > x1 || at.y < y0 || at.y > y1)
+			continue
+		wanted[key] = TRUE
+
+// Caps count the images a slide kept, so the new edge cannot add a second full set on top of them.
+/obj/item/organ/eyes/sumiari/proc/fx_scan_seed(list/wanted)
+	for(var/key in wanted)
+		switch(copytext(key, 1, 2))
+			if("s")
+				if(!findtext(key, ","))
+					fx_sway_count++
+			if("f")
+				fx_fog_count++
+			if("m")
+				fx_beam_count++
+			if("q")
+				fx_reflect_count++
+			if("n")
+				fx_shrine_count++
+			if("i")
+				fx_frost_count++
 
 // Effects that change between scans. Each effect adds its own part here.
 /obj/item/organ/eyes/sumiari/proc/fx_live(turf/center)
@@ -6942,12 +7318,35 @@ var/global/list/sumiari_fx_movable_fires = list()
 /proc/sumiari_fx_lamp_lit(turf/T)
 	return sumiari_fx_lamp_share(T) <= 0
 
+// Filled for one terrain pass and cleared at the end. Null means this call is on its own and must not reuse a
+// previous answer (a test flips fire-blind and reads the share in the same tick).
+var/global/list/sumiari_tree_cache
+var/global/list/sumiari_lamp_cache
+
+/proc/sumiari_scan_cache_begin()
+	sumiari_tree_cache = list()
+	sumiari_lamp_cache = list()
+
+/proc/sumiari_scan_cache_end()
+	sumiari_tree_cache = null
+	sumiari_lamp_cache = null
+
 // How much of the moon effects a tile keeps by its lamp light: 1 (none) .. 0 (fire-lit), a smoothstep in tenths.
 /proc/sumiari_fx_lamp_share(turf/T)
 	if(!T)
 		return 0
+	// While fire does not dim the moon look, every tile keeps the full share. The corner walk would all return 0.
+	if(sumiari_moon_fire_blind)
+		return 1
+	if(sumiari_lamp_cache)
+		var/cached = sumiari_lamp_cache[T]
+		if(!isnull(cached))
+			return cached
 	var/t = clamp((sumiari_fx_lamp_light(T) - SUMIARI_FX_LAMP_LIT) / (SUMIARI_FX_LAMP_FULL - SUMIARI_FX_LAMP_LIT), 0, 1)
-	return round(1 - t * t * (3 - 2 * t), 0.1)
+	var/share = round(1 - t * t * (3 - 2 * t), 0.1)
+	if(sumiari_lamp_cache)
+		sumiari_lamp_cache[T] = share
+	return share
 
 // 6) Swaying, shimmering plants.
 GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
@@ -6960,11 +7359,13 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 )))
 
 /obj/item/organ/eyes/sumiari/proc/fx_sway(turf/T, list/wanted)
+	if(isclosedturf(T) || !sumiari_spare_turf_open(T))
+		return
 	var/share = sumiari_fx_lamp_share(T)
-	if(isclosedturf(T) || !sumiari_spare_turf_open(T) || share <= 0)
+	if(share <= 0)
 		return
 	for(var/obj/plant in T)
-		if(fx_sway_count >= area_cap(SUMIARI_SWAY_MAX))
+		if(fx_sway_count >= cap_sway)
 			return
 		if(!is_type_in_typecache(plant, GLOB.sumiari_sway_types) || plant.invisibility || !plant.icon_state)
 			continue
@@ -7080,7 +7481,7 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 	return wet >= 2
 
 /obj/item/organ/eyes/sumiari/proc/fx_fog(turf/T, list/wanted)
-	if(fx_fog_count >= area_cap(SUMIARI_FOG_MAX) || ((T.x * 7 + T.y * 5) % 3) || !sumiari_spare_turf_open(T) || !sumiari_fog_ground(T))
+	if(fx_fog_count >= cap_fog || ((T.x * 7 + T.y * 5) % 3) || !sumiari_spare_turf_open(T) || !sumiari_fog_ground(T))
 		return
 	fx_fog_count++
 	var/key = "f[T.x],[T.y]"
@@ -7143,13 +7544,21 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 /proc/sumiari_turf_has_tree(turf/T)
 	if(!T)
 		return FALSE
+	if(sumiari_tree_cache)
+		var/cached = sumiari_tree_cache[T]
+		if(!isnull(cached))
+			return cached
+	var/found = FALSE
 	for(var/obj/structure/flora/tree in T)
 		if(istype(tree, /obj/structure/flora/roguetree) || istype(tree, /obj/structure/flora/newtree) || istype(tree, /obj/structure/flora/tree) || istype(tree, /obj/structure/flora/sakura) || istype(tree, /obj/structure/flora/maple))
-			return TRUE
-	return FALSE
+			found = TRUE
+			break
+	if(sumiari_tree_cache)
+		sumiari_tree_cache[T] = found
+	return found
 
 /obj/item/organ/eyes/sumiari/proc/fx_beam(turf/T, list/wanted)
-	if(fx_beam_count >= area_cap(SUMIARI_BEAM_MAX) || ((T.x * 2 + T.y) % 3) || isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_turf_has_tree(T))
+	if(fx_beam_count >= cap_beam || ((T.x * 2 + T.y) % 3) || isclosedturf(T) || !sumiari_spare_turf_open(T) || sumiari_turf_has_tree(T))
 		return
 	var/share = sumiari_fx_lamp_share(T)
 	if(share <= 0)
@@ -7215,7 +7624,7 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 )))
 
 /obj/item/organ/eyes/sumiari/proc/fx_reflect(turf/T, list/wanted)
-	if(fx_reflect_count >= area_cap(SUMIARI_REFLECT_MAX) || !istype(T, /turf/open/water) || !sumiari_spare_turf_open(T))
+	if(fx_reflect_count >= cap_reflect || !istype(T, /turf/open/water) || !sumiari_spare_turf_open(T))
 		return
 	var/turf/north = get_step(T, NORTH)
 	if(!north)
@@ -7227,7 +7636,7 @@ GLOBAL_LIST_INIT(sumiari_reflect_types, typecacheof(list(
 		if(is_type_in_typecache(thing, GLOB.sumiari_reflect_types) && !thing.invisibility && thing.icon_state)
 			casters += thing
 	for(var/atom/caster as anything in casters)
-		if(fx_reflect_count >= area_cap(SUMIARI_REFLECT_MAX))
+		if(fx_reflect_count >= cap_reflect)
 			return
 		fx_reflect_count++
 		var/key = "q[T.x],[T.y],[REF(caster)]"
@@ -7244,7 +7653,7 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 
 /obj/item/organ/eyes/sumiari/proc/fx_shrine(turf/T, list/wanted)
 	var/share = sumiari_fx_lamp_share(T)
-	if(fx_shrine_count >= area_cap(SUMIARI_SHRINE_MAX) || !sumiari_spare_turf_open(T) || share <= 0)
+	if(fx_shrine_count >= cap_shrine || !sumiari_spare_turf_open(T) || share <= 0)
 		return
 	for(var/obj/holy in T)
 		if(!is_type_in_typecache(holy, GLOB.sumiari_shrine_types) || holy.invisibility || !holy.icon_state)
@@ -7651,7 +8060,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	return ramp * ramp * (3 - 2 * ramp)
 
 /obj/item/organ/eyes/sumiari/proc/fx_frost(turf/T, list/wanted)
-	if(fx_frost_count >= area_cap(SUMIARI_FROST_MAX) || isclosedturf(T) || !sumiari_spare_turf_open(T))
+	if(fx_frost_count >= cap_frost || isclosedturf(T) || !sumiari_spare_turf_open(T))
 		return
 	var/level = fx_frost_step / 20
 #if SUMIARI_FROST_PAVING
@@ -7672,7 +8081,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	var/sway_share = sumiari_fx_lamp_share(T)
 	var/sways = sumiari_moon_sway_enabled && SUMIARI_MOON_SWAY && sway_share > 0
 	for(var/obj/thing in T)
-		if(fx_frost_count >= area_cap(SUMIARI_FROST_MAX))
+		if(fx_frost_count >= cap_frost)
 			return
 		if(!is_type_in_typecache(thing, GLOB.sumiari_frost_types) || is_type_in_typecache(thing, GLOB.sumiari_frost_skip) || thing.invisibility || !thing.icon_state)
 			continue
@@ -8067,3 +8476,5 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 		return FALSE
 	log_world("SUMIARI TEST moon fx PASS water=[SUMIARI_MOON_WATER] rims=[SUMIARI_MOON_RIMS] sprite_rims=[SUMIARI_MOON_SPRITE_RIMS] dew=[SUMIARI_MOON_DEW] bloom=[SUMIARI_MOON_BLOOM] shade=[SUMIARI_MOON_SHADE] intensity=[sumiari_moon_intensity] pulse=[sumiari_moon_pulse] sway=[SUMIARI_MOON_SWAY] fog=[SUMIARI_MOON_FOG] beams=[SUMIARI_MOON_BEAMS] reflect=[SUMIARI_MOON_REFLECT] petals=[SUMIARI_MOON_PETALS] frost=[SUMIARI_MOON_FROST] frost_paving=[SUMIARI_FROST_PAVING] steps=[SUMIARI_MOON_STEPS] spirits=[SUMIARI_MOON_SPIRITS]")
 	return TRUE
+
+#undef sumiari_spare_turf_open
