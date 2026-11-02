@@ -346,12 +346,15 @@
 // times the dusk/dawn fade, feathered), so an effect is exactly as strong as the moon look on its own pixel: none in
 // caves, indoors, by day or by a fire, and a soft fade at every edge. Nothing here is screen-sized: no overlay, wash
 // or grain. The tiles are scanned only near the owner (FX_RANGE). A one-tile step rescans the new edge (the old edge
-// gained a neighbor); the whole square is scanned every FX_RESCAN ticks, and an image is only rebuilt when its
-// tile's state changes. Each effect has a define (compiled in or not) and a
+// gained a neighbor) and the whole square every FX_RESCAN steps. Standing still does not: the square is scanned when
+// the spared lights change, the effect look is retuned, or every FX_STAND_RESCAN beauty ticks, so a felled tree still
+// shows up and a quiet night does not walk the square every few ticks. An image is only rebuilt when its tile's
+// state changes. Each effect has a define (compiled in or not) and a
 // global (View Variables can flip it live); sumiari_night_beauty_enabled turns all of them off at once.
 #define SUMIARI_MOON_FX 1
 #define SUMIARI_FX_RANGE 8
 #define SUMIARI_FX_RESCAN 5
+#define SUMIARI_FX_STAND_RESCAN 15
 #define SUMIARI_FX_FLOOR_PLANE -61
 #define SUMIARI_FX_LOWER_PLANE -62
 #define SUMIARI_FX_GAME_PLANE -63
@@ -849,6 +852,8 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/spill_sample = 0
 	var/spill_sample_set = FALSE
 	var/spill_full_at = -1
+	// The bleed list the spill cuts were drawn from. At night an unchanged list means the cuts are still right.
+	var/list/spill_map
 	// world.time of the last cliff/spill/effect pass, and the turf it was built at, so a move and a beauty tick in the
 	// same tick do the walk once.
 	var/terrain_at = -1
@@ -870,6 +875,10 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/client/spare_client
 	var/list/spare_images
 	var/list/spare_keys
+	// Last emitter set spare_tick walked, and when. Unchanged lights skip the tile walk until BLEED_HOLD is up.
+	var/turf/spare_center
+	var/list/spare_sig
+	var/spare_held = 0
 	// Moonlit wall faces: the client the images were shown to, turf -> image, turf -> corner key.
 	var/client/cliff_client
 	var/list/cliff_images
@@ -883,6 +892,9 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/list/fx_states
 	var/turf/fx_center
 	var/fx_age = 0
+	// Look and spared-light signature the last full effect scan was built at. Standing still rescans when either changes.
+	var/fx_look_held
+	var/list/fx_spare_sig
 	// Dew: grass tiles found by the last scan, and the live sparkles (image -> expiry).
 	var/list/fx_dew_spots
 	var/list/fx_dew_images
@@ -2528,6 +2540,7 @@ var/global/sumiari_moon_fade_timer
 		return
 	found += source
 
+// A light can be lit in the same tick it is searched (a torch just put in a hand), so this is not cached.
 /proc/sumiari_emitters_near(turf/T, span = 6)
 	var/list/found = list()
 	var/list/seen = list()
@@ -2547,6 +2560,26 @@ var/global/sumiari_moon_fade_timer
 		for(var/atom/movable/nested in source.contents)
 			sumiari_note_emitter(found, seen, nested)
 	return found
+
+// Emitter identity for spare_tick: where each light is and how it is burning. Order does not matter.
+/proc/sumiari_emitter_sig(list/sources)
+	var/list/sig = list()
+	for(var/atom/source as anything in sources)
+		if(!istype(source))
+			continue
+		var/turf/at = get_turf(source)
+		sig["[REF(source)]"] = "[at ? at.x : 0],[at ? at.y : 0],[at ? at.z : 0],[source.light_on],[source.light_power],[source.light_outer_range]"
+	return sig
+
+/proc/sumiari_sig_same(list/a, list/b)
+	if(a == b)
+		return TRUE
+	if(!islist(a) || !islist(b) || length(a) != length(b))
+		return FALSE
+	for(var/key in a)
+		if(a[key] != b[key])
+			return FALSE
+	return TRUE
 
 /proc/sumiari_movable_from(list/emitters, turf/T)
 	var/total = 0
@@ -2757,8 +2790,95 @@ var/global/sumiari_run_headless_test = FALSE
 	sumiari_probe_gnoll()
 	sumiari_test_without_client = TRUE
 	sumiari_runtime_sweep()
+	sumiari_profile_night()
 	sumiari_test_without_client = FALSE
 	log_world("SUMIARI TEST DONE")
+
+// Night cost with nobody logged in. Times the walks the beauty tick does while standing, and checks the skips:
+// a held bleed map is the same list, and an unchanged
+// stand does not scan effects again before FX_STAND_RESCAN ticks. Image sending needs a client, so it is not timed.
+/proc/sumiari_profile_night()
+	var/turf/spot
+	var/spot_margin = -1
+	for(var/turf/open in world)
+		if(!sumiari_spare_turf_open(open))
+			continue
+		var/margin = min(open.x - 1, open.y - 1, world.maxx - open.x, world.maxy - open.y)
+		if(margin > spot_margin)
+			spot = open
+			spot_margin = margin
+			if(margin >= 30)
+				break
+	if(!spot)
+		log_world("SUMIARI PROFILE FAIL no open turf")
+		return
+	var/old_offset = SSticker.gametime_offset
+	SSticker.gametime_offset = (SSticker.gametime_offset + (2 HOURS) - sumiari_station_time() + 864000) % 864000
+	var/mob/living/carbon/human/body = new(spot)
+	body.set_species(/datum/species/human/northern)
+	var/obj/item/organ/eyes/sumiari/eyes = body.getorganslot(ORGAN_SLOT_EYES)
+	if(!istype(eyes) || !sumiari_is_moon_night())
+		log_world("SUMIARI PROFILE FAIL eyes=[eyes?.type] night=[sumiari_is_moon_night()] time=[sumiari_station_time()]")
+		SSticker.gametime_offset = old_offset
+		qdel(body)
+		return
+	eyes.vision_on = TRUE
+	eyes.wash_mode = SUMIARI_WASH_LIVE
+	var/list/lights_a = sumiari_emitters_near(spot, 11)
+	var/t0 = TICK_USAGE_REAL
+	var/list/lights_b = sumiari_emitters_near(spot, 11)
+	var/lights_hit = TICK_USAGE_TO_MS(t0)
+	t0 = TICK_USAGE_REAL
+	var/list/lights_c = sumiari_emitters_near(spot, 6)
+	var/lights_other = TICK_USAGE_TO_MS(t0)
+	var/lights_other_n = length(lights_c)
+	eyes.bleed_cache = null
+	eyes.bleed_raw = null
+	eyes.bleed_floor = null
+	t0 = TICK_USAGE_REAL
+	var/list/bleed_cold = eyes.bleed_map(spot)
+	var/bleed_cold_ms = TICK_USAGE_TO_MS(t0)
+	var/bleed_cold_n = eyes.bleed_filled
+	t0 = TICK_USAGE_REAL
+	var/list/bleed_held = eyes.bleed_map(spot)
+	var/bleed_held_ms = TICK_USAGE_TO_MS(t0)
+	sleep(SUMIARI_BLEED_HOLD + 1)
+	t0 = TICK_USAGE_REAL
+	var/list/bleed_again = eyes.bleed_map(spot)
+	var/bleed_again_ms = TICK_USAGE_TO_MS(t0)
+	var/bleed_again_n = eyes.bleed_filled
+	var/turf/step = locate(spot.x + 1, spot.y, spot.z)
+	t0 = TICK_USAGE_REAL
+	var/list/bleed_step = eyes.bleed_map(step)
+	var/bleed_step_ms = TICK_USAGE_TO_MS(t0)
+	var/bleed_step_n = eyes.bleed_filled
+	var/bleed_step_slid = eyes.bleed_slid
+	t0 = TICK_USAGE_REAL
+	eyes.fx_scan(spot)
+	var/fx_cold_ms = TICK_USAGE_TO_MS(t0)
+	var/fx_cold_n = length(eyes.fx_images)
+	t0 = TICK_USAGE_REAL
+	eyes.fx_scan(spot)
+	var/fx_again_ms = TICK_USAGE_TO_MS(t0)
+	var/stand_scans = 0
+	eyes.fx_center = spot
+	eyes.fx_age = 0
+	eyes.fx_look_held = sumiari_fx_look_key()
+	eyes.spare_sig = list()
+	eyes.fx_spare_sig = eyes.spare_sig
+	for(var/tick in 1 to SUMIARI_FX_STAND_RESCAN - 1)
+		if(eyes.fx_stand_due())
+			stand_scans++
+			eyes.fx_age = 0
+	if(length(lights_a) != length(lights_b))
+		log_world("SUMIARI PROFILE FAIL light search count changed [length(lights_a)] vs [length(lights_b)]")
+	if(bleed_held != bleed_cold)
+		log_world("SUMIARI PROFILE FAIL held bleed map was rebuilt")
+	if(stand_scans)
+		log_world("SUMIARI PROFILE FAIL standing scanned effects [stand_scans] times before [SUMIARI_FX_STAND_RESCAN] ticks")
+	log_world("SUMIARI PROFILE spot=[spot.x],[spot.y],[spot.z] margin=[spot_margin] night=[sumiari_is_moon_night()] lights=[length(lights_a)] light_reuse_ms=[lights_hit] light_other_ms=[lights_other] lights_other_n=[lights_other_n] bleed_cold_ms=[bleed_cold_ms] filled=[bleed_cold_n] bleed_held_ms=[bleed_held_ms] bleed_again_ms=[bleed_again_ms] again_same=[bleed_again == bleed_cold] again_filled=[bleed_again_n] step_ms=[bleed_step_ms] step_slid=[bleed_step_slid] step_filled=[bleed_step_n]/[bleed_cold_n] step_same=[bleed_step == bleed_again] fx_cold_ms=[fx_cold_ms] fx_images=[fx_cold_n] fx_again_ms=[fx_again_ms] stand_scans=[stand_scans]")
+	SSticker.gametime_offset = old_offset
+	qdel(body)
 
 // The GPU mask is this formula. Below the glare threshold, blending full color with the no-glare ink
 // by that amount matches the saturation matrix, so half light is still half color.
@@ -5402,6 +5522,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	spare_images = null
 	spare_keys = null
 	spare_client = null
+	spare_center = null
+	spare_sig = null
+	spare_held = 0
 
 // Once per beauty tick: which open-sky tiles around each nearby non-fire light no flame reaches.
 /obj/item/organ/eyes/sumiari/proc/spare_tick()
@@ -5413,6 +5536,10 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		clear_spare()
 		return
 	spare_client = owner.client
+	// Same tile, and the last walk is still inside the bleed hold: the lights have not been given time to change.
+	// spare_held is the clock. An empty signature (no lights nearby) is still a finished walk.
+	if(spare_center == center && spare_held && world.time < spare_held + SUMIARI_BLEED_HOLD)
+		return
 	var/list/fires = list()
 	var/list/calm = list()
 	for(var/atom/source as anything in sumiari_emitters_near(center, reach(SUMIARI_SPARE_SCAN)))
@@ -5447,6 +5574,14 @@ var/global/sumiari_moon_spares_enabled = TRUE
 				calm_below += source
 		if(length(fires_below) && !sumiari_moon_fire_blind)
 			fire_lit_below = sumiari_spare_fire_tiles(fires_below)
+	// Same lights as the images already up: nothing to retile. The signature is what the effect scan watches.
+	var/list/sig = sumiari_emitter_sig(fires + calm + calm_below)
+	spare_center = center
+	if(sumiari_sig_same(spare_sig, sig))
+		spare_held = world.time
+		return
+	spare_sig = sig
+	spare_held = world.time
 	calm = sumiari_nearest_first(calm + calm_below, center, SUMIARI_SPARE_MAX_EMITTERS)
 	var/list/keep = list()
 	for(var/atom/source as anything in calm)
@@ -5672,6 +5807,15 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	bleed_z = z
 	bleed_slid = slid
 	bleed_filled = filled
+	// Standing still on the same square: a door that did not move leaves the old list object in place, so the cliff
+	// faces and the night spill cuts (both keyed on that object) are not drawn again. The timestamp still refreshes.
+	if(!slid && bleed_cache && bleed_cache[1] == key && sumiari_bleed_lists_match(bleed_cache[2], grid) && sumiari_bleed_lists_match(bleed_cache[3], steps) && sumiari_bleed_lists_match(bleed_cache[9], shut))
+		bleed_cache_at = world.time
+		bleed_raw = raw
+		bleed_floor = floor
+		bleed_slid = FALSE
+		bleed_filled = filled
+		return bleed_cache
 	if(!slid)
 		bleed_cache_at = world.time
 	bleed_cache = list(key, grid, steps, gx0, gy0, gw, gh, openings, shut)
@@ -5681,22 +5825,10 @@ var/global/sumiari_moon_spares_enabled = TRUE
 /obj/item/organ/eyes/sumiari/proc/owner_indoors(turf/center)
 	return !sumiari_spare_turf_open(center)
 
-// Grid cells that block (WALL or SKY_SHUT) but stand on a floor turf: a shut door, window, shutter or curtain.
-// Returns their indices.
-/proc/sumiari_moon_shut_floor(list/grid, x0, y0, w, h, z)
-	. = list()
-	for(var/n in 1 to w * h)
-		var/cell = grid[n]
-		if(cell != SUMIARI_BLEED_WALL && cell != SUMIARI_BLEED_SKY_SHUT)
-			continue
-		var/turf/T = locate(x0 + (n - 1) % w, y0 + round((n - 1) / w), z)
-		if(T && !isclosedturf(T))
-			. += n
-
 // Shut openings in a wall line: a shut floor cell with a blocking cell (WALL or SKY_SHUT) on both sides along one
 // axis, so a double door (two shut cells side by side) counts too. Seen from indoors such a tile takes no outside
 // light at all, day or night: no corner of it is lit, so nothing shows at or around a closed door.
-// floor holds the indices from sumiari_moon_shut_floor. Returns a list as long as the grid, TRUE at each shut opening.
+// floor is the shut-floor indices collected while classifying. Returns a list as long as the grid, TRUE at each shut opening.
 /proc/sumiari_moon_shut_openings(list/grid, w, h, list/floor)
 	. = new /list(w * h)
 	for(var/n in floor)
@@ -5719,6 +5851,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	spill_center = null
 	spill_sample_set = FALSE
 	spill_full_at = -1
+	spill_map = null
 	bleed_cache = null
 
 // Every step and every beauty tick, day or night, while the vision is on: roofed tiles around the owner whose vanilla
@@ -5747,7 +5880,8 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/due = world.time >= spill_full_at + (1 SECONDS)
 	var/turf/was = spill_center
 	// Standing still, with the sun where it was: the cuts already on screen stay until the next full pass.
-	if(was == center && sun_same && !due && indoors == spill_indoors)
+	// At night the sun is not easing, so an unchanged bleed list means those cuts are still the right ones.
+	if(was == center && sun_same && indoors == spill_indoors && ((sumiari_is_moon_night() && map == spill_map) || !due))
 		return
 	// A one-tile step with the sun settled only visits tiles that just entered the square. The overlap already has
 	// the right cut, and the new edge of the bleed walk is too far out to change a corner still on screen. Once a
@@ -5759,6 +5893,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	spill_sample_set = TRUE
 	spill_center = center
 	spill_indoors = indoors
+	spill_map = map
 	var/list/keep = list()
 	var/cliff_reach = reach(SUMIARI_CLIFF_RANGE)
 	var/x0 = max(center.x - cliff_reach, 1)
@@ -6042,12 +6177,6 @@ var/global/sumiari_moon_spares_enabled = TRUE
 				return TRUE
 	return FALSE
 
-// Cells for the bleed walk over a w x h block from (x0, y0), row-major from the south-west.
-/proc/sumiari_moon_bleed_cells(x0, y0, w, h, z)
-	var/list/grid = new /list(w * h)
-	sumiari_moon_bleed_fill(grid, list(), x0, y0, w, h, z)
-	return grid
-
 // Fills null cells of grid. A shut floor (a door, window, shutter or curtain, or shut sky) is appended to floor, so
 // the shut-opening pass does not have to locate those tiles again. Returns how many cells were classified.
 /proc/sumiari_moon_bleed_fill(list/grid, list/floor, x0, y0, w, h, z)
@@ -6177,11 +6306,11 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		frontier = next
 	return steps
 
-// Moon at a tile's middle d steps in.
+// Moon at a tile's middle d steps in. Written once and expanded at each corner cell; the proc is what the sweep calls.
+#define SUMIARI_BLEED_AT(step) ((step) <= 0 ? 0 : round(clamp(1 - ((step) - 0.5) / SUMIARI_BLEED_RANGE, 0, 1), 0.01))
+
 /proc/sumiari_moon_bleed_value(step)
-	if(step <= 0)
-		return 0
-	return round(clamp(1 - (step - 0.5) / SUMIARI_BLEED_RANGE, 0, 1), 0.01)
+	return SUMIARI_BLEED_AT(step)
 
 // One corner (dx, dy = +-1) of the 1-based grid cell (cx, cy): the brightest of the four cells meeting there. Open sky
 // counts 1 (for floor only unshut sky, so a closed door under the sky does not light the tile behind it), bled floor
@@ -6197,8 +6326,8 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		cell = grid[n]
 		if(cell == SUMIARI_BLEED_SKY || (wall && cell == SUMIARI_BLEED_SKY_SHUT))
 			return 1
-		if(cell == SUMIARI_BLEED_ROOF)
-			. = max(., sumiari_moon_bleed_value(steps[n]))
+		if(cell == SUMIARI_BLEED_ROOF && steps[n] > 0)
+			. = max(., SUMIARI_BLEED_AT(steps[n]))
 	x = cx + dx
 	y = cy
 	if(x >= 1 && y >= 1 && x <= w && y <= h)
@@ -6206,8 +6335,8 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		cell = grid[n]
 		if(cell == SUMIARI_BLEED_SKY || (wall && cell == SUMIARI_BLEED_SKY_SHUT))
 			return 1
-		if(cell == SUMIARI_BLEED_ROOF)
-			. = max(., sumiari_moon_bleed_value(steps[n]))
+		if(cell == SUMIARI_BLEED_ROOF && steps[n] > 0)
+			. = max(., SUMIARI_BLEED_AT(steps[n]))
 	x = cx
 	y = cy + dy
 	if(x >= 1 && y >= 1 && x <= w && y <= h)
@@ -6215,8 +6344,8 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		cell = grid[n]
 		if(cell == SUMIARI_BLEED_SKY || (wall && cell == SUMIARI_BLEED_SKY_SHUT))
 			return 1
-		if(cell == SUMIARI_BLEED_ROOF)
-			. = max(., sumiari_moon_bleed_value(steps[n]))
+		if(cell == SUMIARI_BLEED_ROOF && steps[n] > 0)
+			. = max(., SUMIARI_BLEED_AT(steps[n]))
 	x = cx + dx
 	y = cy + dy
 	if(x >= 1 && y >= 1 && x <= w && y <= h)
@@ -6224,8 +6353,10 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		cell = grid[n]
 		if(cell == SUMIARI_BLEED_SKY || (wall && cell == SUMIARI_BLEED_SKY_SHUT))
 			return 1
-		if(cell == SUMIARI_BLEED_ROOF)
-			. = max(., sumiari_moon_bleed_value(steps[n]))
+		if(cell == SUMIARI_BLEED_ROOF && steps[n] > 0)
+			. = max(., SUMIARI_BLEED_AT(steps[n]))
+
+#undef SUMIARI_BLEED_AT
 
 // Classification, plumbing, and one live spare image.
 /proc/sumiari_sweep_nonfire(obj/item/organ/eyes/sumiari/eyes)
@@ -6277,8 +6408,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		|| sumiari_spill_corner_open(shut_spill_row, shut_spill_steps, 4, 1, 3, 1, -1, 1) || sumiari_spill_corner_open(shut_spill_row, shut_spill_steps, 4, 1, 4, 1, 1, 1) \
 		|| sumiari_spill_corner_open(sky_shut_spill_row, sky_shut_spill_steps, 3, 1, 2, 1, -1, 1))
 		bad += "spill walk long=[long_steps.Join(",")] shut=[shut_spill_steps.Join(",")]"
-	// A one-tile step shifts the bleed square. The shifted walk must match a fresh one, classify only the new edge,
-	// and its shut floors must match the locate pass.
+	// A one-tile step shifts the bleed square. The shifted walk must match a fresh one and classify only the new edge.
 	var/turf/bleed_here = get_turf(eyes.owner)
 	var/turf/bleed_east = get_step(bleed_here, EAST)
 	if(bleed_here && bleed_east)
@@ -6295,8 +6425,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		eyes.bleed_cache = null
 		eyes.bleed_raw = null
 		var/list/bleed_fresh = eyes.bleed_map(bleed_east)
-		var/list/bleed_located = sumiari_moon_shut_openings(bleed_fresh[2], bleed_fresh[6], bleed_fresh[7], sumiari_moon_shut_floor(bleed_fresh[2], bleed_fresh[4], bleed_fresh[5], bleed_fresh[6], bleed_fresh[7], bleed_east.z))
-		if(!sumiari_bleed_lists_match(bleed_slid_grid, bleed_fresh[2]) || !sumiari_bleed_lists_match(bleed_slid_steps, bleed_fresh[3]) || !sumiari_bleed_lists_match(bleed_slid_shut, bleed_fresh[9]) || !sumiari_bleed_lists_match(bleed_fresh[9], bleed_located) || (bleed_did_slide && bleed_slide_n > bleed_full_n / 2) || !bleed_from)
+		if(!sumiari_bleed_lists_match(bleed_slid_grid, bleed_fresh[2]) || !sumiari_bleed_lists_match(bleed_slid_steps, bleed_fresh[3]) || !sumiari_bleed_lists_match(bleed_slid_shut, bleed_fresh[9]) || (bleed_did_slide && bleed_slide_n > bleed_full_n / 2) || !bleed_from)
 			bad += "bleed slide filled=[bleed_slide_n]/[bleed_full_n] slid=[bleed_did_slide]"
 		eyes.bleed_cache = null
 		eyes.bleed_raw = null
@@ -6718,10 +6847,18 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	fx_states = null
 	fx_center = null
 	fx_age = 0
+	fx_look_held = null
+	fx_spare_sig = null
 	fx_client = null
 
+// TRUE when a standing viewer should scan the whole square. The age increment runs only when the lights and the look
+// are unchanged, so a retune does not wait out the stand timer.
+/obj/item/organ/eyes/sumiari/proc/fx_stand_due()
+	return fx_look_held != sumiari_fx_look_key() || !sumiari_sig_same(spare_sig, fx_spare_sig) || ++fx_age >= SUMIARI_FX_STAND_RESCAN
+
 // Every beauty tick, and on every step (moved). A one-tile step rescans only the new edge; the whole square is
-// scanned when there is nothing to slide from, the step is longer than one tile, or every FX_RESCAN ticks. The
+// scanned when there is nothing to slide from, the step is longer than one tile, or every FX_RESCAN steps. Standing
+// still scans the square when the spared lights or the effect look change, or every FX_STAND_RESCAN ticks. The
 // per-tick live parts (dew, bloom) run on the timer only.
 /obj/item/organ/eyes/sumiari/proc/fx_tick(moved = FALSE)
 #if SUMIARI_MOON_FX
@@ -6737,13 +6874,18 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	var/same = fx_center == center
 	var/one = fx_center && fx_center.z == center.z && get_dist(fx_center, center) == 1
 	var/full = !same && !one
-	if((same || one) && ++fx_age >= SUMIARI_FX_RESCAN)
+	if(one)
+		if(++fx_age >= SUMIARI_FX_RESCAN)
+			full = TRUE
+	else if(same && fx_stand_due())
 		full = TRUE
 	if(full || one)
 		var/turf/was = fx_center
 		fx_center = center
 		if(full)
 			fx_age = 0
+			fx_look_held = sumiari_fx_look_key()
+			fx_spare_sig = spare_sig
 			fx_scan(center)
 		else
 			fx_scan(center, was)
@@ -6944,11 +7086,12 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	return fx_states?[key] != "[state]|[sumiari_fx_look_key()]"
 
 /obj/item/organ/eyes/sumiari/proc/fx_put(key, state, image/picture)
-	if(fx_images?[key])
+	if(fx_images?[key] && fx_client)
 		fx_client.images -= fx_images[key]
 	LAZYSET(fx_images, key, picture)
 	LAZYSET(fx_states, key, "[state]|[sumiari_fx_look_key()]")
-	fx_client.images += picture
+	if(fx_client)
+		fx_client.images += picture
 
 /obj/item/organ/eyes/sumiari/proc/fx_drop(key)
 	fx_client?.images -= fx_images?[key]
@@ -7243,7 +7386,7 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 	if(!isnull(blockers[T]))
 		return blockers[T]
 	var/blocks = isclosedturf(T)
-	if(!blocks)
+	if(!blocks && length(T.contents))
 		for(var/obj/thing in T)
 			if(is_type_in_typecache(thing, GLOB.sumiari_shade_types))
 				blocks = TRUE
