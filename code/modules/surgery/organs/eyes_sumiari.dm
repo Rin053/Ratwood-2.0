@@ -5951,7 +5951,7 @@ var/global/sumiari_moon_spares_enabled = TRUE
 				return bleed_cache
 			var/list/raw = sumiari_bleed_shift_grid(bleed_raw, dx, dy, gw, gh)
 			var/list/floor = sumiari_bleed_shift_floor(bleed_floor, dx, dy, gw, gh)
-			var/filled = sumiari_moon_bleed_fill(raw, floor, gx0, gy0, gw, gh, center.z)
+			var/filled = sumiari_moon_bleed_fill(raw, floor, gx0, gy0, gw, gh, center.z, dx, dy)
 			return bleed_store(key, raw, floor, gx0, gy0, gw, gh, center.z, TRUE, filled)
 	var/list/fresh = new /list(gw * gh)
 	var/list/fresh_floor = list()
@@ -6383,12 +6383,24 @@ GLOBAL_LIST_INIT(sumiari_shut_types, typecacheof(list(/obj/structure/curtain, /o
 
 // Fills null cells of grid. A shut floor (a door, window, shutter or curtain, or shut sky) is appended to floor, so
 // the shut-opening pass does not have to locate those tiles again. Returns how many cells were classified.
-/proc/sumiari_moon_bleed_fill(list/grid, list/floor, x0, y0, w, h, z)
+// After a one-cell slide (dx, dy) only the column and the row that slid in are null, so only those are visited.
+/proc/sumiari_moon_bleed_fill(list/grid, list/floor, x0, y0, w, h, z, dx = 0, dy = 0)
+	if(!dx && !dy)
+		return sumiari_moon_bleed_fill_rect(grid, floor, x0, y0, w, x0, y0, x0 + w - 1, y0 + h - 1, z)
 	. = 0
-	var/index = 0
-	// block() runs x fastest, then y: the grid's own order. The square always lies inside the map.
-	for(var/turf/T as anything in block(locate(x0, y0, z), locate(x0 + w - 1, y0 + h - 1, z)))
-		index++
+	if(dx)
+		var/column = dx > 0 ? x0 + w - 1 : x0
+		. += sumiari_moon_bleed_fill_rect(grid, floor, x0, y0, w, column, y0, column, y0 + h - 1, z)
+	if(dy)
+		var/row = dy > 0 ? y0 + h - 1 : y0
+		. += sumiari_moon_bleed_fill_rect(grid, floor, x0, y0, w, x0, row, x0 + w - 1, row, z)
+
+// sumiari_moon_bleed_fill over the tiles (rx0, ry0) to (rx1, ry1) of the square whose corner is (x0, y0), w wide.
+// The square always lies inside the map.
+/proc/sumiari_moon_bleed_fill_rect(list/grid, list/floor, x0, y0, w, rx0, ry0, rx1, ry1, z)
+	. = 0
+	for(var/turf/T as anything in block(locate(rx0, ry0, z), locate(rx1, ry1, z)))
+		var/index = (T.y - y0) * w + (T.x - x0) + 1
 		if(!isnull(grid[index]))
 			continue
 		. = . + 1
@@ -6413,16 +6425,23 @@ GLOBAL_LIST_INIT(sumiari_shut_types, typecacheof(list(/obj/structure/curtain, /o
 
 // The previous square shifted by (dx, dy) cells. Cells that slid in stay null so the fill classifies only those.
 /proc/sumiari_bleed_shift_grid(list/old_grid, dx, dy, w, h)
-	var/list/grid = new /list(w * h)
-	var/n = 0
+	var/list/grid = list()
+	var/list/empty_row = new /list(w)
+	// Row by row, as slices of the old rows.
 	for(var/y in 0 to h - 1)
-		for(var/x in 0 to w - 1)
-			n++
-			var/sx = x + dx
-			var/sy = y + dy
-			if(sx < 0 || sy < 0 || sx >= w || sy >= h)
-				continue
-			grid[n] = old_grid[sy * w + sx + 1]
+		var/sy = y + dy
+		if(sy < 0 || sy >= h)
+			grid += empty_row
+			continue
+		var/start = sy * w + 1
+		if(dx > 0)
+			grid += old_grid.Copy(start + dx, start + w)
+			grid.len += dx
+		else if(dx < 0)
+			grid.len -= dx
+			grid += old_grid.Copy(start, start + w + dx)
+		else
+			grid += old_grid.Copy(start, start + w)
 	return grid
 
 // Shut-floor indices moved with the square. An index that slid off the edge is dropped.
