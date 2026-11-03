@@ -1423,9 +1423,6 @@ var/global/turf/sumiari_test_dark_turf
 	var/gain = 1
 #if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
 	gain = SUMIARI_MOON_LUMINANCE
-	// A multiply plane (the open-space backdrop) scales what is under it, so it keeps the full look: the stack under
-	// it is already at 1 / gain and the gain comes back once at the end.
-	var/list/multiply_look = world_look
 	world_look = sumiari_scale_matrix_rgb(world_look, 1 / gain)
 	mob_look = sumiari_scale_matrix_rgb(mob_look, 1 / gain)
 	var/list/knee_look = sumiari_moon_knee_matrix(world_look, gain)
@@ -1437,12 +1434,14 @@ var/global/turf/sumiari_test_dark_turf
 			continue
 #if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
 		var/list/plane_look = (plane == GAME_PLANE_FOV_HIDDEN) ? mob_look : world_look
-		if(source.blend_mode == BLEND_MULTIPLY)
-			plane_look = multiply_look
-		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = plane_look)
 #else
-		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = (plane == GAME_PLANE_FOV_HIDDEN) ? mob_look : world_look)
+		var/list/plane_look = (plane == GAME_PLANE_FOV_HIDDEN) ? mob_look : world_look
 #endif
+		// A multiply plane (the open-space backdrop) is vanilla's dim of the level below: it scales the stack under it
+		// by its own gray, ungraded, so that level sits exactly as dark against this one as in normal vision.
+		if(source.blend_mode == BLEND_MULTIPLY)
+			plane_look = null
+		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = plane_look)
 #if SUMIARI_MOON_FX
 		// The moon effects that belong with this plane, right on top of it, in their own colors (no moon grade).
 		var/fx_plane = sumiari_fx_plane_for(plane)
