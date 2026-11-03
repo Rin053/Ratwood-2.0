@@ -5289,8 +5289,9 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 		glint_age = 0
 		glint_spots = list()
 		// view(), not range(): the glints draw above the walls, so only tiles the owner sees may glint.
-		for(var/turf/T in seen_turfs(reach(SUMIARI_GLINT_RADIUS), center))
-			if(sumiari_glint_spot(T))
+		for(var/turf/seen in seen_turfs(reach(SUMIARI_GLINT_RADIUS), center))
+			var/turf/T = istransparentturf(seen) ? sumiari_seen_floor(seen) : seen
+			if(T && sumiari_glint_spot(T))
 				glint_spots += T
 				if(length(glint_spots) >= area_cap(SUMIARI_GLINT_SPOT_MAX))
 					break
@@ -5333,12 +5334,22 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 /obj/item/organ/eyes/sumiari/proc/beauty_flora(turf/center)
 	var/list/near = list()
 	var/list/seen
-	for(var/obj/plant as anything in sumiari_night_flora["[center.z]"])
-		if(QDELETED(plant) || get_dist(plant, center) > reach(SUMIARI_FLORA_RANGE) || !sumiari_flora_shows(plant))
+	// Plants on the level below count where an open tile in view shows them.
+	var/list/plants = sumiari_night_flora["[center.z]"]
+	var/list/lower = sumiari_night_flora["[center.z - 1]"]
+	if(length(lower))
+		plants = plants ? plants + lower : lower
+	for(var/obj/plant as anything in plants)
+		if(QDELETED(plant) || max(abs(plant.x - center.x), abs(plant.y - center.y)) > reach(SUMIARI_FLORA_RANGE) || !sumiari_flora_shows(plant))
 			continue
+		var/turf/spot = get_turf(plant)
+		if(spot.z != center.z)
+			if(!sumiari_open_up_to(spot, center.z))
+				continue
+			spot = locate(spot.x, spot.y, center.z)
 		// The halos draw above the walls, so a plant behind one shows none. One view() per tick, only when needed.
 		seen ||= seen_turfs(reach(SUMIARI_FLORA_RANGE), center)
-		if(!(plant in seen))
+		if(!(spot == get_turf(plant) ? (plant in seen) : (spot in seen)))
 			continue
 		near[plant] = TRUE
 		if(length(near) >= area_cap(SUMIARI_FLORA_MAX))
@@ -5936,6 +5947,15 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		below = GET_TURF_BELOW(below)
 		guard++
 	return below
+
+// TRUE when T is on level z, or a viewer on z sees T through open tiles straight above it.
+/proc/sumiari_open_up_to(turf/T, z)
+	var/turf/above = T
+	while(above && above.z < z)
+		above = GET_TURF_ABOVE(above)
+		if(!istransparentturf(above))
+			return FALSE
+	return above?.z == z
 
 /proc/sumiari_hole_appear_key(mutable_appearance/underlay)
 	if(!underlay)
@@ -7126,61 +7146,70 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	for(var/turf/T as anything in block(low, high))
 		if(T.x >= ix0 && T.x <= ix1 && T.y >= iy0 && T.y <= iy1)
 			continue
-#if SUMIARI_MOON_WATER
-		if(sumiari_moon_water_enabled)
-			fx_water(T, wanted)
-#endif
-#if SUMIARI_MOON_RIMS
-		if(sumiari_moon_rims_enabled)
-			fx_rims(T, wanted)
-#endif
-#if SUMIARI_MOON_DEW
-		if(sumiari_moon_dew_enabled && LAZYLEN(fx_dew_spots) < cap_dew && is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && sumiari_spare_turf_open(T))
-			LAZYADD(fx_dew_spots, T)
-#endif
-#if SUMIARI_MOON_BLOOM
-		if(sumiari_moon_bloom_enabled)
-			fx_blooms(T, wanted)
-#endif
-#if SUMIARI_MOON_SHADE
-		if(sumiari_moon_shade_enabled)
-			fx_shade(T, wanted, blockers)
-#endif
-#if SUMIARI_MOON_SWAY
-		if(sumiari_moon_sway_enabled)
-			fx_sway(T, wanted)
-#endif
-#if SUMIARI_MOON_FOG
-		if(sumiari_moon_fog_enabled)
-			fx_fog(T, wanted)
-#endif
-#if SUMIARI_MOON_BEAMS
-		if(sumiari_moon_beams_enabled)
-			fx_beam(T, wanted)
-#endif
-#if SUMIARI_MOON_REFLECT
-		if(sumiari_moon_reflect_enabled)
-			fx_reflect(T, wanted)
-#endif
-#if SUMIARI_MOON_SHRINE
-		if(sumiari_moon_shrine_enabled)
-			fx_shrine(T, wanted)
-#endif
-#if SUMIARI_MOON_PETALS
-		if(sumiari_moon_petals_enabled && LAZYLEN(fx_petal_sources) < cap_petal)
-			fx_petal_source(T)
-#endif
-#if SUMIARI_MOON_FROST
-		if(sumiari_moon_frost_enabled && fx_frost_step)
-			fx_frost(T, wanted)
-#endif
-#if SUMIARI_MOON_STEPS
-		if(sumiari_moon_steps_enabled)
-			fx_step_decals(T, wanted)
-#endif
+		fx_scan_tile(T, wanted, blockers)
+		// An open tile shows the floor below: that floor takes its effects too, drawn on its own tile.
+		if(istransparentturf(T))
+			var/turf/floor = sumiari_seen_floor(T)
+			if(floor)
+				fx_scan_tile(floor, wanted, blockers)
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
+
+// Every effect a scanned tile can take.
+/obj/item/organ/eyes/sumiari/proc/fx_scan_tile(turf/T, list/wanted, list/blockers)
+#if SUMIARI_MOON_WATER
+	if(sumiari_moon_water_enabled)
+		fx_water(T, wanted)
+#endif
+#if SUMIARI_MOON_RIMS
+	if(sumiari_moon_rims_enabled)
+		fx_rims(T, wanted)
+#endif
+#if SUMIARI_MOON_DEW
+	if(sumiari_moon_dew_enabled && LAZYLEN(fx_dew_spots) < cap_dew && is_type_in_typecache(T, GLOB.sumiari_dew_turfs) && sumiari_spare_turf_open(T))
+		LAZYADD(fx_dew_spots, T)
+#endif
+#if SUMIARI_MOON_BLOOM
+	if(sumiari_moon_bloom_enabled)
+		fx_blooms(T, wanted)
+#endif
+#if SUMIARI_MOON_SHADE
+	if(sumiari_moon_shade_enabled)
+		fx_shade(T, wanted, blockers)
+#endif
+#if SUMIARI_MOON_SWAY
+	if(sumiari_moon_sway_enabled)
+		fx_sway(T, wanted)
+#endif
+#if SUMIARI_MOON_FOG
+	if(sumiari_moon_fog_enabled)
+		fx_fog(T, wanted)
+#endif
+#if SUMIARI_MOON_BEAMS
+	if(sumiari_moon_beams_enabled)
+		fx_beam(T, wanted)
+#endif
+#if SUMIARI_MOON_REFLECT
+	if(sumiari_moon_reflect_enabled)
+		fx_reflect(T, wanted)
+#endif
+#if SUMIARI_MOON_SHRINE
+	if(sumiari_moon_shrine_enabled)
+		fx_shrine(T, wanted)
+#endif
+#if SUMIARI_MOON_PETALS
+	if(sumiari_moon_petals_enabled && LAZYLEN(fx_petal_sources) < cap_petal)
+		fx_petal_source(T)
+#endif
+#if SUMIARI_MOON_FROST
+	if(sumiari_moon_frost_enabled && fx_frost_step)
+		fx_frost(T, wanted)
+#endif
+#if SUMIARI_MOON_STEPS
+	if(sumiari_moon_steps_enabled)
+		fx_step_decals(T, wanted)
+#endif
 
 // Per-scan caps start again from zero.
 /obj/item/organ/eyes/sumiari/proc/fx_scan_counters_reset()
@@ -7198,7 +7227,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 		return null
 	var/list/kept = list()
 	for(var/turf/spot as anything in spots)
-		if(spot && spot.z == z && spot.x >= x0 && spot.x <= x1 && spot.y >= y0 && spot.y <= y1)
+		if(spot && spot.z <= z && spot.x >= x0 && spot.x <= x1 && spot.y >= y0 && spot.y <= y1)
 			kept += spot
 	return kept
 
@@ -7209,7 +7238,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 		var/turf/at = picture?.loc
 		if(!isturf(at))
 			at = get_turf(picture)
-		if(!at || at.z != z || at.x < x0 || at.x > x1 || at.y < y0 || at.y > y1)
+		if(!at || at.z > z || at.x < x0 || at.x > x1 || at.y < y0 || at.y > y1)
 			continue
 		wanted[key] = TRUE
 
@@ -7265,7 +7294,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 #if SUMIARI_MOON_STEPS
 // A walker set foot on T: a fading print, if T is in this viewer's moonlit effect area.
 /obj/item/organ/eyes/sumiari/proc/fx_footstep(turf/T, mob/living/walker)
-	if(!fx_client || !fx_center || fx_center.z != T.z || get_dist(fx_center, T) > reach(SUMIARI_FX_RANGE))
+	if(!fx_client || !fx_center || !sumiari_open_up_to(T, fx_center.z) || get_dist(fx_center, T) > reach(SUMIARI_FX_RANGE))
 		return
 	fx_steps = sumiari_fx_expire(fx_client, fx_steps)
 	if(LAZYLEN(fx_steps) >= area_cap(SUMIARI_STEPS_MAX))
