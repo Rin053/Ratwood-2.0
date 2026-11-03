@@ -342,6 +342,7 @@
 	if(current_holder)
 		add_dynamic_lumi(current_holder)
 	overlay_lighting_flags |= LIGHTING_ON
+	GLOB.sumiari_lit_movables[parent] = TRUE
 	get_new_turfs()
 
 
@@ -352,6 +353,7 @@
 	if(current_holder)
 		remove_dynamic_lumi(current_holder)
 	overlay_lighting_flags &= ~LIGHTING_ON
+	GLOB.sumiari_lit_movables -= parent
 	clean_old_turfs()
 
 

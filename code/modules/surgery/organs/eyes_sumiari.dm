@@ -2482,8 +2482,27 @@ var/global/sumiari_moon_fade_timer
 	.["movable"] = movable
 	.["text"] = "sumiari light: [T.x],[T.y],[T.z] area=[T.loc] intensity=[intensity] gain=[SUMIARI_LIGHT_GAIN] source_marked=[sumiari_turf_has_marked_source(T) ? 1 : 0] lamps=[lamps] raw_peak=[raw_peak] sun=[sun] sun_mask=[sun_mask] sun_strength=[sun_strength] sun_state=[sky] sun_overlay_lum=[sun_overlay_lum] falloff=[falloff] movable=[movable] dyn=[dynamic] get_lumcount=[T.get_lumcount()] luminosity=[T.luminosity] overlay=[overlay] softly_lit=[T.is_softly_lit() ? 1 : 0] sun_color=[SSoutdoor_effects?.picked_color] tod=[SSoutdoor_effects?.current_step_datum?.type] corners=\[[corner_text.Join(" | ")]\] lights=\[[nearby.Join(" ; ")]\] hands=\[[hands]\]"
 
+// The intensity of sumiari_light_sample without its report: corner lamps and sun through the mask gain, plus held
+// and dropped lights.
 /proc/sumiari_turf_intensity(turf/T)
-	return sumiari_light_sample(T)["intensity"]
+	if(!isturf(T))
+		return 0
+	if(!T.has_dynamic_lighting())
+		return 1
+	return CLAMP01((sumiari_turf_lamp_sun(T) * SUMIARI_LIGHT_GAIN) + sumiari_movable_from(sumiari_movable_lights_near(T, 6), T))
+
+// Corner lamp light (as drawn) plus the sun on this tile.
+/proc/sumiari_turf_lamp_sun(turf/T)
+	var/lamps = 0
+	var/counted = 0
+	for(var/datum/lighting_corner/corner as anything in T.corners)
+		if(!corner)
+			continue
+		counted++
+		lamps += sumiari_corner_drawn(corner)
+	if(counted)
+		lamps /= counted
+	return lamps + sumiari_sun_mask(T) * sumiari_sun_strength()
 
 /proc/sumiari_sun_strength()
 	if(!SSoutdoor_effects)
@@ -2533,35 +2552,55 @@ var/global/sumiari_moon_fade_timer
 		falloff *= sumiari_hex_strength(source.light_color)
 	return falloff
 
-// An emitter counts once. Hands, a mob's contents, and one level inside an object (a torch in a sconce).
-// range() only sees atoms sitting on the turf, so a torch in a hand would be missing from lights= and from intensity.
-/proc/sumiari_note_emitter(list/found, list/seen, atom/source)
-	if(!source || seen[source])
-		return
-	seen[source] = TRUE
-	if(source.light_power <= 0 || source.light_outer_range <= 0 || !source.light_on)
-		return
-	found += source
+// Every lit movable light (an overlay lighting parent), kept by the component's turn_on and turn_off.
+GLOBAL_LIST_EMPTY(sumiari_lit_movables)
 
+#define SUMIARI_EMITS(thing) ((thing).light_on && (thing).light_power > 0 && (thing).light_outer_range > 0)
+
+// The lit movable lights within span of T on its level: on a turf, or carried by a mob or object standing on one.
+/proc/sumiari_movable_lights_near(turf/T, span = 6)
+	var/list/found = list()
+	if(!isturf(T))
+		return found
+	for(var/atom/movable/source as anything in GLOB.sumiari_lit_movables)
+		if(QDELETED(source) || !SUMIARI_EMITS(source))
+			continue
+		var/atom/where = source.loc
+		if(!isturf(where))
+			if(!(ismob(where) || isobj(where)) || !isturf(where.loc))
+				continue
+			where = where.loc
+		if(where.z == T.z && abs(where.x - T.x) <= span && abs(where.y - T.y) <= span)
+			found += source
+	return found
+
+// Every lit light within span of T, in range() order. An emitter counts once: hands, a mob's contents (held items
+// first), and one level inside an object (a torch in a sconce). range() only sees atoms sitting on the turf, so a
+// torch in a hand would be missing from lights= and from intensity.
 // A light can be lit in the same tick it is searched (a torch just put in a hand), so this is not cached.
 /proc/sumiari_emitters_near(turf/T, span = 6)
 	var/list/found = list()
-	var/list/seen = list()
 	if(!isturf(T))
 		return found
 	for(var/atom/movable/source in range(span, T))
-		sumiari_note_emitter(found, seen, source)
+		if(SUMIARI_EMITS(source))
+			found += source
 		if(ismob(source))
 			var/mob/holder = source
-			for(var/obj/item/held in holder.held_items)
-				sumiari_note_emitter(found, seen, held)
-			for(var/atom/movable/carried in holder.contents)
-				sumiari_note_emitter(found, seen, carried)
+			var/list/held
+			for(var/obj/item/item in holder.held_items)
+				if(SUMIARI_EMITS(item))
+					found += item
+					LAZYSET(held, item, TRUE)
+			for(var/atom/movable/carried as anything in holder.contents)
+				if(SUMIARI_EMITS(carried) && !held?[carried])
+					found += carried
 			continue
 		if(!isobj(source))
 			continue
-		for(var/atom/movable/nested in source.contents)
-			sumiari_note_emitter(found, seen, nested)
+		for(var/atom/movable/nested as anything in source.contents)
+			if(SUMIARI_EMITS(nested))
+				found += nested
 	return found
 
 // Emitter identity for spare_tick: where each light is and how it is burning. Order does not matter.
@@ -4812,14 +4851,16 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 
 // The tile wash without the light of anything a mob holds, wears or carries.
 /proc/sumiari_sense_hidden_wash(turf/T)
-	var/list/sample = sumiari_light_sample(T)
 	if(!isturf(T) || !T.has_dynamic_lighting())
-		return sample["intensity"]
+		return sumiari_turf_intensity(T)
+	var/movable = 0
 	var/carried = 0
-	for(var/atom/movable/source as anything in sumiari_emitters_near(T, 6))
+	for(var/atom/movable/source as anything in sumiari_movable_lights_near(T, 6))
+		var/falloff = sumiari_point_falloff(T, source)
+		movable += falloff
 		if(sumiari_light_carrier(source))
-			carried += sumiari_point_falloff(T, source)
-	return CLAMP01(((sample["lamps"] + sample["sun"]) * SUMIARI_LIGHT_GAIN) + max(sample["movable"] - carried, 0))
+			carried += falloff
+	return CLAMP01((sumiari_turf_lamp_sun(T) * SUMIARI_LIGHT_GAIN) + max(movable - carried, 0))
 
 // The mob holding, wearing or carrying (a level or two down, a lantern in a bag) this light, or null.
 /proc/sumiari_light_carrier(atom/movable/source)
