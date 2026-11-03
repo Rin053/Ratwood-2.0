@@ -7665,11 +7665,18 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 	return blocks
 
 // Shade at the grid corner between tiles (x - 1, x) and (y - 1, y): north pair weighted, all four for contact.
+// sumiari_shade_blocks, reading the scan's cache before making the call.
+#define SUMIARI_SHADE_BLOCKS(T, blockers) (isnull(blockers[T]) ? sumiari_shade_blocks(T, blockers) : blockers[T])
+
 /proc/sumiari_shade_corner(x, y, z, list/blockers)
-	var/north_west = sumiari_shade_blocks(locate(x - 1, y, z), blockers)
-	var/north_east = sumiari_shade_blocks(locate(x, y, z), blockers)
-	var/south_west = sumiari_shade_blocks(locate(x - 1, y - 1, z), blockers)
-	var/south_east = sumiari_shade_blocks(locate(x, y - 1, z), blockers)
+	var/turf/T = locate(x - 1, y, z)
+	var/north_west = T ? SUMIARI_SHADE_BLOCKS(T, blockers) : FALSE
+	T = locate(x, y, z)
+	var/north_east = T ? SUMIARI_SHADE_BLOCKS(T, blockers) : FALSE
+	T = locate(x - 1, y - 1, z)
+	var/south_west = T ? SUMIARI_SHADE_BLOCKS(T, blockers) : FALSE
+	T = locate(x, y - 1, z)
+	var/south_east = T ? SUMIARI_SHADE_BLOCKS(T, blockers) : FALSE
 	var/shade = SUMIARI_SHADE_NORTH * (north_west + north_east) / 2 + SUMIARI_SHADE_CONTACT * (north_west + north_east + south_west + south_east) / 4
 	return round(min(shade, 1), 0.05)
 
@@ -7786,16 +7793,20 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 )))
 
 /obj/item/organ/eyes/sumiari/proc/fx_sway(turf/T, list/wanted)
-	if(isclosedturf(T) || !sumiari_spare_turf_open(T))
+	if(isclosedturf(T) || !sumiari_spare_turf_open(T) || !length(T.contents))
 		return
-	var/share = sumiari_fx_lamp_share(T)
-	if(share <= 0)
-		return
+	// The lamp share is read once, at the first plant that can sway.
+	var/share
+	var/list/sway_types = GLOB.sumiari_sway_types
 	for(var/obj/plant in T)
 		if(fx_sway_count >= cap_sway)
 			return
-		if(!is_type_in_typecache(plant, GLOB.sumiari_sway_types) || plant.invisibility || !plant.icon_state)
+		if(!sway_types[plant.type] || plant.invisibility || !plant.icon_state)
 			continue
+		if(isnull(share))
+			share = sumiari_fx_lamp_share(T)
+		if(share <= 0)
+			return
 		fx_sway_count++
 		var/key = "s[REF(plant)]"
 		var/state = "[plant.icon]|[plant.icon_state]|[plant.dir]|[plant.plane]|[plant.layer]|[plant.color]|[share]"
@@ -8079,12 +8090,17 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 )))
 
 /obj/item/organ/eyes/sumiari/proc/fx_shrine(turf/T, list/wanted)
-	var/share = sumiari_fx_lamp_share(T)
-	if(fx_shrine_count >= cap_shrine || !sumiari_spare_turf_open(T) || share <= 0)
+	if(fx_shrine_count >= cap_shrine || !sumiari_spare_turf_open(T) || !length(T.contents))
 		return
+	var/share
+	var/list/shrine_types = GLOB.sumiari_shrine_types
 	for(var/obj/holy in T)
-		if(!is_type_in_typecache(holy, GLOB.sumiari_shrine_types) || holy.invisibility || !holy.icon_state)
+		if(!shrine_types[holy.type] || holy.invisibility || !holy.icon_state)
 			continue
+		if(isnull(share))
+			share = sumiari_fx_lamp_share(T)
+		if(share <= 0)
+			return
 		fx_shrine_count++
 		var/key = "n[REF(holy)]"
 		var/state = "[holy.icon]|[holy.icon_state]|[holy.dir]|[share]"
