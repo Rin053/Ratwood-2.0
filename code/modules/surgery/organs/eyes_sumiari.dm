@@ -5312,6 +5312,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 #endif
 		LAZYSET(beauty_anchors, glint, list(T, rand(-10, 10), rand(-10, 10)))
 		place_beauty_image(glint)
+		sumiari_level_route(glint, center.z)
 		glint.alpha = 0
 		glint.transform = matrix() * SUMIARI_GLINT_LOW_SCALE
 		var/half = SUMIARI_GLINT_CYCLE / 2
@@ -5359,6 +5360,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 		LAZYSET(flora_images, plant, halo)
 		LAZYSET(beauty_anchors, halo, list(plant, 0, 0))
 		place_beauty_image(halo)
+		sumiari_level_route(halo, center.z)
 		beauty_client.images += halo
 
 // Night beauty checks that do not depend on the map or the time of day.
@@ -5948,6 +5950,22 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		if(!istransparentturf(above))
 			return FALSE
 	return above?.z == z
+
+// An image on a level below z draws on OPENSPACE_PLANE, where vanilla puts everything a hole shows, so it takes
+// that plane's blur and the backdrop's dim like the floor under it. Its layer keeps its place among that floor's things.
+/proc/sumiari_level_route(image/picture, z)
+	var/turf/T = get_turf(picture?.loc)
+	if(!T || !z || T.z >= z)
+		return picture
+	switch(picture.plane)
+		if(SUMIARI_FX_FLOOR_PLANE, SUMIARI_FX_LOWER_PLANE)
+			picture.layer = BELOW_MOB_LAYER + 0.05
+		if(SUMIARI_FX_GAME_PLANE)
+			picture.layer = ABOVE_MOB_LAYER + 0.05
+		else
+			picture.layer = ABOVE_ALL_MOB_LAYER + 0.05
+	picture.plane = OPENSPACE_PLANE
+	return picture
 
 // Every step and every beauty tick, day or night, while the vision is on: roofed tiles around the owner whose vanilla
 // sun spill has a corner the bleed walk cannot reach get the cut image (see SUMIARI_SKY_SPILL_CUT).
@@ -7194,6 +7212,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 		return
 	var/image/petal = sumiari_petal_image(sumiari_petal_landing(T), sumiari_turf_has_tree(T))
 	LAZYSET(fx_petals, petal, world.time + SUMIARI_PETAL_FALL + SUMIARI_PETAL_REST + SUMIARI_PETAL_FADE + 2)
+	sumiari_level_route(petal, fx_center?.z)
 	fx_client.images += petal
 	sumiari_petal_play(petal)
 #endif
@@ -7207,6 +7226,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 		return
 	var/image/print = sumiari_step_image(T, walker.dir, walker.sumiari_step_foot)
 	LAZYSET(fx_steps, print, world.time + SUMIARI_STEP_FADE + 2)
+	sumiari_level_route(print, fx_center.z)
 	fx_client.images += print
 	sumiari_step_play(print, T)
 #endif
@@ -7220,6 +7240,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 		fx_client.images -= fx_images[key]
 	LAZYSET(fx_images, key, picture)
 	LAZYSET(fx_states, key, "[state]|[sumiari_fx_look_key()]")
+	sumiari_level_route(picture, fx_center?.z)
 	if(fx_client)
 		fx_client.images += picture
 
@@ -7410,6 +7431,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 		return
 	var/image/dew = sumiari_dew_image(T)
 	LAZYSET(fx_dew_images, dew, world.time + SUMIARI_DEW_RISE + SUMIARI_DEW_FALL + 2)
+	sumiari_level_route(dew, fx_center?.z)
 	fx_client.images += dew
 
 /proc/sumiari_dew_image(turf/T)
@@ -8037,6 +8059,7 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 	var/breath = sumiari_fx_breath_now(T)
 	var/peak = sumiari_fx_alpha(SUMIARI_SPIRIT_ALPHA * (0.75 + 0.25 * breath))
 	var/image/spirit = sumiari_spirit_image(T, rand(1, length(sumiari_spirit_palette())))
+	sumiari_level_route(spirit, fx_center?.z)
 	fx_client.images += spirit
 	// Leaves client.images only after the whole fade chain (sumiari_spirit_play returns its length) plus a margin.
 	LAZYSET(fx_spirits, spirit, world.time + sumiari_spirit_play(spirit, path, life, peak) + SUMIARI_SPIRIT_REMOVE_MARGIN)
