@@ -241,6 +241,7 @@
 ///Called when current_holder changes loc.
 /datum/component/overlay_lighting/proc/on_holder_moved(atom/movable/source, OldLoc, Dir, Forced)
 	SIGNAL_HANDLER
+	sumiari_lit_place(parent, FALSE)
 	if(!(overlay_lighting_flags & LIGHTING_ON))
 		return
 	make_luminosity_update()
@@ -249,6 +250,7 @@
 ///Called when parent changes loc.
 /datum/component/overlay_lighting/proc/on_parent_moved(atom/movable/source, OldLoc, Dir, Forced)
 	SIGNAL_HANDLER
+	sumiari_lit_place(parent, FALSE)
 	var/atom/movable/movable_parent = parent
 	if(overlay_lighting_flags & LIGHTING_ATTACHED)
 		set_parent_attached_to(ismovable(movable_parent.loc) ? movable_parent.loc : null)
@@ -270,6 +272,7 @@
 ///Called when parent_attached_to changes loc.
 /datum/component/overlay_lighting/proc/on_parent_attached_to_moved(atom/movable/source, OldLoc, Dir, Forced)
 	SIGNAL_HANDLER
+	sumiari_lit_place(parent, FALSE)
 	check_holder()
 	if(!(overlay_lighting_flags & LIGHTING_ON) || !current_holder)
 		return
@@ -342,7 +345,7 @@
 	if(current_holder)
 		add_dynamic_lumi(current_holder)
 	overlay_lighting_flags |= LIGHTING_ON
-	GLOB.sumiari_lit_movables[parent] = TRUE
+	sumiari_lit_place(parent)
 	get_new_turfs()
 
 
@@ -353,7 +356,7 @@
 	if(current_holder)
 		remove_dynamic_lumi(current_holder)
 	overlay_lighting_flags &= ~LIGHTING_ON
-	GLOB.sumiari_lit_movables -= parent
+	sumiari_lit_drop(parent)
 	clean_old_turfs()
 
 

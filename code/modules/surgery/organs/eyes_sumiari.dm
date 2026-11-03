@@ -2559,17 +2559,53 @@ var/global/sumiari_moon_fade_timer
 		falloff *= sumiari_hex_strength(source.light_color)
 	return falloff
 
-// Every lit movable light (an overlay lighting parent), kept by the component's turn_on and turn_off.
+// Every lit movable light (an overlay lighting parent) and the level it is on (0 off the map). The component's
+// turn_on and turn_off add and drop it; its move handlers file it again when the level changes.
 GLOBAL_LIST_EMPTY(sumiari_lit_movables)
+// Index z: the lit movable lights on that level, as an assoc list.
+GLOBAL_LIST_EMPTY(sumiari_lit_by_z)
+
+/proc/sumiari_lit_place(atom/movable/source, add = TRUE)
+	var/old = GLOB.sumiari_lit_movables[source]
+	if(isnull(old) && !add)
+		return
+	var/turf/T = get_turf(source)
+	var/z = T ? T.z : 0
+	if(old == z)
+		return
+	if(old)
+		var/list/was = GLOB.sumiari_lit_by_z[old]
+		was -= source
+	GLOB.sumiari_lit_movables[source] = z
+	if(z)
+		if(length(GLOB.sumiari_lit_by_z) < z)
+			GLOB.sumiari_lit_by_z.len = z
+		var/list/level = GLOB.sumiari_lit_by_z[z]
+		if(!level)
+			level = list()
+			GLOB.sumiari_lit_by_z[z] = level
+		level[source] = TRUE
+
+/proc/sumiari_lit_drop(atom/movable/source)
+	var/old = GLOB.sumiari_lit_movables[source]
+	if(isnull(old))
+		return
+	if(old)
+		var/list/was = GLOB.sumiari_lit_by_z[old]
+		was -= source
+	GLOB.sumiari_lit_movables -= source
 
 #define SUMIARI_EMITS(thing) ((thing).light_on && (thing).light_power > 0 && (thing).light_outer_range > 0)
 
 // The lit movable lights within span of T on its level: on a turf, or carried by a mob or object standing on one.
+// Those are the ones whose moves the component hears, so their level in the index is current.
 /proc/sumiari_movable_lights_near(turf/T, span = 6)
 	var/list/found = list()
 	if(!isturf(T))
 		return found
-	for(var/atom/movable/source as anything in GLOB.sumiari_lit_movables)
+	if(T.z > length(GLOB.sumiari_lit_by_z))
+		return found
+	for(var/atom/movable/source as anything in GLOB.sumiari_lit_by_z[T.z])
 		if(QDELETED(source) || !SUMIARI_EMITS(source))
 			continue
 		var/atom/where = source.loc
