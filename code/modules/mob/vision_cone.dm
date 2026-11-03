@@ -98,22 +98,27 @@
 		mob.update_cone()
 
 /mob/living/update_cone()
-	for(var/hidden_hud in client.hidden_images)
-		client.images -= hidden_hud
-		client.hidden_images -= hidden_hud
-	if(hud_used?.fov)
-		if(hud_used.fov.alpha == 0)
-			return
 	// The sprite the player sees is on the hidden GAME_PLANE_OWNER (layered in by the FOV_HIDDEN plane master,
 	// above other mobs, past the cone mask, under canopies). That plane takes the moon's mob grade.
 	// The override is a second image and has to sit on a plane the client actually draws. An override on the
 	// hidden owner plane does not suppress the atom, so the real sprite stays on the game plane, takes the
 	// moon's emerald grade, and turns green until the moon mask fades off.
-	cone_redraw(src, layer, RESET_TRANSFORM|KEEP_TOGETHER|PIXEL_SCALE)
-	if(buckled)
-		cone_redraw(buckled, buckled.layer, RESET_TRANSFORM|KEEP_TOGETHER)
-	if(pulling)
-		cone_redraw(pulling, pulling.layer, RESET_TRANSFORM|KEEP_TOGETHER)
+	var/list/drawn = list()
+	if(!hud_used?.fov || hud_used.fov.alpha != 0)
+		drawn[src] = RESET_TRANSFORM|KEEP_TOGETHER|PIXEL_SCALE
+		if(buckled)
+			drawn[buckled] = RESET_TRANSFORM|KEEP_TOGETHER
+		if(pulling)
+			drawn[pulling] = RESET_TRANSFORM|KEEP_TOGETHER
+	// The images stay in client.images and are restyled in place. Dropping and re-adding them every update
+	// leaves frames with no override, where the real sprite shows on the game plane beside the copy and takes
+	// the mob grade, so the wearer doubles and darkens mid-walk.
+	for(var/image/old as anything in client.hidden_images)
+		if(!(old.loc in drawn))
+			client.images -= old
+			client.hidden_images -= old
+	for(var/atom/movable/thing as anything in drawn)
+		cone_redraw(thing, thing == src ? layer : thing.layer, drawn[thing])
 
 // Blank of the same canvas as thing. RGB is 0 and alpha is 1 on every pixel, baked into the icon: a glide
 // cannot put the sprite back, which is what a color matrix on a copied body did mid-step. Every pixel has
@@ -142,28 +147,46 @@
 	return masked
 
 /mob/living/proc/cone_redraw(atom/movable/thing, draw_layer, flags)
-	// Nothing of the body is in this image, so the upper plane's moon grade has nothing to paint and a
+	// Nothing of the body is in the proxy, so the upper plane's moon grade has nothing to paint and a
 	// mid-step glide has nothing to leave behind. It is the override, on a plane that is really drawn,
 	// which is what keeps the atom off the game plane.
-	var/image/proxy = image(cone_click_mask(thing), thing)
-	proxy.override = 1
+	var/image/proxy
+	var/image/shown
+	for(var/image/held as anything in client.hidden_images)
+		if(held.loc != thing)
+			continue
+		if(held.override)
+			proxy = held
+		else
+			shown = held
+	if(!proxy)
+		proxy = image(loc = thing)
+		proxy.override = 1
+		client.images += proxy
+		client.hidden_images += proxy
+	proxy.icon = cone_click_mask(thing)
+	proxy.icon_state = null
 	proxy.plane = GAME_PLANE_UPPER
 	proxy.layer = draw_layer
 	proxy.pixel_x = 0
 	proxy.pixel_y = 0
 	proxy.mouse_opacity = MOUSE_OPACITY_OPAQUE
 	proxy.appearance_flags = RESET_TRANSFORM|RESET_COLOR|RESET_ALPHA|PIXEL_SCALE|KEEP_APART
-	var/image/shown = image(thing, thing)
+	var/fresh = !shown
+	if(fresh)
+		shown = image(thing, thing)
+	else
+		shown.appearance = thing.appearance
+	shown.override = 0
 	shown.plane = GAME_PLANE_OWNER
 	shown.layer = draw_layer
 	shown.pixel_x = 0
 	shown.pixel_y = 0
 	shown.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	shown.appearance_flags = flags
-	client.images += proxy
-	client.images += shown
-	client.hidden_images += proxy
-	client.hidden_images += shown
+	if(fresh)
+		client.images += shown
+		client.hidden_images += shown
 /*	if(hud_used && hud_used.fov_blocker)
 		fov_blocker
 
