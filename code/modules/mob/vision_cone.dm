@@ -129,7 +129,15 @@
 	var/icon/masked = cache[key]
 	if(masked)
 		return masked
-	masked = icon(thing.icon, thing.icon_state, thing.dir, 1)
+	// icon() with a state the file lacks (a human's is "") keeps every state, and the image's own "" then draws
+	// nothing, so there is nothing to click. Any state of the file has the same canvas.
+	var/state = thing.icon_state
+	var/list/states = icon_states(thing.icon)
+	if(!(state in states))
+		if(!length(states))
+			return cone_click_mask(null)
+		state = states[1]
+	masked = icon(thing.icon, state, thing.dir, 1)
 	masked.MapColors(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 / 255)
 	cache[key] = masked
 	return masked
