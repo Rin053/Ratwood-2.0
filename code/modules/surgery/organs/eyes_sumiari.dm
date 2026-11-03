@@ -893,6 +893,13 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/list/fx_states
 	var/turf/fx_center
 	var/fx_age = 0
+	// Shade corners of one fx_scan: a grid over the scanned square (null = not read yet), dropped when the scan ends.
+	var/list/fx_corners
+	var/fx_corner_x0 = 0
+	var/fx_corner_y0 = 0
+	var/fx_corner_w = 0
+	var/fx_corner_h = 0
+	var/fx_corner_z = 0
 	// Look and spared-light signature the last full effect scan was built at. Standing still rescans when either changes.
 	var/fx_look_held
 	var/list/fx_spare_sig
@@ -7108,6 +7115,12 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 		fx_petal_sources = null
 	var/turf/low = locate(x0, y0, center.z)
 	var/turf/high = locate(x1, y1, center.z)
+	fx_corner_x0 = x0
+	fx_corner_y0 = y0
+	fx_corner_w = x1 - x0 + 2
+	fx_corner_h = y1 - y0 + 2
+	fx_corner_z = center.z
+	fx_corners = new /list(fx_corner_w * fx_corner_h)
 	for(var/turf/T as anything in block(low, high))
 		if(T.x >= ix0 && T.x <= ix1 && T.y >= iy0 && T.y <= iy1)
 			continue
@@ -7117,6 +7130,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 			var/turf/floor = sumiari_seen_floor(T)
 			if(floor)
 				fx_scan_tile(floor, wanted, blockers)
+	fx_corners = null
 	for(var/key in fx_images)
 		if(!wanted[key])
 			fx_drop(key)
@@ -7596,14 +7610,28 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 	var/shade = SUMIARI_SHADE_NORTH * (north_west + north_east) / 2 + SUMIARI_SHADE_CONTACT * (north_west + north_east + south_west + south_east) / 4
 	return round(min(shade, 1), 0.05)
 
+// sumiari_shade_corner, read once per scan: neighboring tiles share their corners.
+/obj/item/organ/eyes/sumiari/proc/fx_shade_corner(x, y, z, list/blockers)
+	if(fx_corners && z == fx_corner_z)
+		var/cx = x - fx_corner_x0
+		var/cy = y - fx_corner_y0
+		if(cx >= 0 && cy >= 0 && cx < fx_corner_w && cy < fx_corner_h)
+			var/n = cy * fx_corner_w + cx + 1
+			. = fx_corners[n]
+			if(isnull(.))
+				. = sumiari_shade_corner(x, y, z, blockers)
+				fx_corners[n] = .
+			return
+	return sumiari_shade_corner(x, y, z, blockers)
+
 /obj/item/organ/eyes/sumiari/proc/fx_shade(turf/T, list/wanted, list/blockers)
 	if(sumiari_shade_blocks(T, blockers) || !sumiari_spare_turf_open(T))
 		return
 	// Tile (x, y) has corners SW (x, y), SE (x + 1, y), NW (x, y + 1), NE (x + 1, y + 1) on that grid.
-	var/sw = sumiari_shade_corner(T.x, T.y, T.z, blockers)
-	var/se = sumiari_shade_corner(T.x + 1, T.y, T.z, blockers)
-	var/nw = sumiari_shade_corner(T.x, T.y + 1, T.z, blockers)
-	var/ne = sumiari_shade_corner(T.x + 1, T.y + 1, T.z, blockers)
+	var/sw = fx_shade_corner(T.x, T.y, T.z, blockers)
+	var/se = fx_shade_corner(T.x + 1, T.y, T.z, blockers)
+	var/nw = fx_shade_corner(T.x, T.y + 1, T.z, blockers)
+	var/ne = fx_shade_corner(T.x + 1, T.y + 1, T.z, blockers)
 	if(max(sw, se, nw, ne) < SUMIARI_SHADE_MIN)
 		return
 	var/key = "s[T.x],[T.y]"
