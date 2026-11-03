@@ -1470,13 +1470,16 @@ var/global/turf/sumiari_test_dark_turf
 	return stacked
 
 // The knee plate: each kneed plane's highlight excess over the knee, stacked in draw order like the world.
+// A plane layered onto the screen-anchored knee canvas lands the relays' CENTER-2:-16 offset (80 px) west of where
+// the relays draw it, so the subtract would cut a dark copy of every bright sprite 2.5 tiles to its left.
+#define SUMIARI_KNEE_SHIFT_X 80
 /proc/sumiari_moon_knee_filters(list/knee_look, list/mob_knee)
 	var/list/out = list()
 	for(var/plane in GLOB.sumiari_vision_plane_order)
 		if(plane == GAME_PLANE_FOV_HIDDEN)
-			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = mob_knee)
+			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = mob_knee, x = SUMIARI_KNEE_SHIFT_X)
 		else if(plane in GLOB.sumiari_moon_knee_planes)
-			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = knee_look)
+			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = knee_look, x = SUMIARI_KNEE_SHIFT_X)
 	return out
 
 // Planes whose highlights get the knee: ground, walls, objects. Not mobs (neutral, never near 1) or open space.
