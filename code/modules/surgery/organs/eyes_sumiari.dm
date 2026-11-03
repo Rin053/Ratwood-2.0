@@ -6148,10 +6148,11 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		var/vg = cg ? cg.sunFalloff : 0
 		var/vb = cb ? cb.sunFalloff : 0
 		var/va = ca ? ca.sunFalloff : 0
-		var/fr = sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, -1, -1) ? vr : 0
-		var/fg = sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, 1, -1) ? vg : 0
-		var/fb = sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, -1, 1) ? vb : 0
-		var/fa = sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, 1, 1) ? va : 0
+		// A corner the sun does not reach stays 0 whatever the bleed walk says.
+		var/fr = (vr && sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, -1, -1)) ? vr : 0
+		var/fg = (vg && sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, 1, -1)) ? vg : 0
+		var/fb = (vb && sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, -1, 1)) ? vb : 0
+		var/fa = (va && sumiari_spill_corner_open(grid, steps, gw, gh, cx, cy, 1, 1)) ? va : 0
 		if(fr == vr && fg == vg && fb == vb && fa == va)
 			continue
 		keep[T] = TRUE
@@ -6173,14 +6174,13 @@ var/global/sumiari_moon_spares_enabled = TRUE
 
 // Can outdoor light reach this corner (dx, dy = +-1) of the 1-based grid cell (cx, cy)? Yes if any of the four cells
 // meeting there is unshut open sky or roofed floor the walk reached.
+// sumiari_spill_cell_open inline: one cell of the bleed square is sky, or roof the walk reached.
+#define SUMIARI_SPILL_CELL(grid, steps, w, h, x, y) ((x) >= 1 && (y) >= 1 && (x) <= (w) && (y) <= (h) && (grid[((y) - 1) * (w) + (x)] == SUMIARI_BLEED_SKY || (grid[((y) - 1) * (w) + (x)] == SUMIARI_BLEED_ROOF && steps[((y) - 1) * (w) + (x)])))
+
 /proc/sumiari_spill_corner_open(list/grid, list/steps, w, h, cx, cy, dx, dy)
-	if(sumiari_spill_cell_open(grid, steps, w, h, cx, cy))
-		return TRUE
-	if(sumiari_spill_cell_open(grid, steps, w, h, cx + dx, cy))
-		return TRUE
-	if(sumiari_spill_cell_open(grid, steps, w, h, cx, cy + dy))
-		return TRUE
-	return sumiari_spill_cell_open(grid, steps, w, h, cx + dx, cy + dy)
+	var/nx = cx + dx
+	var/ny = cy + dy
+	return SUMIARI_SPILL_CELL(grid, steps, w, h, cx, cy) || SUMIARI_SPILL_CELL(grid, steps, w, h, nx, cy) || SUMIARI_SPILL_CELL(grid, steps, w, h, cx, ny) || SUMIARI_SPILL_CELL(grid, steps, w, h, nx, ny)
 
 /proc/sumiari_spill_cell_open(list/grid, list/steps, w, h, x, y)
 	if(x < 1 || y < 1 || x > w || y > h)
@@ -6358,14 +6358,19 @@ var/global/sumiari_moon_spares_enabled = TRUE
 // Does this tile stop moonlight passing (see SUMIARI_MOON_BLEED)? Same blockers as normal light: an opaque turf,
 // or anything opaque on it. A closed curtain or a closed solid door stops it even if that opacity flag was left
 // off. A glass door (windowed) stays clear.
+GLOBAL_LIST_INIT(sumiari_shut_types, typecacheof(list(/obj/structure/curtain, /obj/structure/mineral_door)))
+
 /proc/sumiari_moon_shut(turf/T)
 	if(!T || T.opacity)
 		return TRUE
 	if(!length(T.contents))
 		return FALSE
+	var/list/shut_types = GLOB.sumiari_shut_types
 	for(var/atom/movable/thing as anything in T)
 		if(thing.opacity)
 			return TRUE
+		if(!shut_types[thing.type])
+			continue
 		if(istype(thing, /obj/structure/curtain))
 			var/obj/structure/curtain/curtain = thing
 			if(!curtain.open)
@@ -6391,13 +6396,16 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		// window) is an opening, and sumiari_moon_shut decides it the same way as a door or a glass window.
 		if(!T || (isclosedturf(T) && T.opacity))
 			grid[index] = SUMIARI_BLEED_WALL
-		else if(sumiari_spare_turf_open(T))
-			if(sumiari_moon_shut(T))
+			continue
+		// sumiari_moon_shut, without the call for a bare tile.
+		var/shut = T.opacity || (length(T.contents) && sumiari_moon_shut(T))
+		if(sumiari_spare_turf_open(T))
+			if(shut)
 				grid[index] = SUMIARI_BLEED_SKY_SHUT
 				floor += index
 			else
 				grid[index] = SUMIARI_BLEED_SKY
-		else if(sumiari_moon_shut(T))
+		else if(shut)
 			grid[index] = SUMIARI_BLEED_WALL
 			floor += index
 		else
@@ -7629,8 +7637,9 @@ GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
 		return blockers[T]
 	var/blocks = isclosedturf(T)
 	if(!blocks && length(T.contents))
+		var/list/types = GLOB.sumiari_shade_types
 		for(var/obj/thing in T)
-			if(is_type_in_typecache(thing, GLOB.sumiari_shade_types))
+			if(types[thing.type])
 				blocks = TRUE
 				break
 	blockers[T] = blocks
