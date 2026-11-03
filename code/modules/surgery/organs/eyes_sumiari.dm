@@ -6345,28 +6345,27 @@ var/global/sumiari_moon_spares_enabled = TRUE
 /proc/sumiari_moon_bleed_fill(list/grid, list/floor, x0, y0, w, h, z)
 	. = 0
 	var/index = 0
-	for(var/y in y0 to y0 + h - 1)
-		for(var/x in x0 to x0 + w - 1)
-			index++
-			if(!isnull(grid[index]))
-				continue
-			. = . + 1
-			var/turf/T = locate(x, y, z)
-			// A solid wall is a closed tile you cannot see through. A see-through closed tile (a stone or wood
-			// window) is an opening, and sumiari_moon_shut decides it the same way as a door or a glass window.
-			if(!T || (isclosedturf(T) && T.opacity))
-				grid[index] = SUMIARI_BLEED_WALL
-			else if(sumiari_spare_turf_open(T))
-				if(sumiari_moon_shut(T))
-					grid[index] = SUMIARI_BLEED_SKY_SHUT
-					floor += index
-				else
-					grid[index] = SUMIARI_BLEED_SKY
-			else if(sumiari_moon_shut(T))
-				grid[index] = SUMIARI_BLEED_WALL
+	// block() runs x fastest, then y: the grid's own order. The square always lies inside the map.
+	for(var/turf/T as anything in block(locate(x0, y0, z), locate(x0 + w - 1, y0 + h - 1, z)))
+		index++
+		if(!isnull(grid[index]))
+			continue
+		. = . + 1
+		// A solid wall is a closed tile you cannot see through. A see-through closed tile (a stone or wood
+		// window) is an opening, and sumiari_moon_shut decides it the same way as a door or a glass window.
+		if(!T || (isclosedturf(T) && T.opacity))
+			grid[index] = SUMIARI_BLEED_WALL
+		else if(sumiari_spare_turf_open(T))
+			if(sumiari_moon_shut(T))
+				grid[index] = SUMIARI_BLEED_SKY_SHUT
 				floor += index
 			else
-				grid[index] = SUMIARI_BLEED_ROOF
+				grid[index] = SUMIARI_BLEED_SKY
+		else if(sumiari_moon_shut(T))
+			grid[index] = SUMIARI_BLEED_WALL
+			floor += index
+		else
+			grid[index] = SUMIARI_BLEED_ROOF
 
 // The previous square shifted by (dx, dy) cells. Cells that slid in stay null so the fill classifies only those.
 /proc/sumiari_bleed_shift_grid(list/old_grid, dx, dy, w, h)
