@@ -2059,6 +2059,8 @@
 			AT.get_remote_view_fullscreens(src)
 		else
 			clear_fullscreen("remote_view", 0)
+		// Look up, look down, and the return all land here. The moon effects follow the eye in this same moment.
+		sumiari_look_shifted(src)
 
 /mob/living/update_mouse_pointer()
 	if(!client)

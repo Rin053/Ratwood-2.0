@@ -86,9 +86,8 @@
 // gray their pixels in proportion to their own wash, over the vivid color, exactly as they gray plain color.
 // The mask is only sky * strength: a roofed room or cave is black on the sky plane and keeps plain color.
 #define SUMIARI_MOON_VIVID 1
-// Saturation around Rec.709 luma. 1 is normal color. Above about 1.9 strong reds and greens clip into neon.
-// 1.75: punchy jewel color with headroom under the neon line. The highlight knee below keeps it from clipping.
-#define SUMIARI_MOON_SATURATION 1.75
+// Saturation around Rec.709 luma. 1 is normal color. The highlight knee below keeps bright greens and blues from clipping flat.
+#define SUMIARI_MOON_SATURATION 2
 // Faint silver sheen: this fraction of the pixel is the cool silver ink (SILVER_R/G/B above). It is a tint,
 // not a lift: the moonlit layer keeps the plain image's brightness, only the colors are richer.
 #define SUMIARI_MOON_SHEEN 0.3
@@ -100,7 +99,7 @@
 // moonlit ground reads as lit by the moon rather than as dark art. Bright pixels clip softly into the moon glow.
 // 1 = the plain image's brightness.
 #define SUMIARI_MOON_LUMINANCE 1.5
-// Soft highlight knee on the moonlit layer. A color matrix is linear, so luminance 1.5 and saturation 1.75 pushed
+// Soft highlight knee on the moonlit layer. A color matrix is linear, so luminance 1.5 and saturation 2 pushed
 // bright greens, blues and whites past 1, where they clipped flat. With the knee each world plane is graded at
 // 1 / LUMINANCE (nothing clips there), a second copy subtracts SLOPE * (graded - START / LUMINANCE) (the subtract
 // clamps at 0, so it only touches highlights), and the gain is put back once on the whole stack. Output rises
@@ -260,8 +259,9 @@
 #define SUMIARI_MOON_FADE_TICK (2 SECONDS)
 // How often the client-image features (1 and 6) refresh.
 #define SUMIARI_BEAUTY_INTERVAL (1 SECONDS)
-// How long a bleed walk and its per-tile classes stay valid. A move to a new tile rebuilds the walk at once; a door,
-// shutter or curtain is picked up on the next rebuild, at most this long after it changes.
+// How long a bleed walk and its per-tile classes stay valid while nothing about the openings changes. A move to a
+// new tile rebuilds the walk at once. A door, shutter, curtain or anything else that changes opacity rebuilds it
+// in that same moment (set_opacity -> sumiari_opening_changed), and so does looking up or down a level.
 #define SUMIARI_BLEED_HOLD (2 SECONDS)
 // Peak alpha of the vivid layer on open sky at night. 1 means a moonlit pixel is fully the vivid color.
 #define SUMIARI_MOON_VIVID_STRENGTH 1
@@ -317,8 +317,9 @@
 // (added after the cut): from every open-sky tile that is not itself shut (sumiari_moon_shut) into the roofed
 // tiles next to it, walking cardinally tile by tile through roofed floor that is not shut, up to BLEED_RANGE tiles.
 // A tile d steps in is 1 - (d - 0.5) / BLEED_RANGE at its middle (0.83, 0.5, 0.17), drawn as the same corner
-// gradient as the sky so it fades smoothly. An open door, open curtain, open or broken window lets it in; a closed
-// solid door, closed curtain, shutter, opaque glass, or anything opaque stops it dead (clear glass lets it in), so a shut room stays the cave look.
+// gradient as the sky so it fades smoothly. It uses the same blockers as normal light (turf opacity, and any opaque
+// thing on the tile): clear glass, a stone or wood window, bars, an open door, an open curtain. A closed curtain
+// or a closed solid door stops it, including a curtain hung on a stone window. A glass door stays clear.
 // Wall faces take their corners from the same map (open sky 1, bled floor its value), not from the vanilla spread.
 #define SUMIARI_MOON_BLEED 1
 #define SUMIARI_BLEED_RANGE 3
@@ -720,11 +721,11 @@
 // shadow a human sees as darker reads as bright as lit ground (flat floor, no falloff). The dim plate is the raw
 // light a human sees as luma (static lighting plus the movable-light cookie, emitter sprites full, before the wash gain),
 // and the dim relay lays black over the whole view at alpha (1 - FLOOR) * (1 - light). Drawn brightness is then
-// sprite * (FLOOR + (1 - FLOOR) * light): pitch black keeps FLOOR (40%) of its brightness, in color, and every step
+// sprite * (FLOOR + (1 - FLOOR) * light): pitch black keeps FLOOR (50%) of its brightness, in color, and every step
 // brighter for a human is a step brighter here, with the same falloff and shape. Full light is untouched.
 #define SUMIARI_DARKVISION 1
-#define SUMIARI_DARKVISION_FLOOR 0.4
-// Moonlit open sky at night keeps the full moon look (sat 1.75, lum 1.5): the skylight plate (sky plane plus cliff
+#define SUMIARI_DARKVISION_FLOOR 0.5
+// Moonlit open sky at night keeps the full moon look (sat 2, lum 1.5): the skylight plate (sky plane plus cliff
 // faces, feathered like the moon mask, times the moon fade) is full light for the dim plate, so the dim is off under
 // the night sky and eases back in across dawn and dusk. Caves, roofs and the whole day keep the proportional dim.
 // Lamp hand-off under the night sky. The moon look is LUMINANCE (1.5x) and the gray wash 1x, so a lamp pool would
@@ -831,6 +832,11 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/client/spill_client
 	var/list/spill_images
 	var/list/spill_keys
+	// A hole shows the floor below. Its own lighting underlay is the upper tile, so the mask would shade the
+	// lower room with the upper tile. hole_images paints the seen floor's lamp light and sun on top of the hole.
+	var/client/hole_client
+	var/list/hole_images
+	var/list/hole_keys
 	// One bleed walk per place, held for BLEED_HOLD, shared by the cliff (moon bleed) and spill passes:
 	// list(key, grid, steps, x0, y0, w, h, openings, shut). cliff_drawn is that list once its images are current.
 	var/list/bleed_cache
@@ -3724,9 +3730,9 @@ var/global/sumiari_run_headless_test = FALSE
 		return FALSE
 	var/atom/movable/screen/plane_master/lighting/lighting = body.hud_used.plane_masters["[LIGHTING_PLANE]"]
 	var/atom/movable/screen/plane_master/cookie = body.hud_used.plane_masters["[O_LIGHTING_VISUAL_PLANE]"]
-	// Pitch black keeps 40% of its brightness: the dim relay's darkest alpha is 1 - FLOOR = 0.6.
+	// Pitch black keeps 50% of its brightness: the dim relay's darkest alpha is 1 - FLOOR = 0.5.
 	var/list/dim = sumiari_matrix_dim_alpha()
-	if(SUMIARI_DARKVISION_FLOOR != 0.4 || abs(dim[4] + 0.6) > 0.001 || abs(dim[20] - 0.6) > 0.001)
+	if(SUMIARI_DARKVISION_FLOOR != 0.5 || abs(dim[4] + 0.5) > 0.001 || abs(dim[20] - 0.5) > 0.001)
 		log_world("SUMIARI TEST FAIL darkness floor=[SUMIARI_DARKVISION_FLOOR] dim=[dim[4]],[dim[20]]")
 		return FALSE
 	log_world("SUMIARI TEST darkness PASS plane_alpha=[lighting.alpha] target=[lighting.render_target] olight=[cookie?.render_target] world_hidden=0 pieces=[length(eyes.screen_pieces)] mask=[SUMIARI_LIGHTING_SOURCE] canvas=[eyes.mask_pixels_x]x[eyes.mask_pixels_y] dyn_not_used=1")
@@ -4447,6 +4453,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	sumiari_scan_cache_begin()
 	cliff_tick()
 	spill_tick()
+	hole_tick()
 	fx_tick(moved)
 	sumiari_scan_cache_end()
 
@@ -5064,6 +5071,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	clear_spare()
 	clear_cliffs()
 	clear_spill()
+	clear_holes()
 	clear_fx()
 
 /obj/item/organ/eyes/sumiari/proc/clear_beauty()
@@ -5095,6 +5103,8 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 // ceiling (look_up) moves the client's eye to a turf on another level (reset_perspective: EYE_PERSPECTIVE, eye =
 // that turf); the vision is then worked out for that level and spot, as if the owner stood there: moon look, bleed
 // walk, day cut, seals, wall faces, effects, spirits, glints and halos. Back to their own turf when the view returns.
+// reset_perspective calls sumiari_look_shifted, so that pass happens in the same moment as the look, not on the
+// next beauty tick.
 /obj/item/organ/eyes/sumiari/proc/view_turf()
 	var/client/viewer = owner?.client
 	if(viewer && viewer.perspective == EYE_PERSPECTIVE && viewer.eye && viewer.eye != owner)
@@ -5173,6 +5183,55 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	capture_world_planes()
 	apply_wash_filters()
 	return TRUE
+
+// Look up, look down, or back to the body. Drop the holds and run the same pass the beauty tick would, now.
+/proc/sumiari_look_shifted(mob/living/who)
+	if(!iscarbon(who))
+		return
+	var/mob/living/carbon/carbon = who
+	var/obj/item/organ/eyes/sumiari/eyes = carbon.getorganslot(ORGAN_SLOT_EYES)
+	if(istype(eyes))
+		eyes.look_shifted()
+
+/obj/item/organ/eyes/sumiari/proc/drop_holds()
+	bleed_cache = null
+	cliff_drawn = null
+	spill_map = null
+	spill_full_at = -1
+	spare_held = 0
+	spare_center = null
+	fx_center = null
+	glint_center = null
+	terrain_at = 0
+
+/obj/item/organ/eyes/sumiari/proc/look_shifted()
+	if(!vision_on || !owner?.client)
+		return
+	var/turf/looking = view_turf()
+	if(looking && looking.z == last_view_z && terrain_center == looking)
+		return
+	drop_holds()
+	beauty_tick()
+
+// A door, curtain, shutter, window or gate just changed opacity. Vanilla light updates here; the moon walk does too,
+// for every Sumiari who can see that tile. Anyone whose view is elsewhere is left alone.
+/proc/sumiari_opening_changed(turf/T)
+	if(!T || !length(sumiari_active_eyes))
+		return
+	for(var/obj/item/organ/eyes/sumiari/eyes as anything in sumiari_active_eyes)
+		eyes.opening_changed(T)
+
+/obj/item/organ/eyes/sumiari/proc/opening_changed(turf/T)
+	if(!vision_on || !owner?.client || !T)
+		return
+	var/turf/center = view_turf()
+	if(!center || center.z != T.z)
+		return
+	var/span = reach(SUMIARI_CLIFF_RANGE) + SUMIARI_SPILL_RANGE + 1
+	if(abs(T.x - center.x) > span || abs(T.y - center.y) > span)
+		return
+	drop_holds()
+	terrain_pass()
 
 /obj/item/organ/eyes/sumiari/proc/beauty_tick()
 	if(QDELETED(src) || !vision_on)
@@ -5854,6 +5913,101 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	spill_map = null
 	bleed_cache = null
 
+// The floor a hole actually shows: the first solid turf under it, walking through stacked holes.
+/proc/sumiari_seen_floor(turf/hole)
+	var/turf/below = GET_TURF_BELOW(hole)
+	var/guard = 0
+	while(istransparentturf(below) && guard < 8)
+		below = GET_TURF_BELOW(below)
+		guard++
+	return below
+
+/proc/sumiari_hole_appear_key(mutable_appearance/underlay)
+	if(!underlay)
+		return "none"
+	var/color = underlay.color
+	if(islist(color))
+		return "[underlay.icon_state]|[jointext(color, ",")]"
+	return "[underlay.icon_state]|[color]"
+
+// The seen floor's lamp light and sun, drawn on the hole so the captures read that floor and not the tile around it.
+/proc/sumiari_hole_copy(turf/hole, mutable_appearance/underlay, plane, layer)
+	if(!underlay)
+		return
+	var/image/shown = image(underlay.icon || LIGHTING_ICON, hole, underlay.icon_state)
+	shown.plane = plane
+	shown.layer = layer
+	shown.blend_mode = underlay.blend_mode
+	shown.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
+	shown.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	shown.invisibility = INVISIBILITY_LIGHTING
+	shown.color = underlay.color
+	return shown
+
+/obj/item/organ/eyes/sumiari/proc/clear_holes()
+	for(var/turf/T as anything in hole_images)
+		var/list/pair = hole_images[T]
+		if(pair)
+			hole_client?.images -= pair[1]
+			hole_client?.images -= pair[2]
+	hole_images = null
+	hole_keys = null
+	hole_client = null
+
+// Every step and every beauty tick. A hole's pixels are the floor below, so they take that floor's lighting underlay
+// and sun overlay, above the hole tile's own. That is the composite a normal lighting plane already draws.
+/obj/item/organ/eyes/sumiari/proc/hole_tick()
+	if(hole_client && hole_client != owner?.client)
+		clear_holes()
+	var/turf/center = view_turf()
+	if(!vision_on || !owner?.client || !center)
+		clear_holes()
+		return
+	hole_client = owner.client
+	var/span = reach(SUMIARI_CLIFF_RANGE)
+	var/x0 = max(center.x - span, 1)
+	var/y0 = max(center.y - span, 1)
+	var/x1 = min(center.x + span, world.maxx)
+	var/y1 = min(center.y + span, world.maxy)
+	var/list/keep = list()
+	for(var/turf/T as anything in block(locate(x0, y0, center.z), locate(x1, y1, center.z)))
+		if(!istransparentturf(T))
+			continue
+		var/turf/floor = sumiari_seen_floor(T)
+		if(!floor)
+			continue
+		var/datum/lighting_object/light = floor.lighting_object
+		var/mutable_appearance/lamp = light?.current_underlay
+		var/mutable_appearance/sun = floor.outdoor_effect?.sunlight_overlay
+		if(!lamp && !sun)
+			continue
+		var/key = "[sumiari_hole_appear_key(lamp)]|[sumiari_hole_appear_key(sun)]"
+		keep[T] = TRUE
+		if(hole_keys?[T] == key)
+			continue
+		var/list/pair = hole_images?[T]
+		if(pair)
+			hole_client.images -= pair[1]
+			hole_client.images -= pair[2]
+		var/image/lamp_image = sumiari_hole_copy(T, lamp, LIGHTING_PLANE, LIGHTING_LAYER + 1)
+		var/image/sun_image = sumiari_hole_copy(T, sun, SUNLIGHTING_PLANE, ABOVE_ALL_MOB_LAYER + 1)
+		pair = list(lamp_image, sun_image)
+		LAZYSET(hole_images, T, pair)
+		LAZYSET(hole_keys, T, key)
+		if(lamp_image)
+			hole_client.images += lamp_image
+		if(sun_image)
+			hole_client.images += sun_image
+	for(var/turf/T as anything in hole_images)
+		if(keep[T])
+			continue
+		var/list/pair = hole_images[T]
+		if(pair)
+			hole_client.images -= pair[1]
+			hole_client.images -= pair[2]
+		hole_images -= T
+		hole_keys -= T
+
 // Every step and every beauty tick, day or night, while the vision is on: roofed tiles around the owner whose vanilla
 // sun spill has a corner the bleed walk cannot reach get the cut image (see SUMIARI_SKY_SPILL_CUT).
 /obj/item/organ/eyes/sumiari/proc/spill_tick()
@@ -5919,6 +6073,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			continue
 		var/datum/outdoor_info/outdoor = T.outdoor_effect
 		if(!outdoor || !outdoor.sunlight_overlay)
+			continue
+		// A hole above this tile: vanilla already spread the sun down through it. Leave that overlay alone.
+		if(istransparentturf(GET_TURF_ABOVE(T)))
 			continue
 		var/cx = T.x - gx0 + 1
 		var/cy = T.y - gy0 + 1
@@ -6155,13 +6312,11 @@ var/global/sumiari_moon_spares_enabled = TRUE
 /proc/sumiari_cliff_matrix(fr, fg, fb, fa)
 	return list(fr, fr, fr, 0, fg, fg, fg, 0, fb, fb, fb, 0, fa, fa, fa, 0, 0, 0, 0, 1)
 
-// Does this tile stop moonlight passing (see SUMIARI_MOON_BLEED)? Moonlight goes wherever sight goes: a closed turf
-// or anything opaque stops it (a closed solid door, a closed shutter-window, stained or frosted glass, a closed
-// curtain all set opacity), while see-through glass (a closed clear window, a glass door) lets it in like an open
-// opening. Two belts and braces: a closed curtain (open FALSE) and a closed shutter (density) block even if their
-// opacity was left off.
+// Does this tile stop moonlight passing (see SUMIARI_MOON_BLEED)? Same blockers as normal light: an opaque turf,
+// or anything opaque on it. A closed curtain or a closed solid door stops it even if that opacity flag was left
+// off. A glass door (windowed) stays clear.
 /proc/sumiari_moon_shut(turf/T)
-	if(!T || isclosedturf(T) || T.opacity)
+	if(!T || T.opacity)
 		return TRUE
 	if(!length(T.contents))
 		return FALSE
@@ -6172,8 +6327,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			var/obj/structure/curtain/curtain = thing
 			if(!curtain.open)
 				return TRUE
-		else if(istype(thing, /obj/structure/bars/passage/shutter))
-			if(thing.density)
+		else if(istype(thing, /obj/structure/mineral_door))
+			var/obj/structure/mineral_door/door = thing
+			if(!door.door_opened && !door.windowed)
 				return TRUE
 	return FALSE
 
@@ -6189,7 +6345,9 @@ var/global/sumiari_moon_spares_enabled = TRUE
 				continue
 			. = . + 1
 			var/turf/T = locate(x, y, z)
-			if(!T || isclosedturf(T))
+			// A solid wall is a closed tile you cannot see through. A see-through closed tile (a stone or wood
+			// window) is an opening, and sumiari_moon_shut decides it the same way as a door or a glass window.
+			if(!T || (isclosedturf(T) && T.opacity))
 				grid[index] = SUMIARI_BLEED_WALL
 			else if(sumiari_spare_turf_open(T))
 				if(sumiari_moon_shut(T))
@@ -6565,16 +6723,18 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/obj/structure/curtain/test_curtain = new(opening_spot)
 	var/curtain_open = sumiari_moon_shut(opening_spot)
 	test_curtain.open = FALSE
+	test_curtain.update_icon()
 	var/curtain_closed = sumiari_moon_shut(opening_spot)
 	qdel(test_curtain)
-	// A closed solid door (opaque) blocks; a closed see-through (glass) door lets it in, as does an open one.
+	// A closed solid door blocks. Clearing its opacity flag does not let the light through. A glass door does.
 	var/obj/structure/mineral_door/test_door = new(opening_spot)
 	test_door.door_opened = FALSE
-	test_door.set_opacity(TRUE)
-	var/door_closed = sumiari_moon_shut(opening_spot)
 	test_door.set_opacity(FALSE)
+	var/door_closed = sumiari_moon_shut(opening_spot)
+	test_door.windowed = TRUE
 	var/door_glass = sumiari_moon_shut(opening_spot)
 	test_door.door_opened = TRUE
+	test_door.windowed = FALSE
 	var/door_open = sumiari_moon_shut(opening_spot)
 	qdel(test_door)
 	// A closed clear glass window lets it in; a closed opaque one (shutter-window, stained glass) blocks.
@@ -6594,11 +6754,31 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	var/obj/structure/roguewindow/curtained_window = new(opening_spot)
 	var/obj/structure/curtain/window_curtain = new(opening_spot)
 	window_curtain.open = FALSE
+	window_curtain.update_icon()
 	var/window_curtained = sumiari_moon_shut(opening_spot)
 	qdel(window_curtain)
 	qdel(curtained_window)
-	if(shut_before || curtain_open || !curtain_closed || !door_closed || door_glass || door_open || window_clear || !window_stained || !window_closed || window_open || !window_curtained)
-		bad += "openings before=[shut_before] curtain=[curtain_open]/[curtain_closed] door=[door_open]/[door_glass]/[door_closed] window clear=[window_clear] stained=[window_stained] shutter=[window_open]/[window_closed] curtained=[window_curtained]"
+	// Bars are dense and see-through. Sight goes through them, so moonlight does too.
+	var/obj/structure/bars/passage/test_bars = new(opening_spot)
+	var/bars_clear = sumiari_moon_shut(opening_spot)
+	qdel(test_bars)
+	if(shut_before || curtain_open || !curtain_closed || !door_closed || door_glass || door_open || window_clear || !window_stained || !window_closed || window_open || !window_curtained || bars_clear)
+		bad += "openings before=[shut_before] curtain=[curtain_open]/[curtain_closed] door=[door_open]/[door_glass]/[door_closed] window clear=[window_clear] stained=[window_stained] shutter=[window_open]/[window_closed] curtained=[window_curtained] bars=[bars_clear]"
+	// A stone window is a closed turf with opacity off, so vanilla view() lets light through it. Moonlight does too,
+	// and a closed curtain on it stops the light again.
+	if(opening_spot)
+		var/old_type = opening_spot.type
+		var/turf/stone_window = opening_spot.ChangeTurf(/turf/closed/wall/mineral/rogue/stone/window)
+		var/stone_opacity = stone_window?.opacity
+		var/stone_open = sumiari_moon_shut(stone_window)
+		var/obj/structure/curtain/stone_curtain = new(stone_window)
+		stone_curtain.open = FALSE
+		stone_curtain.update_icon()
+		var/stone_curtained = sumiari_moon_shut(stone_window)
+		qdel(stone_curtain)
+		stone_window?.ChangeTurf(old_type)
+		if(stone_opacity || stone_open || !stone_curtained)
+			bad += "stone window opacity=[stone_opacity] open=[stone_open] curtained=[stone_curtained]"
 #endif
 	var/atom/movable/screen/sumiari_sampler/mask = null
 	for(var/atom/movable/screen/sumiari_sampler/sampler in eyes.screen_pieces)

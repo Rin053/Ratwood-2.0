@@ -134,6 +134,8 @@
 	else
 		T.opaque_atom_count--
 	T.reconsider_lights()
+	// Moonlight uses the same opacity vanilla light does. Rebuild it now, not on the bleed hold.
+	sumiari_opening_changed(T)
 
 // No /atom/movable/Moved override here, that's handled by a signal now.
 
