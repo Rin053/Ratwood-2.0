@@ -832,11 +832,6 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/client/spill_client
 	var/list/spill_images
 	var/list/spill_keys
-	// A hole shows the floor below. Its own lighting underlay is the upper tile, so the mask would shade the
-	// lower room with the upper tile. hole_images paints the seen floor's lamp light and sun on top of the hole.
-	var/client/hole_client
-	var/list/hole_images
-	var/list/hole_keys
 	// One bleed walk per place, held for BLEED_HOLD, shared by the cliff (moon bleed) and spill passes:
 	// list(key, grid, steps, x0, y0, w, h, openings, shut). cliff_drawn is that list once its images are current.
 	var/list/bleed_cache
@@ -4456,7 +4451,6 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	sumiari_scan_cache_begin()
 	cliff_tick()
 	spill_tick()
-	hole_tick()
 	fx_tick(moved)
 	sumiari_scan_cache_end()
 
@@ -5082,7 +5076,6 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	clear_spare()
 	clear_cliffs()
 	clear_spill()
-	clear_holes()
 	clear_fx()
 
 /obj/item/organ/eyes/sumiari/proc/clear_beauty()
@@ -5956,92 +5949,6 @@ var/global/sumiari_moon_spares_enabled = TRUE
 		if(!istransparentturf(above))
 			return FALSE
 	return above?.z == z
-
-/proc/sumiari_hole_appear_key(mutable_appearance/underlay)
-	if(!underlay)
-		return "none"
-	var/color = underlay.color
-	if(islist(color))
-		return "[underlay.icon_state]|[jointext(color, ",")]"
-	return "[underlay.icon_state]|[color]"
-
-// The seen floor's lamp light and sun, drawn on the hole so the captures read that floor and not the tile around it.
-/proc/sumiari_hole_copy(turf/hole, mutable_appearance/underlay, plane, layer)
-	if(!underlay)
-		return
-	var/image/shown = image(underlay.icon || LIGHTING_ICON, hole, underlay.icon_state)
-	shown.plane = plane
-	shown.layer = layer
-	shown.blend_mode = underlay.blend_mode
-	shown.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
-	shown.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
-	shown.invisibility = INVISIBILITY_LIGHTING
-	shown.color = underlay.color
-	return shown
-
-/obj/item/organ/eyes/sumiari/proc/clear_holes()
-	for(var/turf/T as anything in hole_images)
-		var/list/pair = hole_images[T]
-		if(pair)
-			hole_client?.images -= pair[1]
-			hole_client?.images -= pair[2]
-	hole_images = null
-	hole_keys = null
-	hole_client = null
-
-// Every step and every beauty tick. A hole's pixels are the floor below, so they take that floor's lighting underlay
-// and sun overlay, above the hole tile's own. That is the composite a normal lighting plane already draws.
-/obj/item/organ/eyes/sumiari/proc/hole_tick()
-	if(hole_client && hole_client != owner?.client)
-		clear_holes()
-	var/turf/center = view_turf()
-	if(!vision_on || !owner?.client || !center)
-		clear_holes()
-		return
-	hole_client = owner.client
-	var/span = reach(SUMIARI_CLIFF_RANGE)
-	var/x0 = max(center.x - span, 1)
-	var/y0 = max(center.y - span, 1)
-	var/x1 = min(center.x + span, world.maxx)
-	var/y1 = min(center.y + span, world.maxy)
-	var/list/keep = list()
-	for(var/turf/T as anything in block(locate(x0, y0, center.z), locate(x1, y1, center.z)))
-		if(!istransparentturf(T))
-			continue
-		var/turf/floor = sumiari_seen_floor(T)
-		if(!floor)
-			continue
-		var/datum/lighting_object/light = floor.lighting_object
-		var/mutable_appearance/lamp = light?.current_underlay
-		var/mutable_appearance/sun = floor.outdoor_effect?.sunlight_overlay
-		if(!lamp && !sun)
-			continue
-		var/key = "[sumiari_hole_appear_key(lamp)]|[sumiari_hole_appear_key(sun)]"
-		keep[T] = TRUE
-		if(hole_keys?[T] == key)
-			continue
-		var/list/pair = hole_images?[T]
-		if(pair)
-			hole_client.images -= pair[1]
-			hole_client.images -= pair[2]
-		var/image/lamp_image = sumiari_hole_copy(T, lamp, LIGHTING_PLANE, LIGHTING_LAYER + 1)
-		var/image/sun_image = sumiari_hole_copy(T, sun, SUNLIGHTING_PLANE, ABOVE_ALL_MOB_LAYER + 1)
-		pair = list(lamp_image, sun_image)
-		LAZYSET(hole_images, T, pair)
-		LAZYSET(hole_keys, T, key)
-		if(lamp_image)
-			hole_client.images += lamp_image
-		if(sun_image)
-			hole_client.images += sun_image
-	for(var/turf/T as anything in hole_images)
-		if(keep[T])
-			continue
-		var/list/pair = hole_images[T]
-		if(pair)
-			hole_client.images -= pair[1]
-			hole_client.images -= pair[2]
-		hole_images -= T
-		hole_keys -= T
 
 // Every step and every beauty tick, day or night, while the vision is on: roofed tiles around the owner whose vanilla
 // sun spill has a corner the bleed walk cannot reach get the cut image (see SUMIARI_SKY_SPILL_CUT).
