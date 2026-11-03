@@ -4530,7 +4530,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 		return
 	sense_client = owner.client
 	var/list/nearby = list()
-	var/list/found = sumiari_sense_targets(owner, null, nearby)
+	var/list/found = sumiari_sense_targets(owner, null, nearby, view_turf())
 	// Bodies in range are watched, so a step behind a wall or out of it shows or fades at once, not on the next tick.
 	for(var/mob/living/L as anything in sense_watched)
 		if(!nearby[L])
@@ -4568,7 +4568,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	SIGNAL_HANDLER
 	if(sense_blocked() || !sense_client)
 		return
-	var/reason = sumiari_sense_reason(owner, L, null)
+	var/reason = sumiari_sense_reason(owner, L, null, view_turf())
 	if(copytext(reason, 1, 7) != "sensed")
 		hide_sensed(L)
 		return
@@ -4595,10 +4595,10 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 // Every anchor rides one host turf the Sumiari sees. It changes only when that turf leaves the Sumiari's sight (or z),
 // so a step by the Sumiari does not touch the silhouettes at all.
 /obj/item/organ/eyes/sumiari/proc/rehost_sensed()
-	var/turf/here = get_turf(owner)
+	var/turf/here = view_turf()
 	if(!here)
 		return
-	if(sense_host && sense_host.z == here.z && get_dist(sense_host, here) <= SUMIARI_SENSE_RANGE && (sense_host in view(SUMIARI_SENSE_RANGE, owner)))
+	if(sense_host && sense_host.z == here.z && get_dist(sense_host, here) <= SUMIARI_SENSE_RANGE && (sense_host in sumiari_sense_view(owner, here)))
 		return
 	sense_host = here
 	for(var/mob/living/L as anything in sensed_anchors)
@@ -4734,12 +4734,20 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 
 // Bodies the senses show now, as body -> reason. Scans the turfs in range and the containers on them. nearby, when
 // given, collects every other living body in range, shown or not (the ones whose steps are watched).
-/proc/sumiari_sense_targets(mob/living/carbon/viewer, list/report, list/nearby)
+// What the viewer sees from where they look: their own sight from their body, or the looked-at tile on another level.
+/proc/sumiari_sense_view(mob/living/viewer, turf/from)
+	if(!from || from == get_turf(viewer))
+		return view(SUMIARI_SENSE_RANGE, viewer)
+	// dview sees past darkness, as the viewer's own see_in_dark does from their body.
+	return dview(SUMIARI_SENSE_RANGE, from, viewer.see_invisible)
+
+// from is the tile the viewer looks from (a look up or down a level); null is their own tile.
+/proc/sumiari_sense_targets(mob/living/carbon/viewer, list/report, list/nearby, turf/from)
 	. = list()
-	var/turf/center = get_turf(viewer)
+	var/turf/center = from || get_turf(viewer)
 	if(!center)
 		return
-	var/list/visible = view(SUMIARI_SENSE_RANGE, viewer)
+	var/list/visible = sumiari_sense_view(viewer, center)
 	var/count = 0
 	for(var/turf/T in range(SUMIARI_SENSE_RANGE, center))
 		for(var/atom/movable/thing as anything in T)
@@ -4750,7 +4758,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 				for(var/mob/living/inside in thing)
 					LAZYADD(bodies, inside)
 			for(var/mob/living/L as anything in bodies)
-				var/reason = sumiari_sense_reason(viewer, L, visible)
+				var/reason = sumiari_sense_reason(viewer, L, visible, center)
 				if(report && L != viewer)
 					report += "[L]@[L.x],[L.y] [reason]"
 				if(nearby && L != viewer && isturf(L.loc))
@@ -4761,7 +4769,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 				count++
 
 // "sensed: why" when the body should show, otherwise why it does not.
-/proc/sumiari_sense_reason(mob/living/carbon/viewer, mob/living/L, list/visible)
+/proc/sumiari_sense_reason(mob/living/carbon/viewer, mob/living/L, list/visible, turf/from)
 	if(!istype(L))
 		return "not living"
 	if(L == viewer)
@@ -4774,7 +4782,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 		return "magic invisibility"
 	if(L.invisibility >= INVISIBILITY_OBSERVER || L.invisibility > viewer.see_invisible)
 		return "invisible [L.invisibility]"
-	var/turf/here = get_turf(viewer)
+	var/turf/here = from || get_turf(viewer)
 	var/turf/there = get_turf(L)
 	if(!here || !there || here.z != there.z || get_dist(here, there) > SUMIARI_SENSE_RANGE)
 		return "out of range"
@@ -4784,7 +4792,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 			return "carried or held"
 		hidden_in = "in [L.loc]"
 	else if(isnull(visible))
-		visible = view(SUMIARI_SENSE_RANGE, viewer)
+		visible = sumiari_sense_view(viewer, here)
 	var/why = hidden_in
 	if(!why)
 		if(L in visible)
@@ -5114,11 +5122,14 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	return get_turf(owner)
 
 // The tiles the owner sees around center. From their own body this is view() (their sight, see_in_dark, walls).
-// From a looked-at turf view() would see with no see_in_dark (dark moonlit tiles drop out), so the square is used.
+// From a looked-at turf view() would see with no see_in_dark (dark moonlit tiles drop out). dview sees past the
+// dark and still stops at walls, as the owner's own sight would from that tile.
 /obj/item/organ/eyes/sumiari/proc/seen_turfs(dist, turf/center)
 	if(!owner || center == get_turf(owner))
 		return view(dist, owner)
-	return range(dist, center)
+	if(center.opacity)
+		return range(dist, center)
+	return dview(dist, center, owner.see_invisible)
 
 // A per-area cap tuned for the 15x15 view, scaled by how much more area the current view covers.
 // The ratio depends only on view_extra, and the scan asks for the same few bases hundreds of times a tick.
@@ -5212,6 +5223,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 		return
 	drop_holds()
 	beauty_tick()
+	sense_tick()
 
 // A door, curtain, shutter, window or gate just changed opacity. Vanilla light updates here; the moon walk does too,
 // for every Sumiari who can see that tile. Anyone whose view is elsewhere is left alone.
