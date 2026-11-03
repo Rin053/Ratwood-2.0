@@ -115,8 +115,9 @@
 	if(pulling)
 		cone_redraw(pulling, pulling.layer, RESET_TRANSFORM|KEEP_TOGETHER)
 
-// Blank of the same canvas as thing. RGB is 0 and alpha is 1, baked into the icon: a glide cannot put the
-// sprite back, which is what a color matrix on a copied body did mid-step. mouse_opacity 2 still hits it.
+// Blank of the same canvas as thing. RGB is 0 and alpha is 1 on every pixel, baked into the icon: a glide
+// cannot put the sprite back, which is what a color matrix on a copied body did mid-step. Every pixel has
+// the same alpha, so one frame of the file serves every state and dir.
 /proc/cone_click_mask(atom/movable/thing)
 	var/static/list/cache = list()
 	var/static/icon/fallback
@@ -125,19 +126,17 @@
 			fallback = icon('icons/mob/vision_cone.dmi', "combat", SOUTH, 1)
 			fallback.MapColors(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 / 255)
 		return fallback
-	var/key = "[thing.icon]|[thing.icon_state]|[thing.dir]"
+	var/key = "[thing.icon]"
 	var/icon/masked = cache[key]
 	if(masked)
 		return masked
 	// icon() with a state the file lacks (a human's is "") keeps every state, and the image's own "" then draws
-	// nothing, so there is nothing to click. Any state of the file has the same canvas.
-	var/state = thing.icon_state
+	// nothing. A dir the state lacks gives an empty icon, which is what left a west-facing wearer unclickable.
+	// Any state of the file has the same canvas, and SOUTH is in every state.
 	var/list/states = icon_states(thing.icon)
-	if(!(state in states))
-		if(!length(states))
-			return cone_click_mask(null)
-		state = states[1]
-	masked = icon(thing.icon, state, thing.dir, 1)
+	if(!length(states))
+		return cone_click_mask(null)
+	masked = icon(thing.icon, states[1], SOUTH, 1)
 	masked.MapColors(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 / 255)
 	cache[key] = masked
 	return masked
