@@ -140,8 +140,8 @@
 // pinker. MOB_GRADE_EMBER is a small extra guard: red above luma lends a little to green. No cool shift on mobs.
 // Where: the same moon mask as the ground (open sky only, off roofs and caves with the soft roof-line feather, off
 // every fire, torch and lamp pool), so a mob walking under an eave or toward a fire fades out of the grade smoothly
-// as its sprite glides, pixel by pixel, with no server work at all. That covers the owner's own sprite too: the
-// GAME_PLANE_FOV_HIDDEN master layers in GAME_PLANE_OWNER.
+// as its sprite glides, pixel by pixel, with no server work at all. The owner's own sprite is the vanilla cone
+// override on GAME_PLANE_UPPER and takes that plane's look.
 // 0 (or sumiari_moon_mob_grade_enabled off, applied when the moon relay is next rebuilt) = the neutral mob look above.
 #define SUMIARI_MOON_MOB_GRADE 1
 #define SUMIARI_MOB_GRADE_SATURATION 1.6
@@ -1406,9 +1406,9 @@ var/global/turf/sumiari_test_dark_turf
 	return stacked
 
 // The moon relay's world stack. Each plane carries its own color: the moon look for the world, and for the mob
-// planes a gentler matrix. GAME_PLANE_FOV_HIDDEN holds other mobs, and its plane master layers in the owner's own
-// sprite (update_cone() in vision_cone.dm draws it on the hidden GAME_PLANE_OWNER), so that plane takes the mob
-// look. GAME_PLANE_UPPER is flora and tree canopies, which take the full moon hue.
+// planes a gentler matrix. GAME_PLANE_FOV_HIDDEN holds other mobs, so that plane takes the mob look.
+// GAME_PLANE_UPPER is flora, tree canopies and the owner's own sprite (the vanilla cone override), which take
+// the full moon hue.
 // The mob look has no hue push and no violet, so skin and pale sprites keep
 // their own tones instead of turning salmon under the crimson/umber push.
 /obj/item/organ/eyes/sumiari/proc/moon_stack_filters()
