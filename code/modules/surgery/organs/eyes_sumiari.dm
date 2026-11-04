@@ -8306,7 +8306,8 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 	// Leaves client.images only after the whole fade chain (sumiari_spirit_play returns its length) plus a margin.
 	LAZYSET(fx_spirits, spirit, world.time + sumiari_spirit_play(spirit, path, life, peak) + SUMIARI_SPIRIT_REMOVE_MARGIN)
 
-// A moonlit open-sky tile near the viewer, outside lamp pools; null if a few tries find none.
+// A moonlit open-sky tile near the viewer, outside lamp pools, on the view's level or the floor a hole shows; null
+// if a few tries find none.
 /proc/sumiari_spirit_spot(turf/center, range = SUMIARI_SPIRIT_RANGE)
 	if(!center)
 		return null
@@ -8316,6 +8317,9 @@ GLOBAL_LIST_INIT(sumiari_shrine_types, typecacheof(list(
 		if(!dx && !dy)
 			continue
 		var/turf/T = locate(center.x + dx, center.y + dy, center.z)
+		// A hole shows the floor under it: the wisp flies there and draws through the hole like that floor.
+		if(istransparentturf(T))
+			T = sumiari_seen_floor(T)
 		if(T && !isclosedturf(T) && sumiari_spare_turf_open(T) && sumiari_fx_lamp_share(T) > 0)
 			return T
 	return null
