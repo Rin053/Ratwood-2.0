@@ -218,7 +218,7 @@
 // 6) Night-bloom flora: kneestingers (glowshrooms) and glowing mushroom clusters wear a slow Noc halo that only
 //    these eyes see at night, breathing between Noc's violet and the moon's silver-teal. The plant's own sprite
 //    stays as it is (gray, when it is itself a light); the halo is cut around it, never on top of it.
-#define SUMIARI_NIGHT_FLORA 1
+#define SUMIARI_NIGHT_FLORA 0
 #define SUMIARI_FLORA_RANGE 8
 #define SUMIARI_FLORA_MAX 16
 #define SUMIARI_FLORA_ALPHA 170
