@@ -364,7 +364,7 @@
 #define SUMIARI_FX_LOWER_TARGET "*sumiari_fx_lower"
 #define SUMIARI_FX_GAME_TARGET "*sumiari_fx_game"
 #define SUMIARI_FX_UPPER_TARGET "*sumiari_fx_upper"
-#define SUMIARI_FX_BODIES_PLANE -68
+#define SUMIARI_FX_BODIES_PLANE -72
 #define SUMIARI_FX_BODIES_TARGET "*sumiari_fx_bodies"
 // Deciseconds a body mask takes to come in or go.
 #define SUMIARI_FX_BODY_FADE 6
@@ -6889,6 +6889,10 @@ GLOBAL_LIST_INIT(sumiari_shut_types, typecacheof(list(/obj/structure/curtain, /o
 			plane_target[master_plane] = master_target
 		else if(plane_target[master_plane] != master_target && (findtext("[master_type]", "sumiari") || findtext("[plane_owner[master_plane]]", "sumiari")))
 			bad += "plane clash [master_plane] [plane_owner[master_plane]] [master_type]"
+	// Plates are not plane masters, so the check above misses them: a plane master on a plate's plane captures it.
+	for(var/plate_plane in list(SUMIARI_PLANE_RED, SUMIARI_PLANE_GREEN, SUMIARI_PLANE_BLUE, SUMIARI_PLANE_ALPHA, SUMIARI_PLANE_UNLIT, SUMIARI_PLANE_LIGHT, SUMIARI_PLANE_MASK, SUMIARI_PLANE_GLARE, SUMIARI_PLANE_COOKIE, SUMIARI_PLANE_DARK, SUMIARI_PLANE_MOON, SUMIARI_PLANE_COOKIE_RED, SUMIARI_PLANE_COOKIE_GREEN, SUMIARI_PLANE_COOKIE_BLUE, SUMIARI_PLANE_KNEE, SUMIARI_PLANE_SKYLIGHT, SUMIARI_PLANE_SKYSHAPE, SUMIARI_PLANE_DIM, SUMIARI_PLANE_SOURCE))
+		if(plane_owner["[plate_plane]"])
+			bad += "plate plane clash [plate_plane] [plane_owner["[plate_plane]"]]"
 	// Closed door (shut cell in the roofed doorway, or a shut door under the sky): nothing gets in, not even a corner.
 	var/list/shut_row = list(SUMIARI_BLEED_SKY, SUMIARI_BLEED_WALL, SUMIARI_BLEED_ROOF, SUMIARI_BLEED_ROOF)
 	var/list/shut_steps = sumiari_moon_bleed_grid(shut_row, 4, 1)
@@ -7286,12 +7290,15 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	var/list/seen = list()
 	for(var/mob/living/body in range(reach(SUMIARI_FX_RANGE), center))
 		seen[body] = TRUE
-		if(fx_bodies?[body])
+		var/image/shown = fx_bodies?[body]
+		if(shown)
+			// The fade starts a tick after the mask is shown: an animate on an image the client has not got yet is lost.
+			if(shown.alpha == 0 && !fx_bodies_gone?[shown])
+				animate(shown, alpha = 255, time = SUMIARI_FX_BODY_FADE, easing = SINE_EASING)
 			continue
 		var/image/mask = sumiari_body_mask_image(body)
 		LAZYSET(fx_bodies, body, mask)
 		fx_client.images += mask
-		animate(mask, alpha = 255, time = SUMIARI_FX_BODY_FADE, easing = SINE_EASING)
 	for(var/mob/living/body as anything in fx_bodies)
 		if(seen[body])
 			continue
