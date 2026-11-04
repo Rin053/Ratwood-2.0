@@ -366,15 +366,13 @@
 #define SUMIARI_FX_UPPER_TARGET "*sumiari_fx_upper"
 #define SUMIARI_FX_BODIES_PLANE -72
 #define SUMIARI_FX_BODIES_TARGET "*sumiari_fx_bodies"
-// Brightness of the see_through_darkness icon (icons/mob/screen_full.dmi "nightvision").
-#define SUMIARI_BODY_GLOW 30
-// Mean shade of the vanilla film grain (alpha 55, multiply). The moon thins the grain on the world.
-#define SUMIARI_BODY_GRAIN_SHADE 0.937
 // A plant drawn over bodies sways on its own plane, cut where a body stands; its still copy fills those cuts.
 #define SUMIARI_SWAY_PLANE -73
 #define SUMIARI_SWAY_TARGET "*sumiari_sway"
 #define SUMIARI_SWAY_REST_PLANE -74
 #define SUMIARI_SWAY_REST_TARGET "*sumiari_sway_rest"
+// Deciseconds a body mask takes to come in or go.
+#define SUMIARI_FX_BODY_FADE 6
 // One blessing, not separate tricks. Every moon effect breathes with one slow moon pulse and draws from one palette.
 // MOON_INTENSITY scales every effect's strength at once (1 is the balanced look; 0.5 subtle, 1.5 lavish); MOON_PULSE is
 // the breath's period. The breath is a slow wave rolling across the land (PULSE_WAVE tiles per period, with a little
@@ -669,8 +667,8 @@
 #define SUMIARI_WASH_INK "ink"
 #define SUMIARI_WASH_COLOR "color"
 // The mask, cookie, knee, dim and moon plates, each a master plus the child that draws the capture,
-// plus the ink, sun, dim, moon and body relays, with a little headroom.
-#define SUMIARI_PIECE_CAP 43
+// plus the ink, sun, dim and moon relays, with a little headroom.
+#define SUMIARI_PIECE_CAP 42
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 // A wider client view (zoomed out) raises it by the view's extra radius (sumiari view_extra), up to VIEW_EXTRA_MAX.
 #define SUMIARI_SEE_IN_DARK 8
@@ -948,10 +946,9 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/fx_frost_step = 0
 	// Footprints glowing right now (image -> expiry).
 	var/list/fx_steps
-	// Living mob -> its body shape image, the appearance it was made from, and the client that sees them.
+	// Living mob -> its body mask image; masks fading out -> world.time to drop them.
 	var/list/fx_bodies
-	var/list/fx_body_looks
-	var/client/fx_body_client
+	var/list/fx_bodies_gone
 	// Moon spirits in the air (image -> expiry), their trail motes, and when the next one may show.
 	var/list/fx_spirits
 	var/fx_spirit_next = 0
@@ -1396,14 +1393,6 @@ var/global/turf/sumiari_test_dark_turf
 	lamp.blockscharging = FALSE
 	screen_pieces += lamp
 #endif
-	// Over every relay: living bodies redrawn as normal vision draws them, lit by the vanilla lighting.
-	var/atom/movable/screen/sumiari_relay/body = new
-	body.name = "sumiari body"
-	body.plane = SUMIARI_RELAY_PLANE
-	body.layer = SUMIARI_RELAY_LAYER_BASE + 6
-	body.alpha = 0
-	body.blockscharging = FALSE
-	screen_pieces += body
 #if SUMIARI_DARKVISION
 	// Over every relay, under fullscreen and the HUD. Glow sprites above the lighting stay full, as for a human.
 	var/atom/movable/screen/sumiari_relay/dim = new
@@ -1602,29 +1591,12 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	var/atom/movable/screen/sumiari_relay/dim = sumiari_find_piece(src, "sumiari dim")
 	var/atom/movable/screen/sumiari_relay/lamp = sumiari_find_piece(src, "sumiari lamp")
 	var/atom/movable/screen/sumiari_relay/glow = sumiari_find_piece(src, "sumiari glow")
-	var/atom/movable/screen/sumiari_relay/body = sumiari_find_piece(src, "sumiari body")
-	if(body)
-		body.alpha = 0
-		body.filters = null
-		if(wash_mode == SUMIARI_WASH_LIVE)
-			var/list/body_filters = world_stack_filters()
-			// The lighting capture has holes where movable lights draw; the cookie capture fills them.
-			// The human hud adds a flat see_through_darkness glow to the lighting plane, clamped at full.
-			var/nv_glow = SUMIARI_BODY_GLOW / 255
-			body_filters += filter(type = "layer", render_source = SUMIARI_LIGHTING_SOURCE, blend_mode = BLEND_MULTIPLY, color = list(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, nv_glow, nv_glow, nv_glow, 0))
-			body_filters += filter(type = "layer", render_source = SUMIARI_OLIGHT_SOURCE, blend_mode = BLEND_MULTIPLY)
-			if(owner?.client?.prefs?.grain == TRUE)
-				var/shade = SUMIARI_BODY_GRAIN_SHADE
-				body_filters += filter(type = "color", color = list(shade, 0, 0, 0, 0, shade, 0, 0, 0, 0, shade, 0, 0, 0, 0, 1, 0, 0, 0, 0))
-			body_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET)
-			body.filters = body_filters
-			body.alpha = 255
 	if(glow)
 		animate(glow)
 		glow.alpha = 0
 		glow.filters = null
 		if(wash_mode == SUMIARI_WASH_LIVE && sumiari_night_beauty_enabled && sumiari_moon_glow > 0)
-			glow.filters = world_stack_filters() + sumiari_moon_glow_filters() + filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE)
+			glow.filters = world_stack_filters() + sumiari_moon_glow_filters()
 			glow.alpha = 255
 	if(lamp)
 		lamp.alpha = 0
@@ -1633,7 +1605,6 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 			var/list/lamp_filters = world_stack_filters()
 			lamp_filters += filter(type = "color", color = sumiari_scale_matrix_rgb(sumiari_color_matrix(SUMIARI_MONO_FULL, 0), SUMIARI_MOON_LUMINANCE - 1 + SUMIARI_MOON_LAMP_LIFT))
 			lamp_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MASK))
-			lamp_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE)
 			lamp_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT))
 			lamp.filters = lamp_filters
 			lamp.alpha = 255
@@ -1644,7 +1615,6 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 			dim.filters = list(
 				filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_DIM)),
 				filter(type = "alpha", render_source = sumiari_world_render_source(ABOVE_LIGHTING_PLANE), flags = MASK_INVERSE),
-				filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE),
 			)
 			dim.alpha = 255
 	if(wash_mode != SUMIARI_WASH_LIVE)
@@ -1661,21 +1631,17 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	if(ink)
 		var/list/ink_filters = world_stack_filters()
 		ink_filters += filter(type = "color", color = sumiari_color_matrix(SUMIARI_MONO_FULL, 0))
-		// Every relay leaves living bodies out: they show exactly as in normal vision.
-		ink_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE)
 		ink_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MASK))
 		ink.filters = ink_filters
 		ink.alpha = 255
 	if(sun)
 		var/list/sun_filters = world_stack_filters()
 		sun_filters += filter(type = "color", color = sumiari_sun_haze_matrix())
-		sun_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE)
 		sun_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_GLARE))
 		sun.filters = sun_filters
 		sun.alpha = 255
 	if(moon)
 		var/list/moon_filters = moon_stack_filters()
-		moon_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE)
 		moon_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON))
 		moon.filters = moon_filters
 		moon.alpha = 255
@@ -5219,7 +5185,6 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	clear_spill()
 	clear_lower_level()
 	clear_fx()
-	clear_body_masks()
 
 /obj/item/organ/eyes/sumiari/proc/clear_beauty()
 	for(var/image/glint as anything in glint_images)
@@ -7267,13 +7232,6 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	var/list/rgb = rgb2num(tone)
 	return rgb(rgb[1], rgb[2], rgb[3], alpha)
 
-/obj/item/organ/eyes/sumiari/proc/clear_body_masks()
-	for(var/mob/living/body as anything in fx_bodies)
-		fx_body_client?.images -= fx_bodies[body]
-	fx_bodies = null
-	fx_body_looks = null
-	fx_body_client = null
-
 /obj/item/organ/eyes/sumiari/proc/clear_fx()
 	for(var/key in fx_images)
 		fx_client?.images -= fx_images[key]
@@ -7288,6 +7246,12 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	for(var/image/print as anything in fx_steps)
 		fx_client?.images -= print
 	fx_steps = null
+	for(var/mob/living/body as anything in fx_bodies)
+		fx_client?.images -= fx_bodies[body]
+	for(var/image/mask as anything in fx_bodies_gone)
+		fx_client?.images -= mask
+	fx_bodies = null
+	fx_bodies_gone = null
 	clear_spirits()
 	fx_bloom = null
 	fx_images = null
@@ -7312,11 +7276,6 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	if(fx_client && fx_client != owner?.client)
 		clear_fx()
 	var/turf/center = view_turf()
-	if(fx_body_client != owner?.client || !center || wash_mode != SUMIARI_WASH_LIVE)
-		clear_body_masks()
-	if(center && owner?.client && wash_mode == SUMIARI_WASH_LIVE)
-		fx_body_client = owner.client
-		fx_body_masks(center)
 	if(!sumiari_night_beauty_enabled || !center || sense_blocked() || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
 		clear_fx()
 		return
@@ -7341,6 +7300,7 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 			fx_scan(center)
 		else
 			fx_scan(center, was)
+	fx_body_masks(center)
 	if(!moved)
 		fx_live(center)
 #endif
@@ -7351,34 +7311,52 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	for(var/mob/living/body in range(reach(SUMIARI_FX_RANGE), center))
 		seen[body] = TRUE
 		var/image/shown = fx_bodies?[body]
-		if(shown && fx_body_looks?[body] == body.appearance)
+		if(shown)
+			// The fade starts a tick after the mask is shown: an animate on an image the client has not got yet is lost.
+			if(shown.alpha == 0 && !fx_bodies_gone?[shown])
+				animate(shown, alpha = 255, time = SUMIARI_FX_BODY_FADE, easing = SINE_EASING)
 			continue
-		// The new shape goes in before the old one leaves, so the body is never unmasked.
 		var/image/mask = sumiari_body_mask_image(body)
 		LAZYSET(fx_bodies, body, mask)
-		LAZYSET(fx_body_looks, body, body.appearance)
-		fx_body_client.images += mask
-		if(shown)
-			fx_body_client.images -= shown
+		fx_client.images += mask
 	for(var/mob/living/body as anything in fx_bodies)
 		if(seen[body])
 			continue
-		fx_body_client.images -= fx_bodies[body]
+		var/image/mask = fx_bodies[body]
 		LAZYREMOVE(fx_bodies, body)
-		LAZYREMOVE(fx_body_looks, body)
+		if(QDELETED(body))
+			fx_client.images -= mask
+			continue
+		animate(mask, alpha = 0, time = SUMIARI_FX_BODY_FADE, easing = SINE_EASING)
+		LAZYSET(fx_bodies_gone, mask, world.time + SUMIARI_FX_BODY_FADE + 1)
+	for(var/image/mask as anything in fx_bodies_gone)
+		if(world.time >= fx_bodies_gone[mask])
+			fx_client.images -= mask
+			LAZYREMOVE(fx_bodies_gone, mask)
 
-// The body's own shape, riding on it: the relays show the vanilla body through it and the moon effects skip it.
 /proc/sumiari_body_mask_image(mob/living/body)
-	var/image/mask = image(loc = body)
-	mask.appearance = body.appearance
-	mask.loc = body
-	sumiari_clear_offsets(mask)
-	mask.name = ""
+	var/image/mask = image(sumiari_body_mask_icon(), body)
 	mask.plane = SUMIARI_FX_BODIES_PLANE
-	mask.appearance_flags |= KEEP_TOGETHER | RESET_COLOR | RESET_ALPHA
+	mask.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART | TILE_BOUND
 	mask.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
-	mask.maptext = null
+	mask.alpha = 0
 	return mask
+
+// 32x32 soft body column: solid over the figure, feathered at the sides and the top so the cut has no edge.
+/proc/sumiari_body_mask_icon()
+	var/static/icon/made
+	if(made)
+		return made
+	var/icon/shape = sumiari_blank_icon()
+	for(var/py in 1 to 32)
+		var/up = clamp((33 - py) / 3, 0, 1)
+		for(var/px in 1 to 32)
+			var/side = clamp((min(px - 4, 29 - px)) / 4, 0, 1)
+			var/a = round(255 * up * side)
+			if(a > 0)
+				shape.DrawBox(rgb(255, 255, 255, a), px, py)
+	made = shape
+	return made
 
 // was is the previous center when this is a one-tile slide; null scans the whole square.
 /obj/item/organ/eyes/sumiari/proc/fx_scan(turf/center, turf/was)
