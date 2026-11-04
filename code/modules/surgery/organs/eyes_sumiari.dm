@@ -366,6 +366,10 @@
 #define SUMIARI_FX_UPPER_TARGET "*sumiari_fx_upper"
 #define SUMIARI_FX_BODIES_PLANE -72
 #define SUMIARI_FX_BODIES_TARGET "*sumiari_fx_bodies"
+// Brightness of the see_through_darkness icon (icons/mob/screen_full.dmi "nightvision").
+#define SUMIARI_BODY_GLOW 30
+// Mean shade of the vanilla film grain (alpha 55, multiply). The moon thins the grain on the world.
+#define SUMIARI_BODY_GRAIN_SHADE 0.937
 // A plant drawn over bodies sways on its own plane, cut where a body stands; its still copy fills those cuts.
 #define SUMIARI_SWAY_PLANE -73
 #define SUMIARI_SWAY_TARGET "*sumiari_sway"
@@ -1605,8 +1609,13 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 		if(wash_mode == SUMIARI_WASH_LIVE)
 			var/list/body_filters = world_stack_filters()
 			// The lighting capture has holes where movable lights draw; the cookie capture fills them.
-			body_filters += filter(type = "layer", render_source = SUMIARI_LIGHTING_SOURCE, blend_mode = BLEND_MULTIPLY)
+			// The human hud adds a flat see_through_darkness glow to the lighting plane, clamped at full.
+			var/nv_glow = SUMIARI_BODY_GLOW / 255
+			body_filters += filter(type = "layer", render_source = SUMIARI_LIGHTING_SOURCE, blend_mode = BLEND_MULTIPLY, color = list(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, nv_glow, nv_glow, nv_glow, 0))
 			body_filters += filter(type = "layer", render_source = SUMIARI_OLIGHT_SOURCE, blend_mode = BLEND_MULTIPLY)
+			if(owner?.client?.prefs?.grain == TRUE)
+				var/shade = SUMIARI_BODY_GRAIN_SHADE
+				body_filters += filter(type = "color", color = list(shade, 0, 0, 0, 0, shade, 0, 0, 0, 0, shade, 0, 0, 0, 0, 1, 0, 0, 0, 0))
 			body_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET)
 			body.filters = body_filters
 			body.alpha = 255
