@@ -366,11 +366,10 @@
 #define SUMIARI_FX_UPPER_TARGET "*sumiari_fx_upper"
 #define SUMIARI_FX_BODIES_PLANE -72
 #define SUMIARI_FX_BODIES_TARGET "*sumiari_fx_bodies"
-// A plant drawn over bodies sways on its own plane, cut where a body stands; its still copy fills those cuts.
+// Swaying plants draw here, under every plane that holds a person. Nothing on this plane is masked to a body
+// or composited over one, so a plant never tints, sways or shifts the character.
 #define SUMIARI_SWAY_PLANE -73
 #define SUMIARI_SWAY_TARGET "*sumiari_sway"
-#define SUMIARI_SWAY_REST_PLANE -74
-#define SUMIARI_SWAY_REST_TARGET "*sumiari_sway_rest"
 // Deciseconds a body mask takes to come in or go.
 #define SUMIARI_FX_BODY_FADE 6
 // One blessing, not separate tricks. Every moon effect breathes with one slow moon pulse and draws from one palette.
@@ -476,10 +475,12 @@
 #define SUMIARI_SHADE_MIN 0.03
 
 // 6) Swaying, shimmering plants: grass, bushes, herbs and flowers on open sky sway gently, each on its own random
-// period, depth and lean, and now and then a soft silver shimmer runs over them. The sway is a per-client override of
-// the plant's own look (the real plant does not move for anyone else), pivoting at its base by at most SWAY_SKEW of
-// its height (about a pixel and a half at the tip), only where no lamp or fire reaches the tile. The shimmer is a
-// silver-lilac copy on the effect plane that sways in step, breathing with the moon and flaring every SHIMMER_GAP or so.
+// period, depth and lean, and now and then a soft silver shimmer runs over them. The sway is a per-client copy of
+// the plant's own sprite (the real plant does not move for anyone else), pivoting at its base by at most SWAY_SKEW of
+// its height (about a pixel and a half at the tip), only where no lamp or fire reaches the tile. A plant that lives
+// on a mob plane (flora shares the owner's plane) is redrawn on the sway plane, which is composited under every mob,
+// so the copy never shares the character's plane. The shimmer is a silver-lilac copy on that same plane that sways
+// in step, breathing with the moon and flaring every SHIMMER_GAP or so.
 #define SUMIARI_MOON_SWAY 1
 #define SUMIARI_SWAY_MAX 110
 #define SUMIARI_SWAY_SKEW 0.045
@@ -922,7 +923,6 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	// Sway: how many plants this scan has swaying (capped at SWAY_MAX). The caps are the area_cap values for this
 	// view, filled once per scan so the tile loop does not recompute them.
 	var/fx_sway_count = 0
-	// Swaying plants that draw over bodies: override key -> plant, and the keys held still while a body is near.
 	var/cap_sway = 0
 	// Fog: wisps this scan.
 	var/fx_fog_count = 0
@@ -1467,9 +1467,8 @@ var/global/turf/sumiari_test_dark_turf
 			plane_look = null
 		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = plane_look)
 #if SUMIARI_MOON_FX
-		// Plants over bodies: swaying away from bodies, still over them, graded as the plane they came from.
-		if(plane == GAME_PLANE_UPPER)
-			stacked += filter(type = "layer", render_source = SUMIARI_SWAY_REST_TARGET, blend_mode = BLEND_OVERLAY, color = plane_look)
+		// Sway sits under the mob planes (the next ones in this list). Graded like the ground it is leaving.
+		if(plane == GAME_PLANE)
 			stacked += filter(type = "layer", render_source = SUMIARI_SWAY_TARGET, blend_mode = BLEND_OVERLAY, color = plane_look)
 #endif
 #if SUMIARI_MOON_FX
@@ -7093,22 +7092,6 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	render_target = SUMIARI_SWAY_TARGET
 
-/atom/movable/screen/plane_master/sumiari_sway/backdrop(mob/mymob)
-	. = ..()
-	filters = list(filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE))
-
-/atom/movable/screen/plane_master/sumiari_sway_rest
-	name = "sumiari still plants plane master"
-	plane = SUMIARI_SWAY_REST_PLANE
-	appearance_flags = PLANE_MASTER
-	blend_mode = BLEND_OVERLAY
-	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
-	render_target = SUMIARI_SWAY_REST_TARGET
-
-/atom/movable/screen/plane_master/sumiari_sway_rest/backdrop(mob/mymob)
-	. = ..()
-	filters = list(filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET))
-
 // The hidden effect plane layered right after a world plane, or null.
 /proc/sumiari_fx_plane_for(host_plane)
 	switch(host_plane)
@@ -8026,18 +8009,18 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 		fx_sway_count++
 		var/key = "s[REF(plant)]"
 		var/state = "[plant.icon]|[plant.icon_state]|[plant.dir]|[plant.plane]|[plant.layer]|[plant.color]|[share]"
-		if(fx_want(key, state, wanted))
+		var/rebuild = fx_want(key, state, wanted)
+		if(rebuild)
 			sumiari_fx_tile_share = share
 			var/list/pair = sumiari_sway_images(plant)
 			sumiari_fx_tile_share = 1
 			fx_put(key, state, pair[1])
-			if(pair[2])
-				fx_put("[key]r", state, pair[2])
-		if(sumiari_sway_over_bodies(plant))
-			wanted["[key]r"] = TRUE
 #if SUMIARI_SWAY_SHIMMER
-			fx_put("[key]g", state, pair[2])
-		else
+			if(pair[2])
+				fx_put("[key]g", state, pair[2])
+#endif
+#if SUMIARI_SWAY_SHIMMER
+		if(!rebuild)
 			wanted["[key]g"] = TRUE
 #endif
 
@@ -8101,46 +8084,64 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 			look[(input - 1) * 4 + output] = luma[input] * 1.6 * tone[output] / 255
 	return look
 
-// list(override, shimmer or still copy): the plant swaying for this viewer only. A plant drawn over bodies sways on
-// the sway plane and gets a still copy on the rest plane, so a body inside or behind it is never moved over.
-/proc/sumiari_sway_over_bodies(obj/plant)
-	return plant.plane > GAME_PLANE || plant.layer >= ABOVE_MOB_LAYER
+// Planes a person is drawn on. Flora shares GAME_PLANE_UPPER with the owner's own sprite.
+/proc/sumiari_plane_holds_mob(plane)
+	return plane == GAME_PLANE_FOV_HIDDEN || plane == GAME_PLANE_UPPER || plane == GAME_PLANE_HIGHEST
 
-// The plant's own sprite and overlays only, riding the plant: nothing else drawn near or with it is copied. The
-// plant's pixel offsets already place the image, so the copy keeps none of its own.
+// Where a swaying copy is drawn. A plant already under the mobs keeps its plane. One that shares a mob plane
+// moves to the sway plane, which is composited under every person.
+/proc/sumiari_sway_plane(obj/plant)
+	if(sumiari_plane_holds_mob(plant.plane))
+		return SUMIARI_SWAY_PLANE
+	return plant.plane
+
+// Overlays and underlays stay on the copy. Each one is pinned to its parent so a leaf cannot keep the plant's
+// plane and land on the character.
+/proc/sumiari_sway_pinned(list/entries)
+	if(!length(entries))
+		return null
+	var/list/pinned = list()
+	for(var/entry in entries)
+		var/image/piece = new /image()
+		piece.appearance = entry
+		piece.plane = FLOAT_PLANE
+		piece.layer = FLOAT_LAYER
+		piece.appearance_flags = RESET_TRANSFORM
+		pinned += piece
+	return pinned
+
+// The plant's own sprite and overlays only, riding the plant. The plant's pixel offsets already place the image,
+// so the copy keeps none of its own. Nothing of the plant's plane, flags or vis contents is copied.
 /proc/sumiari_sway_copy(obj/plant)
 	var/image/copy = image(plant.icon, plant, plant.icon_state, plant.layer, plant.dir)
-	copy.plane = plant.plane
 	copy.color = plant.color
 	copy.alpha = plant.alpha
-	copy.blend_mode = plant.blend_mode
-	copy.appearance_flags = plant.appearance_flags
-	copy.mouse_opacity = plant.mouse_opacity
-	copy.name = plant.name
-	copy.overlays = plant.overlays
-	copy.underlays = plant.underlays
+	copy.overlays = sumiari_sway_pinned(plant.overlays)
+	copy.underlays = sumiari_sway_pinned(plant.underlays)
 	return copy
 
+// The copy draws only on its sway plane, never on a plane that holds a person, and never takes clicks.
+/proc/sumiari_sway_pin(image/picture, obj/plant)
+	picture.plane = sumiari_sway_plane(plant)
+	picture.layer = (picture.plane == SUMIARI_SWAY_PLANE) ? 1 : plant.layer
+	picture.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	picture.blend_mode = BLEND_DEFAULT
+	picture.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
+	picture.name = ""
+	return picture
+
+// list(swaying plant, shimmer or null). The swaying image overrides the real plant for this viewer only.
 /proc/sumiari_sway_images(obj/plant)
-	var/image/swayed = sumiari_sway_copy(plant)
+	var/image/swayed = sumiari_sway_pin(sumiari_sway_copy(plant), plant)
 	swayed.override = TRUE
-#if !SUMIARI_SWAY_SHIMMER
 	sumiari_sway_apply(swayed, plant)
-	if(!sumiari_sway_over_bodies(plant))
-		return list(swayed, null)
-	swayed.plane = SUMIARI_SWAY_PLANE
-	var/image/still = sumiari_sway_copy(plant)
-	still.plane = SUMIARI_SWAY_REST_PLANE
-	still.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
-	return list(swayed, still)
+#if !SUMIARI_SWAY_SHIMMER
+	return list(swayed, null)
 #else
 	var/turf/T = get_turf(plant)
-	var/image/shimmer = image(plant.icon, plant, plant.icon_state)
+	var/image/shimmer = sumiari_sway_pin(image(plant.icon, plant, plant.icon_state), plant)
 	shimmer.dir = plant.dir
-	sumiari_fx_style(shimmer, sumiari_fx_plane_near(plant.plane))
-	shimmer.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	shimmer.color = sumiari_sway_shimmer_matrix()
-	sumiari_sway_apply(swayed, plant)
 	sumiari_sway_apply(shimmer, plant)
 	var/gap = SUMIARI_SWAY_SHIMMER_GAP + rand(0, 90)
 	shimmer.alpha = sumiari_fx_alpha(SUMIARI_SWAY_SHIMMER_LOW)
@@ -8793,7 +8794,8 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 /proc/sumiari_frost_image(obj/thing, level, sway)
 	var/image/frost = image(thing.icon, thing, thing.icon_state)
 	frost.dir = thing.dir
-	sumiari_fx_style(frost, sumiari_fx_plane_near(thing.plane))
+	// A swaying frost copy rides the sway plane, under every person. A still one stays with its own effect plane.
+	sumiari_fx_style(frost, sway ? sumiari_sway_plane(thing) : sumiari_fx_plane_near(thing.plane))
 	frost.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	// Opacity rides the matrix: the color animation below would reset a plain alpha to 255.
 	var/list/frost_look = sumiari_solid_matrix(sumiari_fx_silver(255))
@@ -9035,10 +9037,10 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	var/image/sway_glow = sway_pair[2]
 	var/matrix/lean = sumiari_sway_matrix(0.05)
 #if SUMIARI_SWAY_SHIMMER
-	if(!swayed.override || swayed.loc != tuft || sway_glow.plane != sumiari_fx_plane_near(tuft.plane) || abs(lean.c - 0.8) > 0.001 || length(sway_glow.color) != 20)
+	if(!swayed.override || swayed.loc != tuft || swayed.plane != sumiari_sway_plane(tuft) || sumiari_plane_holds_mob(swayed.plane) || sway_glow.plane != swayed.plane || abs(lean.c - 0.8) > 0.001 || length(sway_glow.color) != 20)
 		bad += "sway"
 #else
-	if(!swayed.override || swayed.loc != tuft || sway_glow || abs(lean.c - 0.8) > 0.001)
+	if(!swayed.override || swayed.loc != tuft || sway_glow || swayed.plane != sumiari_sway_plane(tuft) || sumiari_plane_holds_mob(swayed.plane) || abs(lean.c - 0.8) > 0.001)
 		bad += "sway"
 #endif
 	qdel(tuft)
@@ -9049,8 +9051,8 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	var/image/tall_swayed = tall_pair[1]
 	var/tall_half = sumiari_sprite_half_height(tall_bush)
 	var/matrix/tall_lean = sumiari_sway_matrix(0.05, tall_half)
-	if(abs(tall_bush.pixel_x + 16) > 3 || tall_swayed.pixel_x || tall_swayed.pixel_y || tall_swayed.pixel_w || tall_swayed.pixel_z || tall_swayed.loc != tall_bush || tall_half != 48 || abs(tall_lean.b * -tall_half + tall_lean.c) > 0.001)
-		bad += "sway offsets plant=[tall_bush.pixel_x] copy=[tall_swayed.pixel_x],[tall_swayed.pixel_y],[tall_swayed.pixel_w],[tall_swayed.pixel_z] half=[tall_half]"
+	if(abs(tall_bush.pixel_x + 16) > 3 || tall_swayed.pixel_x || tall_swayed.pixel_y || tall_swayed.pixel_w || tall_swayed.pixel_z || tall_swayed.loc != tall_bush || tall_swayed.plane != SUMIARI_SWAY_PLANE || sumiari_plane_holds_mob(tall_swayed.plane) || tall_pair[2] || tall_half != 48 || abs(tall_lean.b * -tall_half + tall_lean.c) > 0.001)
+		bad += "sway offsets plant=[tall_bush.pixel_x] copy=[tall_swayed.pixel_x],[tall_swayed.pixel_y],[tall_swayed.pixel_w],[tall_swayed.pixel_z] plane=[tall_swayed.plane] half=[tall_half]"
 	qdel(tall_bush)
 #endif
 #if SUMIARI_MOON_FOG
