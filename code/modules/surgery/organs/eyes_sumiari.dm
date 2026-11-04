@@ -7159,6 +7159,31 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 		faded[i] *= k
 	return faded
 
+// Runs a color breath between full and low, locked to world.time: the wave's top is at phase, mod the pulse.
+// An image made mid-wave starts at the wave's current value, so a rescan that rebuilds it never snaps.
+/proc/sumiari_fx_wave(image/picture, list/full, list/low, phase)
+	var/pulse = max(sumiari_moon_pulse, 2)
+	var/half = pulse / 2
+	var/t = (world.time - phase) % pulse
+	if(t < 0)
+		t += pulse
+	var/list/from = full
+	var/list/to_look = low
+	var/u = t / half
+	if(t >= half)
+		from = low
+		to_look = full
+		u = (t - half) / half
+	var/f = (1 - cos(u * 180)) / 2
+	var/list/now = new /list(20)
+	for(var/i in 1 to 20)
+		now[i] = from[i] + (to_look[i] - from[i]) * f
+	picture.color = now
+	var/rest = max(round(half * (1 - u)), 1)
+	animate(picture, color = to_look, time = rest, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+	animate(picture, color = from, time = half, delay = rest, loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
+	animate(color = to_look, time = half, easing = SINE_EASING)
+
 // Joins an effect image to the moon's breath: its opacity swells and ebbs with the shared pulse, at its tile's place
 // in the wave. Rides the color matrix, not alpha, so it stacks with the image's own fades and shimmers.
 // BYOND resets alpha to 255 whenever color is assigned (a matrix, or a plain color it simplifies to text): alpha
@@ -7168,16 +7193,13 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 /proc/sumiari_fx_breathe(image/picture, turf/T, depth = SUMIARI_PULSE_DEPTH, salt = 0, fold_alpha = TRUE)
 	if(!T || depth <= 0)
 		return picture
-	var/pulse = max(sumiari_moon_pulse, 2)
 	var/own = fold_alpha ? picture.alpha / 255 : 1
 	var/list/look = sumiari_color_as_matrix(picture.color)
 	var/list/full = sumiari_fx_fade_matrix(look, own)
 	var/list/low = sumiari_fx_fade_matrix(look, own * (1 - depth))
-	picture.color = full
 	if(own != 1)
 		picture.alpha = 255
-	animate(picture, color = low, time = pulse / 2, delay = sumiari_fx_phase(T.x, T.y, salt), loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
-	animate(color = full, time = pulse / 2, easing = SINE_EASING)
+	sumiari_fx_wave(picture, full, low, sumiari_fx_phase(T.x, T.y, salt))
 	return picture
 
 /proc/sumiari_fx_tone(tone, alpha)
@@ -7641,8 +7663,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	solid_low[16] *= 1 - SUMIARI_PULSE_DEPTH * 0.5
 	var/turf/T = get_turf(thing)
 	if(T)
-		animate(rim, color = solid_low, time = max(sumiari_moon_pulse, 2) / 2, delay = sumiari_fx_phase(T.x, T.y, 3), loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
-		animate(color = solid, time = max(sumiari_moon_pulse, 2) / 2, easing = SINE_EASING)
+		sumiari_fx_wave(rim, solid, solid_low, sumiari_fx_phase(T.x, T.y, 3))
 	return sumiari_fx_fade_in(rim, sumiari_fx_alpha(SUMIARI_RIM_SPRITE_ALPHA))
 
 // 3) Dew sparkle.
@@ -8758,8 +8779,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 		var/list/solid = frost.color
 		var/list/solid_low = solid.Copy()
 		solid_low[16] *= 1 - SUMIARI_PULSE_DEPTH * 0.5
-		animate(frost, color = solid_low, time = max(sumiari_moon_pulse, 2) / 2, delay = sumiari_fx_phase(T.x, T.y, 11), loop = -1, easing = SINE_EASING, flags = ANIMATION_PARALLEL)
-		animate(color = solid, time = max(sumiari_moon_pulse, 2) / 2, easing = SINE_EASING)
+		sumiari_fx_wave(frost, solid, solid_low, sumiari_fx_phase(T.x, T.y, 11))
 	return frost
 
 // A one-pixel silver line (and a fainter one inside it) along each side of a paving tile that meets earth or grass.
