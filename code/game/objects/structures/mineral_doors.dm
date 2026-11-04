@@ -124,6 +124,7 @@
 		set_opacity(FALSE)
 	density = FALSE
 	door_opened = TRUE
+	sumiari_opening_changed(get_turf(src))
 	layer = OPEN_DOOR_LAYER
 	air_update_turf(1)
 	update_icon()
@@ -138,6 +139,7 @@
 		set_opacity(TRUE)
 	density = TRUE
 	door_opened = FALSE
+	sumiari_opening_changed(get_turf(src))
 	layer = CLOSED_DOOR_LAYER
 	air_update_turf(1)
 	update_icon()
@@ -337,6 +339,7 @@
 	sleep(2)
 	density = FALSE
 	door_opened = TRUE
+	sumiari_opening_changed(get_turf(src))
 	layer = OPEN_DOOR_LAYER
 	air_update_turf(1)
 	update_icon()
@@ -360,6 +363,7 @@
 	if(!windowed)
 		set_opacity(TRUE)
 	door_opened = FALSE
+	sumiari_opening_changed(get_turf(src))
 	layer = initial(layer)
 	air_update_turf(1)
 	update_icon()

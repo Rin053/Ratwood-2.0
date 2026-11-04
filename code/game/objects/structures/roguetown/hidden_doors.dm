@@ -72,6 +72,7 @@
 	sleep(close_delay)
 	density = FALSE
 	door_opened = TRUE
+	sumiari_opening_changed(get_turf(src))
 	layer = OPEN_DOOR_LAYER
 	air_update_turf(TRUE)
 	isSwitchingStates = FALSE
@@ -87,6 +88,7 @@
 	sleep(close_delay)
 	density = FALSE
 	door_opened = TRUE
+	sumiari_opening_changed(get_turf(src))
 	layer = OPEN_DOOR_LAYER
 	air_update_turf(TRUE)
 	isSwitchingStates = FALSE
@@ -109,6 +111,7 @@
 	if(!windowed)
 		set_opacity(TRUE)
 	door_opened = FALSE
+	sumiari_opening_changed(get_turf(src))
 	layer = CLOSED_DOOR_LAYER
 	air_update_turf(TRUE)
 	isSwitchingStates = FALSE
@@ -123,6 +126,7 @@
 	sleep(close_delay)
 	density = TRUE
 	door_opened = FALSE
+	sumiari_opening_changed(get_turf(src))
 	layer = CLOSED_DOOR_LAYER
 	air_update_turf(TRUE)
 	isSwitchingStates = FALSE

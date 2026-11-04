@@ -6377,7 +6377,8 @@ GLOBAL_LIST_INIT(sumiari_shut_types, typecacheof(list(/obj/structure/curtain, /o
 				return TRUE
 		else if(istype(thing, /obj/structure/mineral_door))
 			var/obj/structure/mineral_door/door = thing
-			if(!door.door_opened && !door.windowed)
+			// A door swinging open is clear once its opacity drops, the same moment vanilla light passes.
+			if(!door.door_opened && !door.windowed && !door.isSwitchingStates)
 				return TRUE
 	return FALSE
 
