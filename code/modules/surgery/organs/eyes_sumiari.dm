@@ -8106,21 +8106,30 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 /proc/sumiari_sway_over_bodies(obj/plant)
 	return plant.plane > GAME_PLANE || plant.layer >= ABOVE_MOB_LAYER
 
+// The plant's own sprite and overlays only, riding the plant: nothing else drawn near or with it is copied. The
+// plant's pixel offsets already place the image, so the copy keeps none of its own.
+/proc/sumiari_sway_copy(obj/plant)
+	var/image/copy = image(plant.icon, plant, plant.icon_state, plant.layer, plant.dir)
+	copy.plane = plant.plane
+	copy.color = plant.color
+	copy.alpha = plant.alpha
+	copy.blend_mode = plant.blend_mode
+	copy.appearance_flags = plant.appearance_flags
+	copy.mouse_opacity = plant.mouse_opacity
+	copy.name = plant.name
+	copy.overlays = plant.overlays
+	copy.underlays = plant.underlays
+	return copy
+
 /proc/sumiari_sway_images(obj/plant)
-	var/image/swayed = image(loc = plant)
-	swayed.appearance = plant.appearance
+	var/image/swayed = sumiari_sway_copy(plant)
 	swayed.override = TRUE
-	swayed.loc = plant
-	sumiari_clear_offsets(swayed)
 #if !SUMIARI_SWAY_SHIMMER
 	sumiari_sway_apply(swayed, plant)
 	if(!sumiari_sway_over_bodies(plant))
 		return list(swayed, null)
 	swayed.plane = SUMIARI_SWAY_PLANE
-	var/image/still = image(loc = plant)
-	still.appearance = plant.appearance
-	still.loc = plant
-	sumiari_clear_offsets(still)
+	var/image/still = sumiari_sway_copy(plant)
 	still.plane = SUMIARI_SWAY_REST_PLANE
 	still.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	return list(swayed, still)
