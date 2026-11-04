@@ -8082,6 +8082,7 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	swayed.appearance = plant.appearance
 	swayed.override = TRUE
 	swayed.loc = plant
+	sumiari_clear_offsets(swayed)
 #if !SUMIARI_SWAY_SHIMMER
 	sumiari_sway_apply(swayed, plant)
 	return list(swayed, null)
@@ -8994,14 +8995,14 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 		bad += "sway"
 #endif
 	qdel(tuft)
-	// A redrawn plant sits exactly on the real one: the override replaces the plant's look, offsets included, so an
-	// offset plant (the 64x96 tall bush, pixel_x -16 plus a random -3..3) keeps its own; its lean pivots on its bottom row.
+	// A redrawn plant sits exactly on the real one: the override still rides the plant's own offsets, so an offset
+	// plant (the 64x96 tall bush, pixel_x -16 plus a random -3..3) gets a copy with none; its lean pivots on its bottom row.
 	var/obj/structure/flora/roguegrass/bush/wall/tall/tall_bush = new(spot)
 	var/list/tall_pair = sumiari_sway_images(tall_bush)
 	var/image/tall_swayed = tall_pair[1]
 	var/tall_half = sumiari_sprite_half_height(tall_bush)
 	var/matrix/tall_lean = sumiari_sway_matrix(0.05, tall_half)
-	if(abs(tall_bush.pixel_x + 16) > 3 || tall_swayed.pixel_x != tall_bush.pixel_x || tall_swayed.pixel_y != tall_bush.pixel_y || tall_swayed.pixel_w != tall_bush.pixel_w || tall_swayed.pixel_z != tall_bush.pixel_z || tall_swayed.loc != tall_bush || tall_half != 48 || abs(tall_lean.b * -tall_half + tall_lean.c) > 0.001)
+	if(abs(tall_bush.pixel_x + 16) > 3 || tall_swayed.pixel_x || tall_swayed.pixel_y || tall_swayed.pixel_w || tall_swayed.pixel_z || tall_swayed.loc != tall_bush || tall_half != 48 || abs(tall_lean.b * -tall_half + tall_lean.c) > 0.001)
 		bad += "sway offsets plant=[tall_bush.pixel_x] copy=[tall_swayed.pixel_x],[tall_swayed.pixel_y],[tall_swayed.pixel_w],[tall_swayed.pixel_z] half=[tall_half]"
 	qdel(tall_bush)
 #endif
