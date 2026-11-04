@@ -7351,16 +7351,15 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	for(var/mob/living/body in range(reach(SUMIARI_FX_RANGE), center))
 		seen[body] = TRUE
 		var/image/shown = fx_bodies?[body]
-		if(shown)
-			if(fx_body_looks?[body] != body.appearance)
-				fx_body_client.images -= shown
-				shown = null
-			else
-				continue
+		if(shown && fx_body_looks?[body] == body.appearance)
+			continue
+		// The new shape goes in before the old one leaves, so the body is never unmasked.
 		var/image/mask = sumiari_body_mask_image(body)
 		LAZYSET(fx_bodies, body, mask)
 		LAZYSET(fx_body_looks, body, body.appearance)
 		fx_body_client.images += mask
+		if(shown)
+			fx_body_client.images -= shown
 	for(var/mob/living/body as anything in fx_bodies)
 		if(seen[body])
 			continue
