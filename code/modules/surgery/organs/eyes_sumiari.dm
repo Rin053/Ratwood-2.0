@@ -855,6 +855,10 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/spill_full_at = -1
 	// The bleed list the spill cuts were drawn from. At night an unchanged list means the cuts are still right.
 	var/list/spill_map
+	// The level below the view, seen through its holes: the same bleed, cliff, seal and spill state as above, kept
+	// here while the passes run for the view's own level (see lower_level_tick). level_center is that pass's center.
+	var/list/lower_level_state
+	var/turf/level_center
 	// world.time of the last cliff/spill/effect pass, and the turf it was built at, so a move and a beauty tick in the
 	// same tick do the walk once.
 	var/terrain_at = -1
@@ -4532,6 +4536,7 @@ GLOBAL_DATUM(sumiari_light_marker, /obj/effect/sumiari_light_marker)
 	sumiari_scan_cache_begin()
 	cliff_tick()
 	spill_tick()
+	lower_level_tick()
 	fx_tick(moved)
 	sumiari_scan_cache_end()
 
@@ -5159,6 +5164,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	clear_spare()
 	clear_cliffs()
 	clear_spill()
+	clear_lower_level()
 	clear_fx()
 
 /obj/item/organ/eyes/sumiari/proc/clear_beauty()
@@ -5193,6 +5199,8 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 // reset_perspective calls sumiari_look_shifted, so that pass happens in the same moment as the look, not on the
 // next beauty tick.
 /obj/item/organ/eyes/sumiari/proc/view_turf()
+	if(level_center)
+		return level_center
 	var/client/viewer = owner?.client
 	if(viewer && viewer.perspective == EYE_PERSPECTIVE && viewer.eye && viewer.eye != owner)
 		var/turf/eye_turf = get_turf(viewer.eye)
@@ -6019,6 +6027,56 @@ var/global/sumiari_moon_spares_enabled = TRUE
 	spill_full_at = -1
 	spill_map = null
 	bleed_cache = null
+
+GLOBAL_LIST_INIT(sumiari_level_vars, list("spill_client", "spill_images", "spill_keys", "bleed_cache", "bleed_cache_at", \
+	"bleed_raw", "bleed_floor", "bleed_z", "bleed_filled", "bleed_slid", "cliff_drawn", "cliff_center", "cliff_indoors", \
+	"spill_center", "spill_indoors", "spill_sample", "spill_sample_set", "spill_full_at", "spill_map", "cliff_client", \
+	"cliff_images", "cliff_keys", "seal_images", "seal_keys"))
+
+// Puts the lower level's bleed, cliff, seal and spill state in place of the view level's, or back.
+/obj/item/organ/eyes/sumiari/proc/swap_level_state()
+	var/list/held = lower_level_state || list("spill_full_at" = -1, "bleed_cache_at" = 0, "bleed_z" = 0, "bleed_filled" = 0, "spill_sample" = 0)
+	var/list/current = list()
+	for(var/name in GLOB.sumiari_level_vars)
+		current[name] = vars[name]
+		vars[name] = held[name]
+	lower_level_state = current
+
+// The level under the view as its holes show it. Vanilla draws a lower turf's own sun and lighting overlays through
+// the hole (the turf rides the hole's vis_contents), so the wall faces, seals and cuts for that level go on its own
+// turfs, as images on the same planes, and ride the same way. The pass is the one cliff_tick and spill_tick run for
+// the view, centered on the tile below it.
+/obj/item/organ/eyes/sumiari/proc/lower_level_tick()
+	var/turf/center = view_turf()
+	var/turf/below = center && GET_TURF_BELOW(center)
+	if(!below || !vision_on || !owner?.client || !sumiari_holes_near(center, reach(SUMIARI_CLIFF_RANGE)))
+		clear_lower_level()
+		return
+	swap_level_state()
+	if(bleed_z && bleed_z != below.z)
+		clear_cliffs()
+		clear_spill()
+	level_center = below
+	cliff_tick()
+	spill_tick()
+	level_center = null
+	swap_level_state()
+
+/obj/item/organ/eyes/sumiari/proc/clear_lower_level()
+	if(!lower_level_state)
+		return
+	swap_level_state()
+	clear_cliffs()
+	clear_spill()
+	swap_level_state()
+	lower_level_state = null
+
+// Any hole in the floor within dist of center.
+/proc/sumiari_holes_near(turf/center, dist)
+	for(var/turf/T as anything in block(locate(max(center.x - dist, 1), max(center.y - dist, 1), center.z), locate(min(center.x + dist, world.maxx), min(center.y + dist, world.maxy), center.z)))
+		if(istransparentturf(T))
+			return TRUE
+	return FALSE
 
 // The floor a hole actually shows: the first solid turf under it, walking through stacked holes.
 /proc/sumiari_seen_floor(turf/hole)
