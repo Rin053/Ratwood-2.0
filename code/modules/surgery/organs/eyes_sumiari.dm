@@ -366,6 +366,11 @@
 #define SUMIARI_FX_UPPER_TARGET "*sumiari_fx_upper"
 #define SUMIARI_FX_BODIES_PLANE -72
 #define SUMIARI_FX_BODIES_TARGET "*sumiari_fx_bodies"
+// A plant drawn over bodies sways on its own plane, cut where a body stands; its still copy fills those cuts.
+#define SUMIARI_SWAY_PLANE -73
+#define SUMIARI_SWAY_TARGET "*sumiari_sway"
+#define SUMIARI_SWAY_REST_PLANE -74
+#define SUMIARI_SWAY_REST_TARGET "*sumiari_sway_rest"
 // Deciseconds a body mask takes to come in or go.
 #define SUMIARI_FX_BODY_FADE 6
 // One blessing, not separate tricks. Every moon effect breathes with one slow moon pulse and draws from one palette.
@@ -479,11 +484,6 @@
 #define SUMIARI_SWAY_MAX 110
 #define SUMIARI_SWAY_SKEW 0.045
 #define SUMIARI_SWAY_PERIOD 34
-// Deciseconds a bush takes to settle when a body comes near, and to lean again once it leaves.
-#define SUMIARI_SWAY_EASE 3
-// Tiles of margin around a bush that count as near, and how often (deciseconds) bodies are checked.
-#define SUMIARI_SWAY_GUARD 2
-#define SUMIARI_SWAY_GUARD_INTERVAL 2
 // Off: the silver shimmer over swaying plants. The sway itself stays on.
 #define SUMIARI_SWAY_SHIMMER 0
 #define SUMIARI_SWAY_SHIMMER_LOW 14
@@ -923,8 +923,6 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	// view, filled once per scan so the tile loop does not recompute them.
 	var/fx_sway_count = 0
 	// Swaying plants that draw over bodies: override key -> plant, and the keys held still while a body is near.
-	var/list/fx_sway_plants
-	var/list/fx_sway_still
 	var/cap_sway = 0
 	// Fog: wisps this scan.
 	var/fx_fog_count = 0
@@ -957,7 +955,6 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	// Bloom: how open the night flowers are drawn right now (null until the first scan).
 	var/fx_bloom
 	var/beauty_timer
-	var/sway_guard_timer
 	var/list/glint_images
 	var/list/glint_spots
 	// image -> list(anchor atom, pixel x, pixel y). Beauty images live on their anchor (a glint on its tile, a
@@ -1469,6 +1466,12 @@ var/global/turf/sumiari_test_dark_turf
 		if(source.blend_mode == BLEND_MULTIPLY)
 			plane_look = null
 		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = plane_look)
+#if SUMIARI_MOON_FX
+		// Plants over bodies: swaying away from bodies, still over them, graded as the plane they came from.
+		if(plane == GAME_PLANE_UPPER)
+			stacked += filter(type = "layer", render_source = SUMIARI_SWAY_REST_TARGET, blend_mode = BLEND_OVERLAY, color = plane_look)
+			stacked += filter(type = "layer", render_source = SUMIARI_SWAY_TARGET, blend_mode = BLEND_OVERLAY, color = plane_look)
+#endif
 #if SUMIARI_MOON_FX
 		// The moon effects that belong with this plane, right on top of it, in their own colors (no moon grade).
 		var/fx_plane = sumiari_fx_plane_for(plane)
@@ -5165,8 +5168,6 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	return sumiari_turf_intensity(T) < SUMIARI_SENSE_DARK_MAX
 
 /obj/item/organ/eyes/sumiari/proc/start_night_beauty()
-	if(owner && !sway_guard_timer)
-		sway_guard_timer = addtimer(CALLBACK(src, PROC_REF(sway_guard)), SUMIARI_SWAY_GUARD_INTERVAL, TIMER_STOPPABLE | TIMER_LOOP)
 #if SUMIARI_NIGHT_GLINTS || SUMIARI_NIGHT_FLORA
 	if(!owner || beauty_timer)
 		return
@@ -5175,9 +5176,6 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 #endif
 
 /obj/item/organ/eyes/sumiari/proc/stop_night_beauty()
-	if(sway_guard_timer)
-		deltimer(sway_guard_timer)
-		sway_guard_timer = null
 	if(beauty_timer)
 		deltimer(beauty_timer)
 		beauty_timer = null
@@ -7087,6 +7085,30 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	render_target = SUMIARI_FX_BODIES_TARGET
 
+/atom/movable/screen/plane_master/sumiari_sway
+	name = "sumiari swaying plants plane master"
+	plane = SUMIARI_SWAY_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_SWAY_TARGET
+
+/atom/movable/screen/plane_master/sumiari_sway/backdrop(mob/mymob)
+	. = ..()
+	filters = list(filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE))
+
+/atom/movable/screen/plane_master/sumiari_sway_rest
+	name = "sumiari still plants plane master"
+	plane = SUMIARI_SWAY_REST_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_SWAY_REST_TARGET
+
+/atom/movable/screen/plane_master/sumiari_sway_rest/backdrop(mob/mymob)
+	. = ..()
+	filters = list(filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET))
+
 // The hidden effect plane layered right after a world plane, or null.
 /proc/sumiari_fx_plane_for(host_plane)
 	switch(host_plane)
@@ -7233,8 +7255,6 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	clear_spirits()
 	fx_bloom = null
 	fx_images = null
-	fx_sway_plants = null
-	fx_sway_still = null
 	fx_states = null
 	fx_center = null
 	fx_age = 0
@@ -8011,50 +8031,15 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 			var/list/pair = sumiari_sway_images(plant)
 			sumiari_fx_tile_share = 1
 			fx_put(key, state, pair[1])
-			sway_register(key, plant)
+			if(pair[2])
+				fx_put("[key]r", state, pair[2])
+		if(sumiari_sway_over_bodies(plant))
+			wanted["[key]r"] = TRUE
 #if SUMIARI_SWAY_SHIMMER
 			fx_put("[key]g", state, pair[2])
 		else
 			wanted["[key]g"] = TRUE
 #endif
-
-// A plant drawn over bodies (bushes on GAME_PLANE_UPPER) is watched so its lean never slides across one.
-/obj/item/organ/eyes/sumiari/proc/sway_register(key, obj/plant)
-	LAZYREMOVE(fx_sway_still, key)
-	if(plant.plane <= GAME_PLANE && plant.layer < ABOVE_MOB_LAYER)
-		LAZYREMOVE(fx_sway_plants, key)
-		return
-	LAZYSET(fx_sway_plants, key, plant)
-	if(sumiari_sway_body_near(plant, sway_bodies()))
-		sway_hold(key, plant, 0)
-
-// A living body within SWAY_GUARD tiles of any tile the plant's sprite covers; bodies is a list of turfs.
-/proc/sumiari_sway_body_near(obj/plant, list/bodies)
-	var/turf/T = get_turf(plant)
-	if(!T || !length(bodies))
-		return FALSE
-	var/list/size = sumiari_sprite_size(plant)
-	var/x0 = T.x + FLOOR(plant.pixel_x / world.icon_size, 1) - SUMIARI_SWAY_GUARD
-	var/x1 = T.x + FLOOR((plant.pixel_x + size[1] - 1) / world.icon_size, 1) + SUMIARI_SWAY_GUARD
-	var/y0 = T.y + FLOOR(plant.pixel_y / world.icon_size, 1) - SUMIARI_SWAY_GUARD
-	var/y1 = T.y + FLOOR((plant.pixel_y + size[2] - 1) / world.icon_size, 1) + SUMIARI_SWAY_GUARD
-	for(var/turf/spot as anything in bodies)
-		if(spot.z == T.z && spot.x >= x0 && spot.x <= x1 && spot.y >= y0 && spot.y <= y1)
-			return TRUE
-	return FALSE
-
-// Turfs of living bodies near the view, on any level, gathered once per guard tick.
-/obj/item/organ/eyes/sumiari/proc/sway_bodies()
-	var/turf/center = view_turf()
-	var/list/bodies = list()
-	if(!center)
-		return bodies
-	var/far = reach(SUMIARI_FX_RANGE) + SUMIARI_SWAY_GUARD + 2
-	for(var/mob/living/L as anything in GLOB.mob_living_list)
-		var/turf/spot = get_turf(L)
-		if(spot && abs(spot.z - center.z) <= 1 && abs(spot.x - center.x) <= far && abs(spot.y - center.y) <= far)
-			bodies += spot
-	return bodies
 
 /proc/sumiari_sprite_size(obj/thing)
 	var/static/list/sizes = list()
@@ -8063,52 +8048,6 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 		var/icon/I = icon(thing.icon)
 		sizes[cache] = list(I.Width(), I.Height())
 	return sizes[cache]
-
-// The lean eases to the plant's rest pose, so the copy sits on the vanilla sprite over the body.
-/obj/item/organ/eyes/sumiari/proc/sway_hold(key, obj/plant, time = SUMIARI_SWAY_EASE)
-	var/image/picture = fx_images?[key]
-	if(!picture)
-		return
-	LAZYSET(fx_sway_still, key, TRUE)
-	var/matrix/base = plant.transform ? matrix(plant.transform) : matrix()
-	if(time)
-		animate(picture, transform = base, time = time, easing = SINE_EASING)
-	else
-		animate(picture)
-		picture.transform = base
-
-// Eases from rest into the sway's starting lean, then sways again.
-/obj/item/organ/eyes/sumiari/proc/sway_release(key, obj/plant)
-	var/image/picture = fx_images?[key]
-	LAZYREMOVE(fx_sway_still, key)
-	if(!picture)
-		return
-	var/matrix/base = plant.transform ? matrix(plant.transform) : matrix()
-	var/list/params = sumiari_sway_params(plant)
-	animate(picture, transform = base * sumiari_sway_matrix(-params[2] * 0.6, sumiari_sprite_half_height(plant)), time = SUMIARI_SWAY_EASE, easing = SINE_EASING)
-	addtimer(CALLBACK(src, PROC_REF(sway_resume), key, plant, picture), SUMIARI_SWAY_EASE)
-
-/obj/item/organ/eyes/sumiari/proc/sway_resume(key, obj/plant, image/picture)
-	if(QDELETED(src) || QDELETED(plant) || fx_images?[key] != picture || fx_sway_still?[key])
-		return
-	sumiari_sway_apply(picture, plant)
-
-// Holds or frees each watched plant as bodies come and go.
-/obj/item/organ/eyes/sumiari/proc/sway_guard()
-	if(QDELETED(src) || !length(fx_sway_plants))
-		return
-	var/list/bodies = sway_bodies()
-	for(var/key in fx_sway_plants)
-		var/obj/plant = fx_sway_plants[key]
-		if(QDELETED(plant) || !fx_images?[key])
-			LAZYREMOVE(fx_sway_plants, key)
-			LAZYREMOVE(fx_sway_still, key)
-			continue
-		var/near = sumiari_sway_body_near(plant, bodies)
-		if(near && !fx_sway_still?[key])
-			sway_hold(key, plant)
-		else if(!near && fx_sway_still?[key])
-			sway_release(key, plant)
 
 // A plant's own sway: period, signed depth and phase seed, fixed per plant (from where it stands and how it is
 // offset), so anything that sways with it (shimmer, frost) is built to the same motion.
@@ -8162,7 +8101,11 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 			look[(input - 1) * 4 + output] = luma[input] * 1.6 * tone[output] / 255
 	return look
 
-// list(override, shimmer): the plant swaying for this viewer only, and its silver shimmer swaying with it.
+// list(override, shimmer or still copy): the plant swaying for this viewer only. A plant drawn over bodies sways on
+// the sway plane and gets a still copy on the rest plane, so a body inside or behind it is never moved over.
+/proc/sumiari_sway_over_bodies(obj/plant)
+	return plant.plane > GAME_PLANE || plant.layer >= ABOVE_MOB_LAYER
+
 /proc/sumiari_sway_images(obj/plant)
 	var/image/swayed = image(loc = plant)
 	swayed.appearance = plant.appearance
@@ -8171,7 +8114,16 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 	sumiari_clear_offsets(swayed)
 #if !SUMIARI_SWAY_SHIMMER
 	sumiari_sway_apply(swayed, plant)
-	return list(swayed, null)
+	if(!sumiari_sway_over_bodies(plant))
+		return list(swayed, null)
+	swayed.plane = SUMIARI_SWAY_PLANE
+	var/image/still = image(loc = plant)
+	still.appearance = plant.appearance
+	still.loc = plant
+	sumiari_clear_offsets(still)
+	still.plane = SUMIARI_SWAY_REST_PLANE
+	still.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	return list(swayed, still)
 #else
 	var/turf/T = get_turf(plant)
 	var/image/shimmer = image(plant.icon, plant, plant.icon_state)
