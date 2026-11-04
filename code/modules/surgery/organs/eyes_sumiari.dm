@@ -5264,7 +5264,9 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	bleed_cache = null
 	glint_center = null
 	fx_center = null
-	// Glints live on the old level's tiles; the halos, effects, wall faces and cuts drop theirs on the next pass.
+	reroute_level(new_z)
+	// Glints live on the old level's tiles. Halos and effects kept for the new view take its planes above; wall faces
+	// and cuts redo on the pass that follows.
 	for(var/image/glint as anything in glint_images)
 		beauty_client?.images -= glint
 		LAZYREMOVE(beauty_anchors, glint)
@@ -6036,12 +6038,28 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			return FALSE
 	return above?.z == z
 
+// The plane and layer an image had before sumiari_level_route sent it to OPENSPACE_PLANE, so it can go back.
+/image/var/sumiari_home_plane
+/image/var/sumiari_home_layer
+
 // An image on a level below z draws on OPENSPACE_PLANE, where vanilla puts everything a hole shows, so it takes
 // that plane's blur and the backdrop's dim like the floor under it. Its layer keeps its place among that floor's things.
+// On z itself (or above) it draws on its own plane. Safe to call again whenever the viewed level changes.
 /proc/sumiari_level_route(image/picture, z)
 	var/turf/T = get_turf(picture?.loc)
-	if(!T || !z || T.z >= z)
+	if(!T || !z)
 		return picture
+	if(T.z >= z)
+		if(!isnull(picture.sumiari_home_plane))
+			picture.plane = picture.sumiari_home_plane
+			picture.layer = picture.sumiari_home_layer
+			picture.sumiari_home_plane = null
+			picture.sumiari_home_layer = null
+		return picture
+	if(!isnull(picture.sumiari_home_plane))
+		return picture
+	picture.sumiari_home_plane = picture.plane
+	picture.sumiari_home_layer = picture.layer
 	switch(picture.plane)
 		if(SUMIARI_FX_FLOOR_PLANE, SUMIARI_FX_LOWER_PLANE)
 			picture.layer = BELOW_MOB_LAYER + 0.05
@@ -6051,6 +6069,22 @@ var/global/sumiari_moon_spares_enabled = TRUE
 			picture.layer = ABOVE_ALL_MOB_LAYER + 0.05
 	picture.plane = OPENSPACE_PLANE
 	return picture
+
+// The viewed level changed (a look up or down, or its return): every effect already shown moves to the plane the new
+// view gives its tile, in place, so nothing is rebuilt and no animation starts over.
+/obj/item/organ/eyes/sumiari/proc/reroute_level(z)
+	for(var/key in fx_images)
+		sumiari_level_route(fx_images[key], z)
+	for(var/plant in flora_images)
+		sumiari_level_route(flora_images[plant], z)
+	for(var/image/picture as anything in fx_petals)
+		sumiari_level_route(picture, z)
+	for(var/image/picture as anything in fx_steps)
+		sumiari_level_route(picture, z)
+	for(var/image/picture as anything in fx_dew_images)
+		sumiari_level_route(picture, z)
+	for(var/image/picture as anything in fx_spirits)
+		sumiari_level_route(picture, z)
 
 // Every step and every beauty tick, day or night, while the vision is on: roofed tiles around the owner whose vanilla
 // sun spill has a corner the bleed walk cannot reach get the cut image (see SUMIARI_SKY_SPILL_CUT).
