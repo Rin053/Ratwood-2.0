@@ -5274,7 +5274,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	apply_wash_filters()
 	return TRUE
 
-// Look up, look down, or back to the body. Drop the holds and run the same pass the beauty tick would, now.
+// Look up, look down, a pan, or back to the body. Drop the holds and run the same pass the beauty tick would, now.
 /proc/sumiari_look_shifted(mob/living/who)
 	if(!iscarbon(who))
 		return
@@ -5298,7 +5298,8 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	if(!vision_on || !owner?.client)
 		return
 	var/turf/looking = view_turf()
-	if(looking && looking.z == last_view_z && terrain_center == looking)
+	var/reach_changed = refresh_view_reach()
+	if(!reach_changed && looking && looking.z == last_view_z && terrain_center == looking)
 		return
 	drop_holds()
 	beauty_tick()

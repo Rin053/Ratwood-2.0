@@ -2398,6 +2398,8 @@
 	else
 		visible_message(message)
 	animate(client, pixel_x = world.icon_size*_x, pixel_y = world.icon_size*_y, ttime)
+	// The moon effects cover the panned view from this moment, not the next beauty tick.
+	sumiari_look_shifted(src)
 //	RegisterSignal(src, COMSIG_MOVABLE_PRE_MOVE, PROC_REF(stop_looking))
 	update_cone_show()
 
@@ -2447,6 +2449,7 @@
 	if(client)
 		client.pixel_x = 0
 		client.pixel_y = 0
+	sumiari_look_shifted(src)
 	if(isdullahan(src))
 		var/mob/living/carbon/human/human = src
 		var/obj/item/organ/dullahan_vision/vision = human.getorganslot(ORGAN_SLOT_HUD)
