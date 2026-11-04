@@ -364,6 +364,10 @@
 #define SUMIARI_FX_LOWER_TARGET "*sumiari_fx_lower"
 #define SUMIARI_FX_GAME_TARGET "*sumiari_fx_game"
 #define SUMIARI_FX_UPPER_TARGET "*sumiari_fx_upper"
+#define SUMIARI_FX_BODIES_PLANE -68
+#define SUMIARI_FX_BODIES_TARGET "*sumiari_fx_bodies"
+// Deciseconds a body mask takes to come in or go.
+#define SUMIARI_FX_BODY_FADE 6
 // One blessing, not separate tricks. Every moon effect breathes with one slow moon pulse and draws from one palette.
 // MOON_INTENSITY scales every effect's strength at once (1 is the balanced look; 0.5 subtle, 1.5 lavish); MOON_PULSE is
 // the breath's period. The breath is a slow wave rolling across the land (PULSE_WAVE tiles per period, with a little
@@ -944,6 +948,9 @@ GLOBAL_LIST_INIT(sumiari_vision_plane_order, list(
 	var/fx_frost_step = 0
 	// Footprints glowing right now (image -> expiry).
 	var/list/fx_steps
+	// Living mob -> its body mask image; masks fading out -> world.time to drop them.
+	var/list/fx_bodies
+	var/list/fx_bodies_gone
 	// Moon spirits in the air (image -> expiry), their trail motes, and when the next one may show.
 	var/list/fx_spirits
 	var/fx_spirit_next = 0
@@ -7061,6 +7068,21 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	render_target = SUMIARI_FX_UPPER_TARGET
 
+// Canopy effects (beams, wisps, falling petals) draw above the mob plane, so they are cut by the body masks:
+// a living body is never washed, dimmed or shown through by a moon effect; trees and objects keep them.
+/atom/movable/screen/plane_master/sumiari_fx_upper/backdrop(mob/mymob)
+	. = ..()
+	filters = list(filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE))
+
+// Hidden: one soft body shape per living mob in sight, riding on the mob so it moves and glides with it.
+/atom/movable/screen/plane_master/sumiari_fx_bodies
+	name = "sumiari moon effects (body mask) plane master"
+	plane = SUMIARI_FX_BODIES_PLANE
+	appearance_flags = PLANE_MASTER
+	blend_mode = BLEND_OVERLAY
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	render_target = SUMIARI_FX_BODIES_TARGET
+
 // The hidden effect plane layered right after a world plane, or null.
 /proc/sumiari_fx_plane_for(host_plane)
 	switch(host_plane)
@@ -7198,6 +7220,12 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	for(var/image/print as anything in fx_steps)
 		fx_client?.images -= print
 	fx_steps = null
+	for(var/mob/living/body as anything in fx_bodies)
+		fx_client?.images -= fx_bodies[body]
+	for(var/image/mask as anything in fx_bodies_gone)
+		fx_client?.images -= mask
+	fx_bodies = null
+	fx_bodies_gone = null
 	clear_spirits()
 	fx_bloom = null
 	fx_images = null
@@ -7248,9 +7276,60 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 			fx_scan(center)
 		else
 			fx_scan(center, was)
+	fx_body_masks(center)
 	if(!moved)
 		fx_live(center)
 #endif
+
+// Keeps one body mask on every living mob in effect reach; a mask fades in and out so nothing pops.
+/obj/item/organ/eyes/sumiari/proc/fx_body_masks(turf/center)
+	var/list/seen = list()
+	for(var/mob/living/body in range(reach(SUMIARI_FX_RANGE), center))
+		seen[body] = TRUE
+		if(fx_bodies?[body])
+			continue
+		var/image/mask = sumiari_body_mask_image(body)
+		LAZYSET(fx_bodies, body, mask)
+		fx_client.images += mask
+		animate(mask, alpha = 255, time = SUMIARI_FX_BODY_FADE, easing = SINE_EASING)
+	for(var/mob/living/body as anything in fx_bodies)
+		if(seen[body])
+			continue
+		var/image/mask = fx_bodies[body]
+		LAZYREMOVE(fx_bodies, body)
+		if(QDELETED(body))
+			fx_client.images -= mask
+			continue
+		animate(mask, alpha = 0, time = SUMIARI_FX_BODY_FADE, easing = SINE_EASING)
+		LAZYSET(fx_bodies_gone, mask, world.time + SUMIARI_FX_BODY_FADE + 1)
+	for(var/image/mask as anything in fx_bodies_gone)
+		if(world.time >= fx_bodies_gone[mask])
+			fx_client.images -= mask
+			LAZYREMOVE(fx_bodies_gone, mask)
+
+/proc/sumiari_body_mask_image(mob/living/body)
+	var/image/mask = image(sumiari_body_mask_icon(), body)
+	mask.plane = SUMIARI_FX_BODIES_PLANE
+	mask.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART | TILE_BOUND
+	mask.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	mask.alpha = 0
+	return mask
+
+// 32x32 soft body column: solid over the figure, feathered at the sides and the top so the cut has no edge.
+/proc/sumiari_body_mask_icon()
+	var/static/icon/made
+	if(made)
+		return made
+	var/icon/shape = sumiari_blank_icon()
+	for(var/py in 1 to 32)
+		var/up = clamp((33 - py) / 3, 0, 1)
+		for(var/px in 1 to 32)
+			var/side = clamp((min(px - 4, 29 - px)) / 4, 0, 1)
+			var/a = round(255 * up * side)
+			if(a > 0)
+				shape.DrawBox(rgb(255, 255, 255, a), px, py)
+	made = shape
+	return made
 
 // was is the previous center when this is a one-tile slide; null scans the whole square.
 /obj/item/organ/eyes/sumiari/proc/fx_scan(turf/center, turf/was)
