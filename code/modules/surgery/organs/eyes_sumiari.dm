@@ -665,8 +665,8 @@
 #define SUMIARI_WASH_INK "ink"
 #define SUMIARI_WASH_COLOR "color"
 // The mask, cookie, knee, dim and moon plates, each a master plus the child that draws the capture,
-// plus the ink, sun, dim and moon relays, with a little headroom.
-#define SUMIARI_PIECE_CAP 42
+// plus the ink, sun, dim, moon and body relays, with a little headroom.
+#define SUMIARI_PIECE_CAP 43
 // Covers a 15x15 view (radius 7). Opaque walls and trees still block sight. This is not x-ray.
 // A wider client view (zoomed out) raises it by the view's extra radius (sumiari view_extra), up to VIEW_EXTRA_MAX.
 #define SUMIARI_SEE_IN_DARK 8
@@ -1622,8 +1622,8 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 			var/list/lamp_filters = world_stack_filters()
 			lamp_filters += filter(type = "color", color = sumiari_scale_matrix_rgb(sumiari_color_matrix(SUMIARI_MONO_FULL, 0), SUMIARI_MOON_LUMINANCE - 1 + SUMIARI_MOON_LAMP_LIFT))
 			lamp_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MASK))
-			lamp_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT))
 			lamp_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE)
+			lamp_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_SKYLIGHT))
 			lamp.filters = lamp_filters
 			lamp.alpha = 255
 	if(dim)
@@ -1650,22 +1650,22 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 	if(ink)
 		var/list/ink_filters = world_stack_filters()
 		ink_filters += filter(type = "color", color = sumiari_color_matrix(SUMIARI_MONO_FULL, 0))
-		ink_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MASK))
 		// Every relay leaves living bodies out: they show exactly as in normal vision.
 		ink_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE)
+		ink_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MASK))
 		ink.filters = ink_filters
 		ink.alpha = 255
 	if(sun)
 		var/list/sun_filters = world_stack_filters()
 		sun_filters += filter(type = "color", color = sumiari_sun_haze_matrix())
-		sun_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_GLARE))
 		sun_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE)
+		sun_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_GLARE))
 		sun.filters = sun_filters
 		sun.alpha = 255
 	if(moon)
 		var/list/moon_filters = moon_stack_filters()
-		moon_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON))
 		moon_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET, flags = MASK_INVERSE)
+		moon_filters += filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON))
 		moon.filters = moon_filters
 		moon.alpha = 255
 
