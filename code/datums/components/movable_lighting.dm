@@ -161,6 +161,9 @@
 /datum/component/overlay_lighting/proc/add_dynamic_lumi(atom/movable/affected_movable)
 	LAZYSET(affected_movable.affected_dynamic_lights, src, lumcount_range + 1)
 	affected_movable.vis_contents += visible_mask
+	// The parent's own sprite is the light. A holder (a mob with a torch) keeps its color: the cookie covers it.
+	if(affected_movable == parent)
+		affected_movable.sumiari_mark_light_source(TRUE)
 	affected_movable.update_dynamic_luminosity()
 
 
@@ -168,6 +171,7 @@
 /datum/component/overlay_lighting/proc/remove_dynamic_lumi(atom/movable/affected_movable)
 	LAZYREMOVE(affected_movable.affected_dynamic_lights, src)
 	affected_movable.vis_contents -= visible_mask
+	affected_movable.sumiari_mark_light_source(FALSE)
 	affected_movable.update_dynamic_luminosity()
 
 
@@ -237,6 +241,7 @@
 ///Called when current_holder changes loc.
 /datum/component/overlay_lighting/proc/on_holder_moved(atom/movable/source, OldLoc, Dir, Forced)
 	SIGNAL_HANDLER
+	sumiari_lit_place(parent, FALSE)
 	if(!(overlay_lighting_flags & LIGHTING_ON))
 		return
 	make_luminosity_update()
@@ -245,6 +250,7 @@
 ///Called when parent changes loc.
 /datum/component/overlay_lighting/proc/on_parent_moved(atom/movable/source, OldLoc, Dir, Forced)
 	SIGNAL_HANDLER
+	sumiari_lit_place(parent, FALSE)
 	var/atom/movable/movable_parent = parent
 	if(overlay_lighting_flags & LIGHTING_ATTACHED)
 		set_parent_attached_to(ismovable(movable_parent.loc) ? movable_parent.loc : null)
@@ -266,6 +272,7 @@
 ///Called when parent_attached_to changes loc.
 /datum/component/overlay_lighting/proc/on_parent_attached_to_moved(atom/movable/source, OldLoc, Dir, Forced)
 	SIGNAL_HANDLER
+	sumiari_lit_place(parent, FALSE)
 	check_holder()
 	if(!(overlay_lighting_flags & LIGHTING_ON) || !current_holder)
 		return
@@ -338,6 +345,7 @@
 	if(current_holder)
 		add_dynamic_lumi(current_holder)
 	overlay_lighting_flags |= LIGHTING_ON
+	sumiari_lit_place(parent)
 	get_new_turfs()
 
 
@@ -348,6 +356,7 @@
 	if(current_holder)
 		remove_dynamic_lumi(current_holder)
 	overlay_lighting_flags &= ~LIGHTING_ON
+	sumiari_lit_drop(parent)
 	clean_old_turfs()
 
 

@@ -59,6 +59,8 @@
 			light.update(.)
 		else
 			light = new/datum/light_source(src, .)
+	// Sumiari eyes wash an emitter's own sprite. The marker draws only on a hidden plane.
+	sumiari_mark_light_source(!!light)
 
 
 /atom/proc/set_light_range(new_inner_range, new_outer_range)
@@ -132,6 +134,8 @@
 	else
 		T.opaque_atom_count--
 	T.reconsider_lights()
+	// Moonlight uses the same opacity vanilla light does. Rebuild it now, not on the bleed hold.
+	sumiari_opening_changed(T)
 
 // No /atom/movable/Moved override here, that's handled by a signal now.
 
