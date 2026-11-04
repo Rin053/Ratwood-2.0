@@ -1604,7 +1604,9 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 		body.filters = null
 		if(wash_mode == SUMIARI_WASH_LIVE)
 			var/list/body_filters = world_stack_filters()
+			// The lighting capture has holes where movable lights draw; the cookie capture fills them.
 			body_filters += filter(type = "layer", render_source = SUMIARI_LIGHTING_SOURCE, blend_mode = BLEND_MULTIPLY)
+			body_filters += filter(type = "layer", render_source = SUMIARI_OLIGHT_SOURCE, blend_mode = BLEND_MULTIPLY)
 			body_filters += filter(type = "alpha", render_source = SUMIARI_FX_BODIES_TARGET)
 			body.filters = body_filters
 			body.alpha = 255
