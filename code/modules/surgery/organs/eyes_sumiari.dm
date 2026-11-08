@@ -87,7 +87,7 @@
 // The mask is only sky * strength: a roofed room or cave is black on the sky plane and keeps plain color.
 #define SUMIARI_MOON_VIVID 1
 // Saturation around Rec.709 luma. 1 is normal color. The highlight knee below keeps bright greens and blues from clipping flat.
-#define SUMIARI_MOON_SATURATION 2
+#define SUMIARI_MOON_SATURATION 1.75
 // Faint silver sheen: this fraction of the pixel is the cool silver ink (SILVER_R/G/B above). It is a tint,
 // not a lift: the moonlit layer keeps the plain image's brightness, only the colors are richer.
 #define SUMIARI_MOON_SHEEN 0.3
@@ -99,8 +99,8 @@
 // moonlit ground reads as lit by the moon rather than as dark art. Bright pixels clip softly into the moon glow.
 // 1 = the plain image's brightness.
 #define SUMIARI_MOON_LUMINANCE 1.5
-// Soft highlight knee on the moonlit layer. A color matrix is linear, so luminance 1.5 and saturation 2 pushed
-// bright greens, blues and whites past 1, where they clipped flat. With the knee each world plane is graded at
+// Soft highlight knee on the moonlit layer. A color matrix is linear, so luminance 1.5 and saturation 1.75 push
+// bright greens, blues and whites past 1, where they clip flat. With the knee each world plane is graded at
 // 1 / LUMINANCE (nothing clips there), a second copy subtracts SLOPE * (graded - START / LUMINANCE) (the subtract
 // clamps at 0, so it only touches highlights), and the gain is put back once on the whole stack. Output rises
 // 1:1 up to KNEE_START, then at (1 - SLOPE) of the rate, so highlights roll into the glow instead of clipping.
@@ -108,6 +108,9 @@
 #define SUMIARI_MOON_KNEE 1
 #define SUMIARI_MOON_KNEE_START 0.72
 #define SUMIARI_MOON_KNEE_SLOPE 0.55
+// Floors and walls hold snow, pale stone and the hot spring. A steeper knee there brings those highlights
+// under 1. Objects, blossoms and mobs keep KNEE_SLOPE, so a character is not faded.
+#define SUMIARI_MOON_FLOOR_KNEE_SLOPE 0.78
 // Hue shifts. Colors pop by moving hue, not by brightening. Each push below is a raw nudge on one input channel's
 // row of the color matrix. The sum is projected (sumiari_moon_hue_matrix) so every row keeps its Rec.709 luma
 // (a pushed channel is paid for by the others) and every column sums to 0 (gray stays gray). A linear matrix
@@ -206,12 +209,17 @@
 // (none under roofs, in caves or at a fire, faded with dusk and dawn) and adds it back softened, with a bloom halo.
 // So moonlit surfaces glow violet in proportion to how bright the moon makes them, while shadows and blacks stay
 // deep. Mob pixels are cut before the blur, so no mob gets an outline.
+// A pale floor (hot-spring water, snow) is already bright, and a linear gain turns it into a white field, then the
+// bloom smears that white over the blossoms. Past GLOW_CAP the added light eases off (SHOULDER above 1, so the
+// brightest floors add less than a mid floor) and the halo stays small.
 // GLOW is the gain on brightness (0 turns the relay off); GLOW_SOFT the veil blur and GLOW_BLOOM the halo size, px.
 #define SUMIARI_MOON_GLOW 3.2
 #define SUMIARI_MOON_GLOW_FLOOR 0.02
+#define SUMIARI_MOON_GLOW_CAP 0.2
+#define SUMIARI_MOON_GLOW_SHOULDER 1.08
 #define SUMIARI_MOON_GLOW_SOFT 1.5
 #define SUMIARI_MOON_GLOW_BLOOM 6
-#define SUMIARI_MOON_GLOW_BLOOM_ALPHA 170
+#define SUMIARI_MOON_GLOW_BLOOM_ALPHA 120
 #define SUMIARI_SHADOW_R 0.1
 #define SUMIARI_SHADOW_G 0.45
 #define SUMIARI_SHADOW_B 1
@@ -445,13 +453,14 @@
 #define SUMIARI_DEW_RISE (1.2 SECONDS)
 #define SUMIARI_DEW_FALL (1.8 SECONDS)
 // 4) Night-flower blooming: herbs and flowers, small and large mushrooms and glowshrooms on open sky slowly open
-// through the night. A copy of the plant's sprite in deeper, richer color (saturation BLOOM_SATURATION, a little
-// gain, a faint violet-blue bias) lies over it, its alpha following the night: closed at dusk, opening from 16:00 to
+// through the night. A copy of the plant's sprite in deeper, richer color (saturation BLOOM_SATURATION, gain near
+// 1, a faint violet-blue bias) lies over it, its alpha following the night: closed at dusk, opening from 16:00 to
 // 22:00 (eased), fully open until 5:00, closing again by 8:00. Updated a step at a time as the night goes on.
 #define SUMIARI_MOON_BLOOM 1
-#define SUMIARI_BLOOM_ALPHA 190
+#define SUMIARI_BLOOM_ALPHA 160
 #define SUMIARI_BLOOM_SATURATION 1.8
-#define SUMIARI_BLOOM_GAIN 1.15
+// Near 1: the copy deepens the color and does not lift a pale petal into white.
+#define SUMIARI_BLOOM_GAIN 1.04
 #define SUMIARI_BLOOM_BIAS_R 0.02
 #define SUMIARI_BLOOM_BIAS_G 0
 #define SUMIARI_BLOOM_BIAS_B 0.05
@@ -510,7 +519,10 @@
 // Under mobs, so it curls around legs; never a blob, never screen-sized.
 #define SUMIARI_MOON_FOG 1
 #define SUMIARI_FOG_MAX 24
-#define SUMIARI_FOG_ALPHA 110
+// Thin, so a wisp on bright water does not stack into the glow.
+#define SUMIARI_FOG_ALPHA 88
+// Snow and open water are already light. Mist, frost, dew and ripples on them draw at this share of their alpha.
+#define SUMIARI_FX_BRIGHT_SCALE 0.62
 #define SUMIARI_FOG_DRIFT 10
 #define SUMIARI_FOG_PERIOD 180
 #define SUMIARI_FOG_VARIANTS 3
@@ -737,11 +749,11 @@
 // shadow a human sees as darker reads as bright as lit ground (flat floor, no falloff). The dim plate is the raw
 // light a human sees as luma (static lighting plus the movable-light cookie, emitter sprites full, before the wash gain),
 // and the dim relay lays black over the whole view at alpha (1 - FLOOR) * (1 - light). Drawn brightness is then
-// sprite * (FLOOR + (1 - FLOOR) * light): pitch black keeps FLOOR (50%) of its brightness, in color, and every step
+// sprite * (FLOOR + (1 - FLOOR) * light): pitch black keeps FLOOR (40%) of its brightness, in color, and every step
 // brighter for a human is a step brighter here, with the same falloff and shape. Full light is untouched.
 #define SUMIARI_DARKVISION 1
-#define SUMIARI_DARKVISION_FLOOR 0.5
-// Moonlit open sky at night keeps the full moon look (sat 2, lum 1.5): the skylight plate (sky plane plus cliff
+#define SUMIARI_DARKVISION_FLOOR 0.4
+// Moonlit open sky at night keeps the full moon look (sat 1.75, lum 1.5): the skylight plate (sky plane plus cliff
 // faces, feathered like the moon mask, times the moon fade) is full light for the dim plate, so the dim is off under
 // the night sky and eases back in across dawn and dusk. Caves, roofs and the whole day keep the proportional dim.
 // Lamp hand-off under the night sky. The moon look is LUMINANCE (1.5x) and the gray wash 1x, so a lamp pool would
@@ -1503,7 +1515,7 @@ var/global/turf/sumiari_test_dark_turf
 	// The knee comes off once, from its own plate. One extra layer per kneed plane on this relay pushes the
 	// filter list past what the client renders, and the whole moonlit world draws black.
 	if(knee_plate)
-		knee_plate.filters = sumiari_moon_knee_filters(knee_look, sumiari_moon_knee_matrix(mob_look, gain))
+		knee_plate.filters = sumiari_moon_knee_filters(knee_look, sumiari_moon_knee_matrix(mob_look, gain), sumiari_moon_knee_matrix(world_look, gain, SUMIARI_MOON_FLOOR_KNEE_SLOPE))
 		stacked += filter(type = "layer", render_source = sumiari_offscreen(SUMIARI_TARGET_KNEE), blend_mode = BLEND_SUBTRACT)
 #endif
 	if(gain != 1)
@@ -1514,11 +1526,13 @@ var/global/turf/sumiari_test_dark_turf
 // A plane layered onto the screen-anchored knee canvas lands the relays' CENTER-2:-16 offset (80 px) west of where
 // the relays draw it, so the subtract would cut a dark copy of every bright sprite 2.5 tiles to its left.
 #define SUMIARI_KNEE_SHIFT_X 80
-/proc/sumiari_moon_knee_filters(list/knee_look, list/mob_knee)
+/proc/sumiari_moon_knee_filters(list/knee_look, list/mob_knee, list/floor_knee)
 	var/list/out = list()
 	for(var/plane in GLOB.sumiari_vision_plane_order)
 		if(plane == GAME_PLANE_FOV_HIDDEN)
 			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = mob_knee, x = SUMIARI_KNEE_SHIFT_X)
+		else if(plane == FLOOR_PLANE || plane == WALL_PLANE)
+			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = floor_knee, x = SUMIARI_KNEE_SHIFT_X)
 		else if(plane in GLOB.sumiari_moon_knee_planes)
 			out += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = BLEND_OVERLAY, color = knee_look, x = SUMIARI_KNEE_SHIFT_X)
 	return out
@@ -1535,10 +1549,10 @@ GLOBAL_LIST_INIT(sumiari_moon_knee_planes, list(FLOOR_PLANE, WALL_PLANE, GAME_PL
 	return scaled
 
 // SLOPE * (look - START / gain): the part of a graded pixel above the knee, for a subtract layer. Alpha kept.
-/proc/sumiari_moon_knee_matrix(list/look, gain)
-	var/list/knee = sumiari_scale_matrix_rgb(look, SUMIARI_MOON_KNEE_SLOPE)
+/proc/sumiari_moon_knee_matrix(list/look, gain, slope = SUMIARI_MOON_KNEE_SLOPE)
+	var/list/knee = sumiari_scale_matrix_rgb(look, slope)
 	for(var/output in 1 to 3)
-		knee[16 + output] -= SUMIARI_MOON_KNEE_SLOPE * SUMIARI_MOON_KNEE_START / gain
+		knee[16 + output] -= slope * SUMIARI_MOON_KNEE_START / gain
 	return knee
 
 // Moonlight on a mob: out = gain * tint * (luma + saturation * (color - luma)). Tint is the silver ratio pulled
@@ -1668,18 +1682,22 @@ var/global/sumiari_moon_mob_grade_enabled = TRUE
 // Only the ground and walls glow. Every object plane is cut out first like the mobs, so bones, grass tufts, trees,
 // items and furniture keep their moonlit color but get no added violet light and no halo of their own. The ground's soft glow still reaches a pixel or two past their edges.
 GLOBAL_LIST_INIT(sumiari_moon_glow_cut_planes, list(GAME_PLANE_LOWER, GAME_PLANE, GAME_PLANE_FOV_HIDDEN, GAME_PLANE_UPPER, GAME_PLANE_HIGHEST))
-var/global/sumiari_moon_glow_stages = 5
+var/global/sumiari_moon_glow_stages = 6
 /proc/sumiari_moon_glow_filters()
 	var/list/cuts = list()
 	for(var/plane in GLOB.sumiari_moon_glow_cut_planes)
 		cuts += filter(type = "alpha", render_source = sumiari_world_render_source(plane), flags = MASK_INVERSE)
+	var/list/shoulder = sumiari_moon_glow_shoulder_matrix()
 	var/list/all = cuts + list(
 		filter(type = "color", color = sumiari_moon_glow_matrix()),
+		// Floor and wall only: objects are already cut, and these two are the glow's source.
+		filter(type = "layer", render_source = sumiari_world_render_source(FLOOR_PLANE), blend_mode = BLEND_SUBTRACT, color = shoulder),
+		filter(type = "layer", render_source = sumiari_world_render_source(WALL_PLANE), blend_mode = BLEND_SUBTRACT, color = shoulder),
 		filter(type = "alpha", render_source = sumiari_offscreen(SUMIARI_TARGET_MOON)),
 		filter(type = "blur", size = sumiari_moon_glow_soft),
 		filter(type = "bloom", threshold = "#000000", size = sumiari_moon_glow_bloom, offset = 1, alpha = sumiari_moon_glow_bloom_alpha),
 	)
-	return all.Copy(1, length(cuts) + clamp(sumiari_moon_glow_stages, 1, 4) + 1)
+	return all.Copy(1, length(cuts) + clamp(sumiari_moon_glow_stages, 1, 6) + 1)
 
 // out = GLOW * tone * (luma - FLOOR), alpha kept. The client blends premultiplied, so luma already carries the mask.
 /proc/sumiari_moon_glow_matrix()
@@ -1691,6 +1709,21 @@ var/global/sumiari_moon_glow_stages = 5
 			m[(input - 1) * 4 + output] = sumiari_moon_glow * tone[output] * luma[input]
 	for(var/output in 1 to 3)
 		m[16 + output] = -sumiari_moon_glow * tone[output] * sumiari_moon_glow_floor
+	return m
+
+// The part of the linear glow past the cap, for a subtract. Below the cap the matrix is negative and the subtract
+// clamps it away, so dark ground keeps the full veil and a bright floor gives the excess back.
+/proc/sumiari_moon_glow_shoulder_matrix()
+	var/list/tone = list(SUMIARI_MOON_HAZE_R, SUMIARI_MOON_HAZE_G, SUMIARI_MOON_HAZE_B)
+	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
+	var/slope = sumiari_moon_glow_shoulder
+	var/list/m = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
+	for(var/input in 1 to 3)
+		var/share = slope * sumiari_moon_glow * luma[input]
+		for(var/output in 1 to 3)
+			m[(input - 1) * 4 + output] = share * tone[output]
+	for(var/output in 1 to 3)
+		m[16 + output] = -slope * tone[output] * (sumiari_moon_glow * sumiari_moon_glow_floor + sumiari_moon_glow_cap)
 	return m
 
 // Fades the moon look to a moon fade value over time_ds (0 snaps). The fade rides the moon plate's last color step
@@ -3850,9 +3883,9 @@ var/global/sumiari_run_headless_test = FALSE
 		return FALSE
 	var/atom/movable/screen/plane_master/lighting/lighting = body.hud_used.plane_masters["[LIGHTING_PLANE]"]
 	var/atom/movable/screen/plane_master/cookie = body.hud_used.plane_masters["[O_LIGHTING_VISUAL_PLANE]"]
-	// Pitch black keeps 50% of its brightness: the dim relay's darkest alpha is 1 - FLOOR = 0.5.
+	// Pitch black keeps 40% of its brightness: the dim relay's darkest alpha is 1 - FLOOR = 0.6.
 	var/list/dim = sumiari_matrix_dim_alpha()
-	if(SUMIARI_DARKVISION_FLOOR != 0.5 || abs(dim[4] + 0.5) > 0.001 || abs(dim[20] - 0.5) > 0.001)
+	if(abs(SUMIARI_DARKVISION_FLOOR - 0.4) > 0.001 || abs(dim[4] + 0.6) > 0.001 || abs(dim[20] - 0.6) > 0.001)
 		log_world("SUMIARI TEST FAIL darkness floor=[SUMIARI_DARKVISION_FLOOR] dim=[dim[4]],[dim[20]]")
 		return FALSE
 	log_world("SUMIARI TEST darkness PASS plane_alpha=[lighting.alpha] target=[lighting.render_target] olight=[cookie?.render_target] world_hidden=0 pieces=[length(eyes.screen_pieces)] mask=[SUMIARI_LIGHTING_SOURCE] canvas=[eyes.mask_pixels_x]x[eyes.mask_pixels_y] dyn_not_used=1")
@@ -5083,6 +5116,8 @@ var/global/sumiari_night_beauty_enabled = TRUE
 var/global/sumiari_moon_haze = SUMIARI_MOON_HAZE
 var/global/sumiari_moon_glow = SUMIARI_MOON_GLOW
 var/global/sumiari_moon_glow_floor = SUMIARI_MOON_GLOW_FLOOR
+var/global/sumiari_moon_glow_cap = SUMIARI_MOON_GLOW_CAP
+var/global/sumiari_moon_glow_shoulder = SUMIARI_MOON_GLOW_SHOULDER
 var/global/sumiari_moon_glow_soft = SUMIARI_MOON_GLOW_SOFT
 var/global/sumiari_moon_glow_bloom = SUMIARI_MOON_GLOW_BLOOM
 var/global/sumiari_moon_glow_bloom_alpha = SUMIARI_MOON_GLOW_BLOOM_ALPHA
@@ -5167,6 +5202,12 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	/turf/open/floor/rogue/snowrough,
 	/turf/open/floor/rogue/snowpatchy,
 )))
+
+// 1 on ordinary ground. Snow and open water are already bright, so stacked mist and sparkle draw thinner there.
+/proc/sumiari_fx_bright_scale(turf/T)
+	if(T && (is_type_in_typecache(T, GLOB.sumiari_step_snow) || istype(T, /turf/open/water)))
+		return SUMIARI_FX_BRIGHT_SCALE
+	return 1
 
 // A tile that may glint: open sky, not lit by any lamp, and water, a wet floor, or a metal item on it.
 /proc/sumiari_glint_spot(turf/T)
@@ -7577,9 +7618,10 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 	var/image/ripple = sumiari_fx_style(image(sumiari_water_icon(variant), T), SUMIARI_FX_GAME_PLANE)
 	var/period = SUMIARI_WATER_PERIOD + ((T.x * 31 + T.y * 17) % 5) * 4
 	var/drift = (variant == 2) ? -1 : 1
-	ripple.alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_LOW)
-	animate(ripple, alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_HIGH), pixel_x = 2 * drift, time = period / 2, loop = -1, easing = SINE_EASING)
-	animate(alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_LOW), pixel_x = -drift, time = period / 2, easing = SINE_EASING)
+	var/bright = sumiari_fx_bright_scale(T)
+	ripple.alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_LOW * bright)
+	animate(ripple, alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_HIGH * bright), pixel_x = 2 * drift, time = period / 2, loop = -1, easing = SINE_EASING)
+	animate(alpha = sumiari_fx_alpha(SUMIARI_WATER_ALPHA_LOW * bright), pixel_x = -drift, time = period / 2, easing = SINE_EASING)
 	return sumiari_fx_breathe(ripple, T, fold_alpha = FALSE)
 
 // Dashes as list(x, y, length), inside 3..29 so a two-pixel drift never leaves the tile.
@@ -7712,7 +7754,7 @@ GLOBAL_LIST_INIT(sumiari_rim_types, typecacheof(list(
 	dew.pixel_x = rand(-12, 12)
 	dew.pixel_y = rand(-12, 12)
 	dew.alpha = 0
-	animate(dew, alpha = sumiari_fx_alpha(SUMIARI_DEW_ALPHA * (1 - SUMIARI_PULSE_DEPTH + SUMIARI_PULSE_DEPTH * sumiari_fx_breath_now(T))), time = SUMIARI_DEW_RISE, easing = SINE_EASING)
+	animate(dew, alpha = sumiari_fx_alpha(SUMIARI_DEW_ALPHA * sumiari_fx_bright_scale(T) * (1 - SUMIARI_PULSE_DEPTH + SUMIARI_PULSE_DEPTH * sumiari_fx_breath_now(T))), time = SUMIARI_DEW_RISE, easing = SINE_EASING)
 	animate(alpha = 0, time = SUMIARI_DEW_FALL, easing = SINE_EASING)
 	return dew
 
@@ -7784,7 +7826,7 @@ GLOBAL_LIST_INIT(sumiari_bloom_types, typecacheof(list(
 	bloom.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
 	sumiari_seat_apart(bloom, plant)
 	bloom.color = sumiari_bloom_matrix()
-	bloom.alpha = sumiari_fx_alpha(SUMIARI_BLOOM_ALPHA * level)
+	bloom.alpha = sumiari_fx_alpha(SUMIARI_BLOOM_ALPHA * level * sumiari_fx_bright_scale(get_turf(plant)))
 	return bloom
 
 // The night moved on: ease every open flower to the new bloom.
@@ -7793,10 +7835,10 @@ GLOBAL_LIST_INIT(sumiari_bloom_types, typecacheof(list(
 	if(!isnull(fx_bloom) && abs(level - fx_bloom) < SUMIARI_BLOOM_STEP)
 		return
 	fx_bloom = level
-	var/target = sumiari_fx_alpha(SUMIARI_BLOOM_ALPHA * level)
 	for(var/key in fx_images)
 		if(copytext(key, 1, 2) == "b")
-			animate(fx_images[key], alpha = target, time = SUMIARI_BLOOM_EASE)
+			var/image/bloom = fx_images[key]
+			animate(bloom, alpha = sumiari_fx_alpha(SUMIARI_BLOOM_ALPHA * level * sumiari_fx_bright_scale(get_turf(bloom))), time = SUMIARI_BLOOM_EASE)
 
 // 5) Soft moon shadows.
 GLOBAL_LIST_INIT(sumiari_shade_types, typecacheof(list(
@@ -8451,7 +8493,7 @@ GLOBAL_LIST_INIT(sumiari_fog_waters, typecacheof(list(/turf/open/water/swamp, /t
 	animate(wisp, pixel_x = -32 + drift, time = period / 2, delay = (T.x * 17 + T.y * 5) % period, loop = -1, easing = SINE_EASING)
 	animate(pixel_x = -32 - drift, time = period / 2, easing = SINE_EASING)
 	sumiari_fx_breathe(wisp, T, SUMIARI_PULSE_DEPTH, 7)
-	return sumiari_fx_fade_in(wisp, sumiari_fx_alpha(SUMIARI_FOG_ALPHA))
+	return sumiari_fx_fade_in(wisp, sumiari_fx_alpha(SUMIARI_FOG_ALPHA * sumiari_fx_bright_scale(T)))
 
 // 96x32: two or three thin ribbons (a soft gaussian a couple of pixels tall), each fading in and out along its length
 // with a gentle ripple, in a pale silver-lilac. Variants differ in ribbon count, height and length.
@@ -9061,7 +9103,7 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	frost.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
 	// Opacity rides the matrix: the color animation below would reset a plain alpha to 255.
 	var/list/frost_look = sumiari_solid_matrix(sumiari_fx_silver(255))
-	frost.color = sumiari_fx_fade_matrix(frost_look, sumiari_fx_alpha(SUMIARI_FROST_ALPHA * level) / 255)
+	frost.color = sumiari_fx_fade_matrix(frost_look, sumiari_fx_alpha(SUMIARI_FROST_ALPHA * level * sumiari_fx_bright_scale(get_turf(thing))) / 255)
 	frost.filters = list(filter(type = "alpha", icon = sumiari_flora_cutout(thing), x = 0, y = -1, flags = MASK_INVERSE))
 	if(sway)
 		var/image/sumiari_sway/swaying = frost
