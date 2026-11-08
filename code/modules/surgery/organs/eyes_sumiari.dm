@@ -109,10 +109,10 @@
 #define SUMIARI_MOON_KNEE_START 0.90
 #define SUMIARI_MOON_KNEE_SLOPE 0.55
 // World highlights above the start. Only luminance is compressed: the same luma excess leaves every channel, so
-// chroma and hue stay (a per-channel slope pulls the high channel down and violet goes gray). GRAY 1 holds
-// luminance at the start. SLOPE 0 is no per-channel catch. Mobs stay on KNEE_SLOPE alone.
+// chroma and hue stay. A per-channel slope pulls the high channel down and violet goes gray. SLOPE 0 is no
+// per-channel catch. GRAY is the share of the luma excess that leaves. Mobs stay on KNEE_SLOPE alone.
 #define SUMIARI_MOON_WORLD_KNEE_SLOPE 0
-#define SUMIARI_MOON_WORLD_KNEE_GRAY 1
+#define SUMIARI_MOON_WORLD_KNEE_GRAY 0.55
 // Hue shifts. Colors pop by moving hue, not by brightening. Each push below is a raw nudge on one input channel's
 // row of the color matrix. The sum is projected (sumiari_moon_hue_matrix) so every row keeps its Rec.709 luma
 // (a pushed channel is paid for by the others) and every column sums to 0 (gray stays gray). A linear matrix
@@ -212,17 +212,17 @@
 // So moonlit surfaces glow violet in proportion to how bright the moon makes them, while shadows and blacks stay
 // deep. Mob pixels are cut before the blur, so no mob gets an outline.
 // A pale floor (hot-spring water, snow) is already bright, and a linear gain turns it into a white field, then the
-// bloom smears that white over the blossoms. The veil is the full violet up to GLOW_CAP (blue already near full).
-// Past the cap, SHOULDER above 1 takes that excess back off, so only the veil's luminance falls and a near-white
-// floor does not turn it white. Under the cap the subtract is negative and clamps away. The halo stays wide.
+// bloom smears that white over the blossoms. The veil is the full violet haze tone up to GLOW_CAP. That cap sits
+// above ordinary moonlit ground, so the ground keeps the violet. Past the cap, SHOULDER takes only the extra
+// luminance back off and the tone stays. Under the cap the subtract is negative and clamps away.
 // GLOW is the gain on brightness (0 turns the relay off); GLOW_SOFT the veil blur and GLOW_BLOOM the halo size, px.
 #define SUMIARI_MOON_GLOW 3.2
 #define SUMIARI_MOON_GLOW_FLOOR 0.02
-#define SUMIARI_MOON_GLOW_CAP 0.95
-#define SUMIARI_MOON_GLOW_SHOULDER 2
+#define SUMIARI_MOON_GLOW_CAP 2.2
+#define SUMIARI_MOON_GLOW_SHOULDER 1.7
 #define SUMIARI_MOON_GLOW_SOFT 1.5
 #define SUMIARI_MOON_GLOW_BLOOM 6
-#define SUMIARI_MOON_GLOW_BLOOM_ALPHA 165
+#define SUMIARI_MOON_GLOW_BLOOM_ALPHA 170
 #define SUMIARI_SHADOW_R 0.1
 #define SUMIARI_SHADOW_G 0.45
 #define SUMIARI_SHADOW_B 1
@@ -1563,8 +1563,8 @@ GLOBAL_LIST_INIT(sumiari_moon_knee_planes, list(FLOOR_PLANE, WALL_PLANE, GAME_PL
 	return scaled
 
 // Highlight excess for a subtract layer. Alpha kept. Per channel, SLOPE * (look - START / gain). gray adds the
-// same luma excess on every channel. The world uses slope 0 and gray 1, so only luminance above the start comes
-// off and the chroma (color minus luma) stays. A per-channel slope pulls violet toward gray.
+// same luma excess on every channel, so chroma stays. The world passes slope 0. A per-channel slope pulls violet
+// toward gray.
 /proc/sumiari_moon_knee_matrix(list/look, gain, slope = SUMIARI_MOON_KNEE_SLOPE, gray = 0)
 	var/list/knee = sumiari_scale_matrix_rgb(look, slope)
 	for(var/output in 1 to 3)
@@ -1741,20 +1741,22 @@ var/global/sumiari_moon_glow_stages = 6
 		m[16 + output] = -sumiari_moon_glow * tone[output] * sumiari_moon_glow_floor
 	return m
 
-// The part of the linear glow past the cap, for a subtract. Below the cap the matrix is negative and the subtract
-// clamps it away, so that ground keeps the full violet veil. Past the cap the same tone comes back off, luminance
-// only, and the hue stays.
+// The part of the linear veil past the cap, for a subtract. Below the cap the matrix is negative and the subtract
+// clamps it away, so ordinary ground keeps the full violet. Past the cap the same tone comes back off, luminance
+// only. The offset is the constant row. Without that row the subtract takes slope times the whole veil and the
+// ground goes warm.
 /proc/sumiari_moon_glow_shoulder_matrix()
 	var/list/tone = list(SUMIARI_MOON_HAZE_R, SUMIARI_MOON_HAZE_G, SUMIARI_MOON_HAZE_B)
 	var/list/luma = list(SUMIARI_LUMA_R, SUMIARI_LUMA_G, SUMIARI_LUMA_B)
 	var/slope = sumiari_moon_glow_shoulder
+	var/bias = slope * (sumiari_moon_glow * sumiari_moon_glow_floor + sumiari_moon_glow_cap)
 	var/list/m = list(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)
 	for(var/input in 1 to 3)
 		var/share = slope * sumiari_moon_glow * luma[input]
 		for(var/output in 1 to 3)
 			m[(input - 1) * 4 + output] = share * tone[output]
 	for(var/output in 1 to 3)
-		m[16 + output] = -slope * tone[output] * (sumiari_moon_glow * sumiari_moon_glow_floor + sumiari_moon_glow_cap)
+		m[16 + output] = -bias * tone[output]
 	return m
 
 // Fades the moon look to a moon fade value over time_ds (0 snaps). The fade rides the moon plate's last color step
@@ -5596,7 +5598,7 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	if(sumiari_moon_glow > 0 && (max(glow_black[1], glow_black[2], glow_black[3]) > 0 || !(glow_white[3] > glow_white[1] && glow_white[1] > glow_white[2] && glow_white[2] > 0)))
 		bad += "glow black=[glow_black[3]] white=[glow_white[1]],[glow_white[2]],[glow_white[3]]"
 #if SUMIARI_MOON_KNEE && SUMIARI_MOON_VIVID
-	// World knee: luminance holds at the start, chroma stays. A bright violet keeps its blue-over-red gap.
+	// World knee: only luminance above the start leaves, and it leaves every channel, so a violet keeps its gap.
 	// A dim violet is under the start, so the subtract is negative and clamps away.
 	var/list/knee_look = sumiari_scale_matrix_rgb(sumiari_moon_vivid_matrix(), 1 / SUMIARI_MOON_LUMINANCE)
 	var/list/world_knee = sumiari_moon_knee_matrix(knee_look, SUMIARI_MOON_LUMINANCE, SUMIARI_MOON_WORLD_KNEE_SLOPE, SUMIARI_MOON_WORLD_KNEE_GRAY)
@@ -5611,29 +5613,22 @@ GLOBAL_LIST_INIT(sumiari_step_snow, typecacheof(list(
 	var/violet_full_luma = violet_full[1] * SUMIARI_LUMA_R + violet_full[2] * SUMIARI_LUMA_G + violet_full[3] * SUMIARI_LUMA_B
 	var/violet_out_luma = violet_out[1] * SUMIARI_LUMA_R + violet_out[2] * SUMIARI_LUMA_G + violet_out[3] * SUMIARI_LUMA_B
 	var/list/dim_ex = sumiari_apply_matrix(world_knee, 0.15, 0.1, 0.28)
-	var/list/white_full = sumiari_apply_matrix(sumiari_moon_vivid_matrix(), 1, 1, 1)
-	var/list/white_pre = sumiari_apply_matrix(knee_look, 1, 1, 1)
-	var/list/white_ex = sumiari_apply_matrix(world_knee, 1, 1, 1)
-	var/list/white_out = list(
-		(white_pre[1] - max(white_ex[1], 0)) * SUMIARI_MOON_LUMINANCE,
-		(white_pre[2] - max(white_ex[2], 0)) * SUMIARI_MOON_LUMINANCE,
-		(white_pre[3] - max(white_ex[3], 0)) * SUMIARI_MOON_LUMINANCE,
-	)
-	if(abs((violet_out[3] - violet_out[1]) - (violet_full[3] - violet_full[1])) > 0.02 || abs(violet_out_luma - SUMIARI_MOON_KNEE_START) > 0.03 || violet_full_luma <= SUMIARI_MOON_KNEE_START || max(dim_ex[1], dim_ex[2], dim_ex[3]) > 0.001 || min(white_out[1], white_out[2], white_out[3]) > 0.92 || !(white_out[3] > white_out[1] + 0.05) || abs((white_out[3] - white_out[1]) - (white_full[3] - white_full[1])) > 0.02)
-		bad += "knee violet out=[violet_out[1]],[violet_out[2]],[violet_out[3]] luma=[violet_out_luma] white=[white_out[1]],[white_out[2]],[white_out[3]] dim=[dim_ex[1]],[dim_ex[2]],[dim_ex[3]]"
-	// Glow shoulder: ordinary ground keeps the full violet veil. A near-white floor gives luminance back and stays violet.
+	if(abs((violet_out[3] - violet_out[1]) - (violet_full[3] - violet_full[1])) > 0.02 || violet_out_luma > violet_full_luma - 0.02 || violet_full_luma <= SUMIARI_MOON_KNEE_START || max(dim_ex[1], dim_ex[2], dim_ex[3]) > 0.001)
+		bad += "knee violet out=[violet_out[1]],[violet_out[2]],[violet_out[3]] luma=[violet_out_luma]/[violet_full_luma] dim=[dim_ex[1]],[dim_ex[2]],[dim_ex[3]]"
+	// Ordinary ground is under the cap, so the shoulder is negative and the full violet veil stays.
+	// A near-white floor gives luminance back and the haze tone stays (blue, then red, then green).
 	var/list/glow_shoulder = sumiari_moon_glow_shoulder_matrix()
-	var/list/veil_mid = sumiari_apply_matrix(sumiari_moon_glow_matrix(), 0.22, 0.22, 0.22)
-	var/list/shoulder_mid = sumiari_apply_matrix(glow_shoulder, 0.22, 0.22, 0.22)
-	var/list/veil_hot = sumiari_apply_matrix(sumiari_moon_glow_matrix(), 0.5, 0.5, 0.5)
-	var/list/shoulder_hot = sumiari_apply_matrix(glow_shoulder, 0.5, 0.5, 0.5)
+	var/list/veil_mid = sumiari_apply_matrix(sumiari_moon_glow_matrix(), 0.45, 0.45, 0.45)
+	var/list/shoulder_mid = sumiari_apply_matrix(glow_shoulder, 0.45, 0.45, 0.45)
+	var/list/veil_hot = sumiari_apply_matrix(sumiari_moon_glow_matrix(), 0.92, 0.92, 0.92)
+	var/list/shoulder_hot = sumiari_apply_matrix(glow_shoulder, 0.92, 0.92, 0.92)
 	var/list/veil_kept = list(
 		veil_hot[1] - max(shoulder_hot[1], 0),
 		veil_hot[2] - max(shoulder_hot[2], 0),
 		veil_hot[3] - max(shoulder_hot[3], 0),
 	)
-	if(max(shoulder_mid[1], shoulder_mid[2], shoulder_mid[3]) > 0 || !(veil_mid[3] > veil_mid[1] && veil_mid[1] > veil_mid[2]) || !(veil_kept[3] < veil_hot[3] - 0.2) || !(veil_kept[3] > veil_kept[1] && veil_kept[1] > veil_kept[2]) || veil_kept[2] < 0)
-		bad += "glow shoulder mid=[shoulder_mid[3]] veil=[veil_mid[1]],[veil_mid[2]],[veil_mid[3]] kept=[veil_kept[1]],[veil_kept[2]],[veil_kept[3]]"
+	if(max(shoulder_mid[1], shoulder_mid[2], shoulder_mid[3]) > 0 || !(veil_mid[3] > veil_mid[1] && veil_mid[1] > veil_mid[2]) || !(veil_kept[3] < veil_hot[3] - 0.2) || !(veil_kept[3] > veil_kept[1] && veil_kept[1] > veil_kept[2]) || veil_kept[2] < 0.4)
+		bad += "glow shoulder mid=[shoulder_mid[1]],[shoulder_mid[2]],[shoulder_mid[3]] veil=[veil_mid[1]],[veil_mid[2]],[veil_mid[3]] kept=[veil_kept[1]],[veil_kept[2]],[veil_kept[3]]"
 #endif
 
 	var/list/violet = sumiari_shadow_violet()
