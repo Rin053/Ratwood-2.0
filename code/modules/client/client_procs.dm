@@ -1143,6 +1143,9 @@ GLOBAL_LIST_EMPTY(external_rsc_urls)
 		M.update_damage_hud()
 	if (prefs.auto_fit_viewport)
 		addtimer(CALLBACK(src, VERB_REF(fit_viewport), 1 SECONDS)) //Delayed to avoid wingets from Login calls.
+	// The ink mask is a canvas the size of this view. Rebuild it when the view changes, or the edge steps.
+	if(iscarbon(mob))
+		sumiari_refresh_client_vision(mob)
 
 /client/proc/generate_clickcatcher()
 	if(!void)

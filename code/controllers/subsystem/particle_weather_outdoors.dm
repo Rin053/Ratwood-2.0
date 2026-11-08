@@ -227,6 +227,7 @@ SUBSYSTEM_DEF(outdoor_effects)
 	if(check_cycle())
 		for (var/atom/movable/screen/fullscreen/lighting_backdrop/sunlight/SP in sunlighting_planes)
 			transition_sunlight_color(SP)
+		sumiari_on_sun_changed()
 
 
 //Transition from our last color to our current color (i.e if it is going from daylight (white) to sunset (red), we transition to red in the first hour of sunset)

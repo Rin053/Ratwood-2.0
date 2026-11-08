@@ -443,11 +443,11 @@
 	if(density)
 		icon_state = "shutter1"
 		density = FALSE
-		opacity = FALSE
+		set_opacity(FALSE)
 	else
 		icon_state = "shutter0"
 		density = TRUE
-		opacity = TRUE
+		set_opacity(TRUE)
 
 /obj/structure/bars/passage/shutter/open
 	icon_state = "shutter1"
@@ -460,12 +460,12 @@
 	if(density)
 		icon_state = "shutter1"
 		density = FALSE
-		opacity = FALSE
+		set_opacity(FALSE)
 		alpha = 60
 	else
 		icon_state = "shutter0"
 		density = TRUE
-		opacity = TRUE
+		set_opacity(TRUE)
 		alpha = 255
 
 /obj/structure/bars/passage/attackby(obj/item/I, mob/user, params)

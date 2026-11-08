@@ -64,9 +64,9 @@
 	layer = initial(layer)
 	sleep(15)
 	density = FALSE
-	opacity = FALSE
+	set_opacity(FALSE)
 	for(var/obj/gblock/B in blockers)
-		B.opacity = FALSE
+		B.set_opacity(FALSE)
 	isSwitchingStates = FALSE
 	update_gate_icon()
 
@@ -99,10 +99,10 @@
 			M.Stun(50)
 
 	density = TRUE
-	opacity = TRUE
+	set_opacity(TRUE)
 	layer = initial(layer)
 	for(var/obj/gblock/B in blockers)
-		B.opacity = TRUE
+		B.set_opacity(TRUE)
 	isSwitchingStates = FALSE
 	update_gate_icon()
 

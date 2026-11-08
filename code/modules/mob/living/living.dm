@@ -2059,6 +2059,8 @@
 			AT.get_remote_view_fullscreens(src)
 		else
 			clear_fullscreen("remote_view", 0)
+		// Look up, look down, and the return all land here. The moon effects follow the eye in this same moment.
+		sumiari_look_shifted(src)
 
 /mob/living/update_mouse_pointer()
 	if(!client)
@@ -2396,6 +2398,8 @@
 	else
 		visible_message(message)
 	animate(client, pixel_x = world.icon_size*_x, pixel_y = world.icon_size*_y, ttime)
+	// The moon effects cover the panned view from this moment, not the next beauty tick.
+	sumiari_look_shifted(src)
 //	RegisterSignal(src, COMSIG_MOVABLE_PRE_MOVE, PROC_REF(stop_looking))
 	update_cone_show()
 
@@ -2445,6 +2449,7 @@
 	if(client)
 		client.pixel_x = 0
 		client.pixel_y = 0
+	sumiari_look_shifted(src)
 	if(isdullahan(src))
 		var/mob/living/carbon/human/human = src
 		var/obj/item/organ/dullahan_vision/vision = human.getorganslot(ORGAN_SLOT_HUD)

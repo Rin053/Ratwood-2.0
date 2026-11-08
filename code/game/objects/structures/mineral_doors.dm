@@ -124,6 +124,7 @@
 		set_opacity(FALSE)
 	density = FALSE
 	door_opened = TRUE
+	sumiari_opening_changed(get_turf(src))
 	layer = OPEN_DOOR_LAYER
 	air_update_turf(1)
 	update_icon()
@@ -138,6 +139,7 @@
 		set_opacity(TRUE)
 	density = TRUE
 	door_opened = FALSE
+	sumiari_opening_changed(get_turf(src))
 	layer = CLOSED_DOOR_LAYER
 	air_update_turf(1)
 	update_icon()
@@ -337,6 +339,7 @@
 	sleep(2)
 	density = FALSE
 	door_opened = TRUE
+	sumiari_opening_changed(get_turf(src))
 	layer = OPEN_DOOR_LAYER
 	air_update_turf(1)
 	update_icon()
@@ -360,6 +363,7 @@
 	if(!windowed)
 		set_opacity(TRUE)
 	door_opened = FALSE
+	sumiari_opening_changed(get_turf(src))
 	layer = initial(layer)
 	air_update_turf(1)
 	update_icon()
@@ -474,7 +478,7 @@
 						playsound(user, 'sound/misc/wood_saw.ogg', 100, TRUE)
 						icon_state = "[base_state]"
 						density = TRUE
-						opacity = TRUE
+						set_opacity(TRUE)
 						brokenstate = FALSE
 						obj_broken = FALSE
 						obj_integrity = max_integrity
@@ -778,7 +782,7 @@
 	if(!brokenstate)
 		icon_state = "[base_state]br"
 		density = FALSE
-		opacity = FALSE
+		set_opacity(FALSE)
 		brokenstate = TRUE
 	..()
 
@@ -1120,11 +1124,10 @@
 	playsound(src, 'sound/foley/doors/windowup.ogg', 100, FALSE)
 
 /obj/structure/mineral_door/wood/donjon/set_opacity(setter)
-	..()
-	if(!window_closed) //Keeps it non-opaque when the door shuts.
-		opacity = FALSE
-	else
-		opacity = setter
+	// An open viewport stays clear. Pass that to the parent so lighting and moonlight see the final value once.
+	if(!window_closed)
+		setter = FALSE
+	return ..()
 
 /obj/structure/mineral_door/wood/donjon/stone/broken
 	desc = "A broken stone door from an era bygone. A new one must be constructed in its place."

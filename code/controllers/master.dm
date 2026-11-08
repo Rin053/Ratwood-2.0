@@ -324,6 +324,7 @@ GLOBAL_REAL(Master, /datum/controller/master)
 	to_chat(world, "<span class='boldannounce'>[msg]</span>")
 #endif
 	log_world(msg)
+	sumiari_schedule_headless_test()
 
 	if (!current_runlevel)
 		SetRunLevel(1)
