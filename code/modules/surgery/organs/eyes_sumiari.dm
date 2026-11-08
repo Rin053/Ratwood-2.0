@@ -366,8 +366,11 @@
 #define SUMIARI_FX_UPPER_TARGET "*sumiari_fx_upper"
 #define SUMIARI_FX_BODIES_PLANE -72
 #define SUMIARI_FX_BODIES_TARGET "*sumiari_fx_bodies"
-// Swaying plants draw here, under every plane that holds a person. Nothing on this plane is masked to a body
-// or composited over one, so a plant never tints, sways or shifts the character.
+// A plant that shares a mob plane is redrawn on the game plane at this layer: above the other objects
+// there, under every mob plane. The game plane stays on screen, so the copy stays opaque while the moon
+// relay's graded copy of it fades.
+#define SUMIARI_SWAY_LAYER 30
+// Frost on a swaying plant. Asterisk: the moon relay is the only place it draws, so the frost thins with the moon.
 #define SUMIARI_SWAY_PLANE -73
 #define SUMIARI_SWAY_TARGET "*sumiari_sway"
 // Deciseconds a body mask takes to come in or go.
@@ -477,10 +480,11 @@
 // 6) Swaying, shimmering plants: grass, bushes, herbs and flowers on open sky sway gently, each on its own random
 // period, depth and lean, and now and then a soft silver shimmer runs over them. The sway is a per-client copy of
 // the plant's own sprite (the real plant does not move for anyone else), pivoting at its base by at most SWAY_SKEW of
-// its height (about a pixel and a half at the tip), only where no lamp or fire reaches the tile. A plant that lives
-// on a mob plane (flora shares the owner's plane) is redrawn on the sway plane, which is composited under every mob,
-// so the copy never shares the character's plane. The shimmer is a silver-lilac copy on that same plane that sways
-// in step, breathing with the moon and flaring every SHIMMER_GAP or so.
+// its height (about a pixel and a half at the tip), only where no lamp or fire reaches the tile. A plant on a mob
+// plane is redrawn on the game plane, under every mob. That plane is on screen and in the moon relay, so the copy
+// stays fully opaque while the relay fades. The lean scales with the moon fade: it eases to rest as the fade ends
+// and eases in from rest as the fade begins, and the copy comes off at rest on the same pixels as the real sprite.
+// The shimmer is a silver-lilac copy that sways in step, breathing with the moon and flaring every SHIMMER_GAP or so.
 #define SUMIARI_MOON_SWAY 1
 #define SUMIARI_SWAY_MAX 110
 #define SUMIARI_SWAY_SKEW 0.045
@@ -1467,7 +1471,7 @@ var/global/turf/sumiari_test_dark_turf
 			plane_look = null
 		stacked += filter(type = "layer", render_source = sumiari_world_render_source(plane), blend_mode = source.blend_mode, color = plane_look)
 #if SUMIARI_MOON_FX
-		// Sway sits under the mob planes (the next ones in this list). Graded like the ground it is leaving.
+		// Frost, just above the game plane (the swaying plants live there) and still under the mob planes.
 		if(plane == GAME_PLANE)
 			stacked += filter(type = "layer", render_source = SUMIARI_SWAY_TARGET, blend_mode = BLEND_OVERLAY, color = plane_look)
 #endif
@@ -1717,6 +1721,7 @@ var/global/sumiari_moon_glow_stages = 5
 	for(var/plant in flora_images)
 		var/image/halo = flora_images[plant]
 		animate(halo, alpha = halo_target, time = time_ds, flags = ANIMATION_PARALLEL)
+	sumiari_sway_fade_to(fade, time_ds)
 
 // The film grain pref (a multiply overlay, alpha 55) is invisible on a human's black night, but over the moonlit
 // world these eyes see it read as dark noise around everything. Under the moon it eases down to GRAIN_MOON_ALPHA;
@@ -7260,6 +7265,9 @@ var/global/sumiari_moon_spirits_enabled = TRUE
 		clear_fx()
 	var/turf/center = view_turf()
 	if(!sumiari_night_beauty_enabled || !center || sense_blocked() || wash_mode != SUMIARI_WASH_LIVE || !sumiari_is_moon_night())
+		// The copies are still easing to rest. Dropping them now pops the lean.
+		if(sumiari_sway_holding() && sumiari_night_beauty_enabled && center && !sense_blocked() && wash_mode == SUMIARI_WASH_LIVE)
+			return
 		clear_fx()
 		return
 	if(fx_center && fx_center.z != center.z)
@@ -8042,18 +8050,142 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 		skew = -skew
 	return list(period, skew, seed)
 
+// Moon-fade share of the sway, 0 (rest) .. 1 (full). The ramp is the same span the moon tint animates.
+var/global/sumiari_sway_amp = 1
+var/global/sumiari_sway_amp_from = 1
+var/global/sumiari_sway_amp_at = 0
+var/global/sumiari_sway_amp_span = 0
+var/global/sumiari_sway_gen = 0
+
+/proc/sumiari_sway_amp_now()
+	if(sumiari_sway_amp_span <= 0)
+		return sumiari_sway_amp
+	var/t = clamp((world.time - sumiari_sway_amp_at) / sumiari_sway_amp_span, 0, 1)
+	return sumiari_sway_amp_from + (sumiari_sway_amp - sumiari_sway_amp_from) * t
+
+// Points the live sway at fade over time_ds. A running ramp toward the same fade is left alone.
+/proc/sumiari_sway_fade_to(fade, time_ds)
+	var/target = clamp(fade, 0, 1)
+	if(abs(sumiari_sway_amp - target) < 0.001 && abs(sumiari_sway_amp_now() - target) < 0.001)
+		return
+	var/from = sumiari_sway_amp_now()
+	sumiari_sway_amp_from = from
+	sumiari_sway_amp = target
+	sumiari_sway_amp_at = world.time
+	sumiari_sway_amp_span = max(time_ds, 0)
+	sumiari_sway_gen++
+	for(var/obj/item/organ/eyes/sumiari/eyes as anything in sumiari_active_eyes)
+		if(!QDELETED(eyes))
+			eyes.ease_sway(from, target, time_ds, sumiari_sway_gen)
+
 // Sways an image of plant with the plant's own sway, phase-locked to world.time so every image of one plant sways
-// together whenever it was made.
+// together whenever it was made. While the moon fade is moving, the lean follows that fade instead of the full loop.
 /proc/sumiari_sway_apply(image/picture, obj/plant)
+	var/amp_now = sumiari_sway_amp_now()
+	var/left = sumiari_sway_amp_span > 0 ? max(0, sumiari_sway_amp_at + sumiari_sway_amp_span - world.time) : 0
+	if(sumiari_sway_amp >= 0.999 && amp_now >= 0.999 && left <= 0)
+		return sumiari_sway_loop(picture, plant)
+	return sumiari_sway_track(picture, plant, amp_now, sumiari_sway_amp, left, TRUE, sumiari_sway_gen)
+
+// Full sway, phase-locked. The plant sits on the low lean until the cycle point, then rocks.
+/proc/sumiari_sway_loop(image/picture, obj/plant)
 	var/list/params = sumiari_sway_params(plant)
 	var/period = params[1]
 	var/skew = params[2]
 	var/half = sumiari_sprite_half_height(plant)
-	var/matrix/base = plant.transform ? matrix(plant.transform) : matrix()
+	var/matrix/base = sumiari_sway_base(plant)
 	picture.transform = base * sumiari_sway_matrix(-skew * 0.6, half)
 	animate(picture, transform = base * sumiari_sway_matrix(skew, half), time = period / 2, delay = period - ((world.time + params[3]) % period), loop = -1, easing = SINE_EASING)
 	animate(transform = base * sumiari_sway_matrix(-skew * 0.6, half), time = period / 2, easing = SINE_EASING)
 	return picture
+
+/proc/sumiari_sway_base(obj/plant)
+	return plant.transform ? matrix(plant.transform) : matrix()
+
+// Lean at time, before the fade scale: a sine from -0.6*skew to skew and back, one period.
+/proc/sumiari_sway_lean(skew, period, seed, time)
+	var/half = period / 2
+	if(half <= 0)
+		return 0
+	var/p = (time + seed) % period
+	if(p < 0)
+		p += period
+	var/low = -skew * 0.6
+	var/high = skew
+	if(p <= half)
+		return low + (high - low) * sumiari_sine_ease(p / half)
+	return high + (low - high) * sumiari_sine_ease((p - half) / half)
+
+/proc/sumiari_sine_ease(t)
+	t = clamp(t, 0, 1)
+	return 0.5 - 0.5 * cos(t * 180)
+
+// The plant's transform at amp (0 rest, 1 full sway) and time.
+/proc/sumiari_sway_pose(obj/plant, amp, time)
+	var/list/params = sumiari_sway_params(plant)
+	var/lean = sumiari_sway_lean(params[2], params[1], params[3], time) * amp
+	return sumiari_sway_base(plant) * sumiari_sway_matrix(lean, sumiari_sprite_half_height(plant))
+
+// Replaces the sway animation. snap_start places a new image on the pose it should already show.
+// At amp 0 the transform is the plant's own, so dropping the copy shows the same pixels.
+/proc/sumiari_sway_track(image/picture, obj/plant, amp0, amp1, time_ds, snap_start = FALSE, gen = 0)
+	if(amp1 >= 0.999 && time_ds <= 0)
+		return sumiari_sway_loop(picture, plant)
+	if(amp1 <= 0)
+		animate(picture, transform = sumiari_sway_base(plant), time = max(time_ds, 0), easing = SINE_EASING)
+		return picture
+	if(time_ds <= 0)
+		animate(picture, transform = sumiari_sway_pose(plant, amp1, world.time), time = 0)
+		return picture
+	var/list/params = sumiari_sway_params(plant)
+	var/period = params[1]
+	var/seed = params[3]
+	var/now = world.time
+	var/end = now + time_ds
+	var/list/marks = list()
+	var/half = period / 2
+	var/p = (now + seed) % period
+	if(p < 0)
+		p += period
+	var/nextb = now + ((p < half) ? (half - p) : (period - p))
+	var/guard = 0
+	while(nextb < end - 1 && guard < 6)
+		marks += nextb
+		nextb += half
+		guard++
+	marks += end
+	if(snap_start)
+		picture.transform = sumiari_sway_pose(plant, amp0, now)
+	var/prev = now
+	for(var/mark in marks)
+		var/amp = amp0 + (amp1 - amp0) * (mark - now) / time_ds
+		animate(picture, transform = sumiari_sway_pose(plant, amp, mark), time = max(mark - prev, 1), easing = SINE_EASING)
+		prev = mark
+	if(amp1 >= 0.999)
+		addtimer(CALLBACK(GLOBAL_PROC, GLOBAL_PROC_REF(sumiari_sway_resume), picture, plant, gen), time_ds)
+	return picture
+
+// The fade has reached full. The phase-locked loop takes over if this ramp is still the latest.
+/proc/sumiari_sway_resume(image/picture, obj/plant, gen)
+	if(gen != sumiari_sway_gen || sumiari_sway_amp < 0.999 || !istype(picture) || QDELETED(plant))
+		return
+	sumiari_sway_loop(picture, plant)
+
+// TRUE while a downward fade still has the copies moving toward rest. Night ending in that span keeps them.
+/proc/sumiari_sway_holding()
+	return sumiari_sway_amp_span > 0 && world.time < sumiari_sway_amp_at + sumiari_sway_amp_span && sumiari_sway_amp < sumiari_sway_amp_from
+
+/obj/item/organ/eyes/sumiari/proc/ease_sway(amp0, amp1, time_ds, gen)
+	if(!fx_images)
+		return
+	for(var/key in fx_images)
+		var/image/picture = fx_images[key]
+		if(!istype(picture, /image/sumiari_sway))
+			continue
+		var/obj/plant = picture.loc
+		if(!istype(plant) || QDELETED(plant))
+			continue
+		sumiari_sway_track(picture, plant, amp0, amp1, time_ds, FALSE, gen)
 
 // The base-pivoted lean: x shifts by skew * (y + half), so the sprite's bottom row stays put. A transform pivots at
 // the icon's middle, so half is half the sprite's own height (48 for a 96 px tall bush, not 16).
@@ -8084,15 +8216,23 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 			look[(input - 1) * 4 + output] = luma[input] * 1.6 * tone[output] / 255
 	return look
 
-// Planes a person is drawn on. Flora shares GAME_PLANE_UPPER with the owner's own sprite.
+// Planes a mob is drawn on. Flora shares GAME_PLANE_UPPER with the owner's sprite.
 /proc/sumiari_plane_holds_mob(plane)
 	return plane == GAME_PLANE_FOV_HIDDEN || plane == GAME_PLANE_UPPER || plane == GAME_PLANE_HIGHEST
 
-// Where a swaying copy is drawn. A plant already under the mobs keeps its plane. One that shares a mob plane
-// moves to the sway plane, which is composited under every person.
+// Frost rides the hidden sway plane when the plant shares a mob plane, so the frost fades with the moon.
+// A plant already under the mobs keeps its own plane.
 /proc/sumiari_sway_plane(obj/plant)
 	if(sumiari_plane_holds_mob(plant.plane))
 		return SUMIARI_SWAY_PLANE
+	return plant.plane
+
+// Where the swaying plant itself is drawn. A plant already under the mobs keeps its plane and stays in the
+// color world. One that shares a mob plane moves to the game plane: on screen, under every mob, and already
+// part of the moon relay, so the grade fades off an opaque sprite.
+/proc/sumiari_sway_draw_plane(obj/plant)
+	if(sumiari_plane_holds_mob(plant.plane))
+		return GAME_PLANE
 	return plant.plane
 
 // Overlays and underlays stay on the copy. Each one is pinned to its parent so a leaf cannot keep the plant's
@@ -8110,20 +8250,24 @@ GLOBAL_LIST_INIT(sumiari_sway_types, typecacheof(list(
 		pinned += piece
 	return pinned
 
+// Marked so a fade can find every swaying copy, including frost, and leave every other image alone.
+/image/sumiari_sway
+
 // The plant's own sprite and overlays only, riding the plant. The plant's pixel offsets already place the image,
 // so the copy keeps none of its own. Nothing of the plant's plane, flags or vis contents is copied.
 /proc/sumiari_sway_copy(obj/plant)
-	var/image/copy = image(plant.icon, plant, plant.icon_state, plant.layer, plant.dir)
+	var/image/sumiari_sway/copy = new(plant.icon, plant, plant.icon_state, plant.layer, plant.dir)
 	copy.color = plant.color
 	copy.alpha = plant.alpha
 	copy.overlays = sumiari_sway_pinned(plant.overlays)
 	copy.underlays = sumiari_sway_pinned(plant.underlays)
 	return copy
 
-// The copy draws only on its sway plane, never on a plane that holds a person, and never takes clicks.
+// The copy draws on its plane, never on a plane that holds a mob, and never takes clicks.
+// A plant moved onto the game plane takes a layer above the other objects on that plane.
 /proc/sumiari_sway_pin(image/picture, obj/plant)
-	picture.plane = sumiari_sway_plane(plant)
-	picture.layer = (picture.plane == SUMIARI_SWAY_PLANE) ? 1 : plant.layer
+	picture.plane = sumiari_sway_draw_plane(plant)
+	picture.layer = sumiari_plane_holds_mob(plant.plane) ? (SUMIARI_SWAY_LAYER + plant.layer / 1000) : plant.layer
 	picture.mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	picture.blend_mode = BLEND_DEFAULT
 	picture.appearance_flags = RESET_COLOR | RESET_ALPHA | RESET_TRANSFORM | KEEP_APART
@@ -8792,9 +8936,9 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 
 // The sprite's top edge in silver: the sprite, solid silver, minus itself shifted one pixel down.
 /proc/sumiari_frost_image(obj/thing, level, sway)
-	var/image/frost = image(thing.icon, thing, thing.icon_state)
+	var/image/frost = sway ? new /image/sumiari_sway(thing.icon, thing, thing.icon_state) : image(thing.icon, thing, thing.icon_state)
 	frost.dir = thing.dir
-	// A swaying frost copy rides the sway plane, under every person. A still one stays with its own effect plane.
+	// A swaying frost copy rides the hidden sway plane, under every mob, and thins with the moon. A still one stays on its effect plane.
 	sumiari_fx_style(frost, sway ? sumiari_sway_plane(thing) : sumiari_fx_plane_near(thing.plane))
 	frost.appearance_flags = RESET_COLOR | RESET_ALPHA | KEEP_APART
 	// Opacity rides the matrix: the color animation below would reset a plain alpha to 255.
@@ -9037,22 +9181,24 @@ GLOBAL_LIST_INIT(sumiari_frost_paving, typecacheof(list(
 	var/image/sway_glow = sway_pair[2]
 	var/matrix/lean = sumiari_sway_matrix(0.05)
 #if SUMIARI_SWAY_SHIMMER
-	if(!swayed.override || swayed.loc != tuft || swayed.plane != sumiari_sway_plane(tuft) || sumiari_plane_holds_mob(swayed.plane) || sway_glow.plane != swayed.plane || abs(lean.c - 0.8) > 0.001 || length(sway_glow.color) != 20)
+	if(!swayed.override || swayed.loc != tuft || swayed.plane != sumiari_sway_draw_plane(tuft) || sumiari_plane_holds_mob(swayed.plane) || sway_glow.plane != swayed.plane || abs(lean.c - 0.8) > 0.001 || length(sway_glow.color) != 20)
 		bad += "sway"
 #else
-	if(!swayed.override || swayed.loc != tuft || sway_glow || swayed.plane != sumiari_sway_plane(tuft) || sumiari_plane_holds_mob(swayed.plane) || abs(lean.c - 0.8) > 0.001)
+	if(!swayed.override || swayed.loc != tuft || sway_glow || swayed.plane != sumiari_sway_draw_plane(tuft) || sumiari_plane_holds_mob(swayed.plane) || abs(lean.c - 0.8) > 0.001)
 		bad += "sway"
 #endif
 	qdel(tuft)
 	// A redrawn plant sits exactly on the real one: the override still rides the plant's own offsets, so an offset
 	// plant (the 64x96 tall bush, pixel_x -16 plus a random -3..3) gets a copy with none; its lean pivots on its bottom row.
+	// Rest is the plant's own transform, on the game plane under the mobs, so the handoff shows the same pixels.
 	var/obj/structure/flora/roguegrass/bush/wall/tall/tall_bush = new(spot)
 	var/list/tall_pair = sumiari_sway_images(tall_bush)
 	var/image/tall_swayed = tall_pair[1]
 	var/tall_half = sumiari_sprite_half_height(tall_bush)
 	var/matrix/tall_lean = sumiari_sway_matrix(0.05, tall_half)
-	if(abs(tall_bush.pixel_x + 16) > 3 || tall_swayed.pixel_x || tall_swayed.pixel_y || tall_swayed.pixel_w || tall_swayed.pixel_z || tall_swayed.loc != tall_bush || tall_swayed.plane != SUMIARI_SWAY_PLANE || sumiari_plane_holds_mob(tall_swayed.plane) || tall_pair[2] || tall_half != 48 || abs(tall_lean.b * -tall_half + tall_lean.c) > 0.001)
-		bad += "sway offsets plant=[tall_bush.pixel_x] copy=[tall_swayed.pixel_x],[tall_swayed.pixel_y],[tall_swayed.pixel_w],[tall_swayed.pixel_z] plane=[tall_swayed.plane] half=[tall_half]"
+	var/matrix/rested = sumiari_sway_pose(tall_bush, 0, world.time)
+	if(abs(tall_bush.pixel_x + 16) > 3 || tall_swayed.pixel_x || tall_swayed.pixel_y || tall_swayed.pixel_w || tall_swayed.pixel_z || tall_swayed.loc != tall_bush || tall_swayed.plane != GAME_PLANE || sumiari_plane_holds_mob(tall_swayed.plane) || tall_swayed.layer < SUMIARI_SWAY_LAYER || tall_pair[2] || tall_half != 48 || abs(tall_lean.b * -tall_half + tall_lean.c) > 0.001 || abs(rested.b) > 0.001 || abs(rested.c) > 0.001 || abs(rested.a - 1) > 0.001)
+		bad += "sway offsets plant=[tall_bush.pixel_x] copy=[tall_swayed.pixel_x],[tall_swayed.pixel_y],[tall_swayed.pixel_w],[tall_swayed.pixel_z] plane=[tall_swayed.plane] layer=[tall_swayed.layer] half=[tall_half] rest=[rested.a],[rested.b],[rested.c]"
 	qdel(tall_bush)
 #endif
 #if SUMIARI_MOON_FOG
