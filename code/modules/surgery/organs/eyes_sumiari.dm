@@ -103,15 +103,16 @@
 // bright greens, blues and whites past 1, where they clip flat. With the knee each world plane is graded at
 // 1 / LUMINANCE (nothing clips there), a second copy subtracts the highlight excess (the subtract clamps at 0,
 // so it only touches highlights), and the gain is put back once on the whole stack. Output rises 1:1 up to
-// KNEE_START. Mobs keep a per-channel slope and never reach 1, so a character is not faded. 0 turns the knee off.
+// KNEE_START. The start sits high, so moonlit ground under it keeps the full lilac grade and only the
+// top end eases off. Mobs keep a per-channel slope and never reach 1, so a character is not faded. 0 turns the knee off.
 #define SUMIARI_MOON_KNEE 1
-#define SUMIARI_MOON_KNEE_START 0.72
+#define SUMIARI_MOON_KNEE_START 0.90
 #define SUMIARI_MOON_KNEE_SLOPE 0.55
-// World planes (floor, wall, objects) roll highlights two ways at once. SLOPE is the per-channel share, which
-// catches the one channel saturation pushed over 1. GRAY subtracts the same luma excess from every channel, so
-// the hue is not flattened and a pink subtract cannot turn a silver beam teal. Mobs stay on KNEE_SLOPE alone.
-#define SUMIARI_MOON_WORLD_KNEE_SLOPE 0.6
-#define SUMIARI_MOON_WORLD_KNEE_GRAY 0.34
+// World highlights above the start. GRAY is the larger share: the same luma excess leaves every channel, so a
+// bright petal keeps its hue. SLOPE is a small extra catch on the one channel saturation pushed over 1.
+// Mobs stay on KNEE_SLOPE alone. The ground under the start is not touched, so the lilac grade stays.
+#define SUMIARI_MOON_WORLD_KNEE_SLOPE 0.2
+#define SUMIARI_MOON_WORLD_KNEE_GRAY 0.25
 // Hue shifts. Colors pop by moving hue, not by brightening. Each push below is a raw nudge on one input channel's
 // row of the color matrix. The sum is projected (sumiari_moon_hue_matrix) so every row keeps its Rec.709 luma
 // (a pushed channel is paid for by the others) and every column sums to 0 (gray stays gray). A linear matrix
@@ -211,16 +212,16 @@
 // So moonlit surfaces glow violet in proportion to how bright the moon makes them, while shadows and blacks stay
 // deep. Mob pixels are cut before the blur, so no mob gets an outline.
 // A pale floor (hot-spring water, snow) is already bright, and a linear gain turns it into a white field, then the
-// bloom smears that white over the blossoms. Past GLOW_CAP the added light eases off (SHOULDER above 1, so the
-// brightest floors add less than a mid floor) and the halo stays small.
+// bloom smears that white over the blossoms. Past GLOW_CAP the added light eases (SHOULDER under 1, so a bright
+// floor still gets a lilac add, only less than the linear gain). The halo stays wide enough to read as moonlight.
 // GLOW is the gain on brightness (0 turns the relay off); GLOW_SOFT the veil blur and GLOW_BLOOM the halo size, px.
 #define SUMIARI_MOON_GLOW 3.2
 #define SUMIARI_MOON_GLOW_FLOOR 0.02
-#define SUMIARI_MOON_GLOW_CAP 0.12
-#define SUMIARI_MOON_GLOW_SHOULDER 1.08
+#define SUMIARI_MOON_GLOW_CAP 0.18
+#define SUMIARI_MOON_GLOW_SHOULDER 0.90
 #define SUMIARI_MOON_GLOW_SOFT 1.5
-#define SUMIARI_MOON_GLOW_BLOOM 4
-#define SUMIARI_MOON_GLOW_BLOOM_ALPHA 72
+#define SUMIARI_MOON_GLOW_BLOOM 6
+#define SUMIARI_MOON_GLOW_BLOOM_ALPHA 165
 #define SUMIARI_SHADOW_R 0.1
 #define SUMIARI_SHADOW_G 0.45
 #define SUMIARI_SHADOW_B 1
